@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Failure, Reply};
@@ -425,9 +425,14 @@ impl Engine {
     }
 
     pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
-        let hints = keys::hints(self.scopes(), self.keymap.pending(), &|action| {
+        let room =
+            usize::from(frame.area().width).saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
+        let mut hints = keys::hints(self.scopes(), self.keymap.pending(), &|action| {
             can(&self.phase, self.health.as_ref(), action)
         });
+        if self.keymap.pending().is_empty() {
+            hints = keys::fit(&hints, room);
+        }
         let bottom = match &self.toast {
             Some(toast) if self.keymap.pending().is_empty() => toast.clone(),
             _ => hints,
@@ -472,12 +477,15 @@ impl Engine {
                     Some((failure, wait))
                         if self.toast.is_none() && self.keymap.pending().is_empty() =>
                     {
-                        let room = usize::from(foot.width)
-                            .saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
-                        Line::styled(
-                            format!("{HINT_INDENT}{}", fatal::hint(failure, wait, room)),
-                            Style::new().fg(theme::DESTRUCTIVE),
-                        )
+                        let help = "  ? help";
+                        let error = fatal::hint(failure, wait, room.saturating_sub(help.len()));
+                        Line::from(vec![
+                            Span::styled(
+                                format!("{HINT_INDENT}{error}"),
+                                Style::new().fg(theme::DESTRUCTIVE),
+                            ),
+                            Span::styled(help, theme::muted()),
+                        ])
                     }
                     _ => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };

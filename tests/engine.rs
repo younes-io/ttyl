@@ -231,10 +231,10 @@ fn maintenance_after_the_first_load_takes_the_hint_line_over_a_working_screen() 
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(30));
 
-    let rows = screen(&mut engine, 80, 40, at + secs(30));
+    let rows = screen(&mut engine, 100, 40, at + secs(30));
     assert!(
         rows[39].starts_with(
-            " fatal: the site is in maintenance · your log is still here · retrying in 30s"
+            " fatal: the site is in maintenance · your log is still here · retrying in 30s  ? help"
         ),
         "{:?}",
         rows[39]

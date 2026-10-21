@@ -1,4 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 
 use crate::model::Log;
 
@@ -300,6 +301,26 @@ pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) ->
         .filter_map(|binding| binding.hint)
         .collect::<Vec<_>>()
         .join("  ")
+}
+
+/// Drops hints from the end until they fit `width`. `? help` is how a user finds every
+/// other key, so it goes last; `Q quit` goes just before it.
+pub fn fit(hints: &str, width: usize) -> String {
+    let rank = |hint: &&str| match *hint {
+        hint if hint.starts_with("? ") => 2,
+        "Q quit" => 1,
+        _ => 0,
+    };
+    let mut hints: Vec<&str> = hints.split("  ").collect();
+    while hints.len() > 1 && hints.join("  ").width() > width {
+        let lowest = hints.iter().map(rank).min().expect("at least two hints");
+        let at = hints
+            .iter()
+            .rposition(|hint| rank(hint) == lowest)
+            .expect("the lowest rank is held by a hint");
+        hints.remove(at);
+    }
+    hints.join("  ")
 }
 
 pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str)> {

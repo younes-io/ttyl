@@ -3,7 +3,9 @@ mod common;
 use std::collections::HashSet;
 use std::time::Instant;
 
-use common::{boot, boot_serving, contains, following_nobody, now, page};
+use common::{boot, boot_serving, contains, following_nobody, now, page, secs};
+use devnull::api::{Call, Error};
+use devnull::engine::Effect;
 use devnull::engine::{Engine, Event};
 use devnull::feed;
 use devnull::model::{Log, LogPage};
@@ -445,4 +447,45 @@ fn the_top_bar_never_overlaps_and_drops_the_brand_then_the_handle_then_the_count
             .modifier
             .contains(ratatui::style::Modifier::BOLD)
     );
+}
+
+#[test]
+fn a_narrow_hint_line_keeps_help_and_drops_the_other_hints_from_the_end() {
+    let mut app = app();
+    press(&mut app, "2");
+    let wide = screen(&mut app, 120, 20)[19].clone();
+    assert_eq!(wide, " j/k move  1-3 log  R refresh  ? help  Q quit");
+    let rows = screen(&mut app, 44, 20);
+    assert_eq!(rows[19], " j/k move  1-3 log  ? help  Q quit", "{rows:#?}");
+    let rows = screen(&mut app, 30, 20);
+    assert_eq!(rows[19], " j/k move  ? help  Q quit", "{rows:#?}");
+    let rows = screen(&mut app, 12, 20);
+    assert_eq!(rows[19], " ? help", "{rows:#?}");
+}
+
+#[test]
+fn a_narrow_footer_error_still_ends_in_help() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    common::press(&mut engine, "2", at);
+    let effects = common::press(&mut engine, "R", at);
+    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Err(Error::Unexpected(502))), at);
+    let rows = common::screen(&mut engine, 120, 20, at + secs(1));
+    assert_eq!(
+        rows[19],
+        " fatal: the site is in maintenance · your log is still here · retrying in 29s  ? help",
+        "{rows:#?}"
+    );
+    for width in [44u16, 30] {
+        let rows = common::screen(&mut engine, width, 20, at + secs(1));
+        assert!(rows[19].starts_with(" fatal: "), "{width}: {rows:#?}");
+        assert!(rows[19].ends_with("  ? help"), "{width}: {rows:#?}");
+        assert!(
+            rows[19].chars().count() <= usize::from(width) - 2,
+            "{width}: the spinner cells stay free: {rows:#?}"
+        );
+    }
 }
