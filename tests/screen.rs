@@ -201,12 +201,12 @@ fn space_unfolds_the_selected_long_commit() {
     let mut app = app();
     press(&mut app, "2jjjj");
     let folded = screen(&mut app, 70, 40);
-    assert!(contains(&folded, "… show more"));
+    assert!(contains(&folded, "show more"));
     assert!(contains(&folded, "┆ Yesterday"));
 
     press(&mut app, " ");
     let unfolded = screen(&mut app, 70, 40);
-    assert!(!contains(&unfolded, "… show more"));
+    assert!(!contains(&unfolded, "show more"));
     assert!(
         contains(&unfolded, "10."),
         "the tenth list item shows once unfolded: {unfolded:#?}"

@@ -192,7 +192,7 @@ fn row_lines<Tz: TimeZone>(
     if folded.is_some() {
         out.push(
             rail.clone(),
-            vec![Span::styled("… show more", Style::new().fg(theme::PRIMARY))],
+            vec![Span::styled("show more", Style::new().fg(theme::PRIMARY))],
         );
     }
     let mut lines = Vec::new();
