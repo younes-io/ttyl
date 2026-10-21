@@ -413,3 +413,36 @@ fn the_selected_header_is_always_on_screen() {
         }
     }
 }
+
+#[test]
+fn the_top_bar_never_overlaps_and_drops_the_brand_then_the_handle_then_the_count() {
+    let mut app = app();
+    press(&mut app, "2");
+    let full = " /dev/null   1 following  2 latest  3 trending";
+    for width in [100u16, 60] {
+        let top = &screen(&mut app, width, 20)[0];
+        assert!(top.starts_with(full), "{width}: {top:?}");
+        assert!(top.ends_with("● 3  @ada"), "{width}: {top:?}");
+        assert_eq!(
+            top.chars().count(),
+            usize::from(width) - 1,
+            "{width}: {top:?}"
+        );
+    }
+    let top = &screen(&mut app, 44, 20)[0];
+    assert_eq!(top, " 1 following  2 latest  3 trending     ● 3", "{top:?}");
+    let top = &screen(&mut app, 30, 20)[0];
+    assert_eq!(top, " 1  2  3                    ●", "{top:?}");
+    let buffer = common::buffer(&mut app.0, 30, 20, app.1);
+    assert!(
+        buffer[(4, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD),
+        "the active log stays bold when the labels shorten"
+    );
+    assert!(
+        !buffer[(1, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+}

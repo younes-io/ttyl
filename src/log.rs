@@ -53,6 +53,13 @@ struct Anchor {
     line: usize,
 }
 
+struct TopBar {
+    brand: bool,
+    handle: bool,
+    number: bool,
+    slugs: bool,
+}
+
 impl Default for LogScreen {
     fn default() -> Self {
         LogScreen {
@@ -139,13 +146,73 @@ impl LogScreen {
         }
     }
 
-    pub fn tabs(&self) -> Line<'static> {
-        let mut spans = vec![Span::styled(
-            " /dev/null ",
-            Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
-        )];
+    /// One row: the brand and the tabs on the left, unread and the handle on the right.
+    /// When the row is short it drops the brand, then the handle, then the unread
+    /// number, and last shortens the tabs to their digits.
+    pub fn top_bar(&self, store: &Store, width: u16) -> Line<'static> {
+        let fits = [
+            TopBar {
+                brand: true,
+                handle: true,
+                number: true,
+                slugs: true,
+            },
+            TopBar {
+                brand: false,
+                handle: true,
+                number: true,
+                slugs: true,
+            },
+            TopBar {
+                brand: false,
+                handle: false,
+                number: true,
+                slugs: true,
+            },
+            TopBar {
+                brand: false,
+                handle: false,
+                number: false,
+                slugs: true,
+            },
+            TopBar {
+                brand: false,
+                handle: false,
+                number: false,
+                slugs: false,
+            },
+        ];
+        let width = usize::from(width);
+        let mut lines = fits.iter().map(|fit| self.top_bar_as(fit, store));
+        let last = lines.len() - 1;
+        let (left, right) = lines
+            .by_ref()
+            .enumerate()
+            .find(|(at, (left, right))| *at == last || left.width() + 2 + right.width() <= width)
+            .map(|(_, line)| line)
+            .expect("the last fit is always taken");
+        let pad = width.saturating_sub(left.width() + right.width());
+        let mut spans = left.spans;
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.extend(right.spans);
+        Line::from(spans)
+    }
+
+    fn top_bar_as(&self, fit: &TopBar, store: &Store) -> (Line<'static>, Line<'static>) {
+        let mut left = Vec::new();
+        if fit.brand {
+            left.push(Span::styled(
+                " /dev/null ",
+                Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
+            ));
+        }
         for (index, log) in LOGS.iter().enumerate() {
-            let label = format!("  {} {}", index + 1, log.slug());
+            let gap = if index == 0 && !fit.brand { " " } else { "  " };
+            let label = if fit.slugs {
+                format!("{gap}{} {}", index + 1, log.slug())
+            } else {
+                format!("{gap}{}", index + 1)
+            };
             let style = if *log == self.active {
                 Style::new()
                     .fg(theme::FOREGROUND)
@@ -153,9 +220,22 @@ impl LogScreen {
             } else {
                 theme::muted()
             };
-            spans.push(Span::styled(label, style));
+            left.push(Span::styled(label, style));
         }
-        Line::from(spans)
+        let mut right = Vec::new();
+        if store.unread > 0 {
+            right.push(Span::styled("● ", Style::new().fg(theme::PRIMARY)));
+            if fit.number {
+                right.push(Span::styled(format!("{}  ", store.unread), theme::muted()));
+            }
+        }
+        if fit.handle {
+            right.push(Span::styled(
+                format!("@{} ", store.me.username),
+                theme::muted(),
+            ));
+        }
+        (Line::from(left), Line::from(right))
     }
 
     pub fn draw<Tz: TimeZone>(

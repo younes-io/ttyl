@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Failure, Reply};
@@ -449,8 +449,7 @@ impl Engine {
                     Constraint::Length(1),
                 ])
                 .areas(area);
-                frame.render_widget(session.log.tabs(), top);
-                frame.render_widget(account_line(&session.store).right_aligned(), top);
+                frame.render_widget(session.log.top_bar(&session.store, top.width), top);
                 let active = session.log.active();
                 let loaded = match session.store.slot(active) {
                     Slot::Loaded(listing) => Some(listing),
@@ -534,19 +533,6 @@ impl Engine {
         };
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), column);
     }
-}
-
-fn account_line(store: &Store) -> Line<'static> {
-    let mut spans = Vec::new();
-    if store.unread > 0 {
-        spans.push(Span::styled("● ", Style::new().fg(theme::PRIMARY)));
-        spans.push(Span::styled(format!("{}  ", store.unread), theme::muted()));
-    }
-    spans.push(Span::styled(
-        format!("@{} ", store.me.username),
-        theme::muted(),
-    ));
-    Line::from(spans)
 }
 
 fn pill(count: u32) -> Line<'static> {
