@@ -3,7 +3,7 @@ mod common;
 use std::io;
 use std::time::Instant;
 
-use common::{account, boot, contains, key, page, press, screen, secs, serve};
+use common::{account, boot, contains, key, open_browser, page, press, screen, secs, serve};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::Log;
@@ -332,6 +332,79 @@ fn a_device_the_server_does_not_know_is_sent_to_sign_in() {
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "no browser here"), "{rows:#?}");
     assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+}
+
+#[test]
+fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2jj", at);
+    let effects = engine.pump(at + secs(30));
+    let [Effect::Run(poll, Call::Me)] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    engine.update(
+        Event::Reply(*poll, Err(refused(401, "device_not_approved"))),
+        at + secs(30),
+    );
+    let rows = screen(&mut engine, 80, 20, at + secs(30));
+    assert!(contains(&rows, "Sign in to read your logs."), "{rows:#?}");
+    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+    assert!(engine.log().is_none());
+    assert!(press(&mut engine, "j", at + secs(30)).is_empty());
+    assert!(
+        engine.pump(at + secs(120)).is_empty(),
+        "no poll runs for a device the server threw out"
+    );
+}
+
+/// Both workers are busy and a third refresh waits when the server revokes the device through one of them.
+fn revoked_mid_flight(at: Instant) -> (Engine, devnull::sched::Ticket) {
+    let mut engine = boot(at);
+    let effects = engine.pump(at + secs(30));
+    let [Effect::Run(poll, Call::Me)] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let effects = press(&mut engine, "R", at + secs(30));
+    let [Effect::Run(following, Call::Page(Log::Following))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(press(&mut engine, "2R", at + secs(30)).is_empty());
+    engine.update(
+        Event::Reply(*following, Err(refused(401, "device_not_approved"))),
+        at + secs(30),
+    );
+    (engine, *poll)
+}
+
+#[test]
+fn sign_out_drops_queued_calls_and_ignores_replies_to_calls_sent_before_it() {
+    let at = Instant::now();
+    let (mut engine, stale) = revoked_mid_flight(at);
+    assert!(
+        engine.pump(at + secs(30)).is_empty(),
+        "the refresh that was waiting is dropped"
+    );
+    open_browser(&mut engine, at + secs(31));
+    engine.update(
+        Event::Reply(stale, Ok(Reply::Account(account(0)))),
+        at + secs(32),
+    );
+    let rows = screen(&mut engine, 80, 20, at + secs(32));
+    assert!(
+        contains(&rows, "Waiting for you in the browser."),
+        "a stale account is not a sign-in: {rows:#?}"
+    );
+    assert!(engine.log().is_none());
+
+    let (mut engine, stale) = revoked_mid_flight(at);
+    open_browser(&mut engine, at + secs(31));
+    engine.update(Event::Reply(stale, Err(maintenance())), at + secs(32));
+    let rows = screen(&mut engine, 80, 20, at + secs(32));
+    assert!(
+        contains(&rows, "Waiting for you in the browser."),
+        "a stale failure does not cancel the browser: {rows:#?}"
+    );
 }
 
 #[test]

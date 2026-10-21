@@ -92,6 +92,28 @@ fn a_replaced_call_keeps_the_higher_priority() {
 }
 
 #[test]
+fn a_reset_drops_the_queues_and_disowns_what_was_flying() {
+    let now = Instant::now();
+    let mut sched = Scheduler::new(1);
+    sched.send(Call::Me, Priority::Now);
+    sched.send(Call::Page(Log::Latest), Priority::Later);
+    let released = sched.release(now);
+    assert_eq!(released.len(), 1);
+
+    sched.reset();
+    assert!(sched.release(now).is_empty());
+    assert!(sched.finish(released[0].0).is_none());
+
+    sched.send(Call::Me, Priority::Now);
+    let again = sched.release(now);
+    assert_eq!(again.len(), 1);
+    assert_ne!(
+        again[0].0, released[0].0,
+        "tickets stay unique across a reset"
+    );
+}
+
+#[test]
 fn a_hold_keeps_everything_until_it_passes() {
     let now = Instant::now();
     let mut sched = Scheduler::new(2);

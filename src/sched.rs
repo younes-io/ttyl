@@ -124,6 +124,13 @@ impl Scheduler {
         self.flying.remove(&ticket)
     }
 
+    /// Forgets every queued and in-flight call; replies to them then finish as unknown tickets.
+    pub fn reset(&mut self) {
+        self.now.clear();
+        self.later.clear();
+        self.flying.clear();
+    }
+
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         if self.now.is_empty() && self.later.is_empty() {
             return None;

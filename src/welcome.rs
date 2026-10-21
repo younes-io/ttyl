@@ -25,16 +25,31 @@ pub enum Step {
     Redeeming,
 }
 
-/// Holds the `devnull://` handler while the browser is out, and gives it back when dropped.
 pub struct Wait {
     pub attempt: Attempt,
     pub url: String,
+    _listener: Option<Listener>,
+}
+
+impl Wait {
+    /// A wait with nothing listening for the redirect, so links reach it only through `Event::Link`.
+    pub fn new(attempt: Attempt, url: String) -> Self {
+        Wait {
+            attempt,
+            url,
+            _listener: None,
+        }
+    }
+}
+
+/// Holds the `devnull://` handler while the browser is out, and gives it back when dropped.
+struct Listener {
     _handler: Handler,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl Drop for Wait {
+impl Drop for Listener {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
@@ -79,9 +94,11 @@ pub fn start(client: &Client, device_name: &str, events: Sender<Event>) -> io::R
     Ok(Wait {
         attempt,
         url,
-        _handler: handler,
-        stop,
-        thread: Some(thread),
+        _listener: Some(Listener {
+            _handler: handler,
+            stop,
+            thread: Some(thread),
+        }),
     })
 }
 

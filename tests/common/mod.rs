@@ -66,6 +66,8 @@ use chrono::{DateTime, FixedOffset};
 use devnull::api::{Account, Call, Reply};
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::{Log, LogPage};
+use devnull::signin::{Attempt, REDIRECT_URI};
+use devnull::welcome::Wait;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -121,6 +123,35 @@ pub fn serve(engine: &mut Engine, at: Instant) {
             }
         }
     }
+}
+
+/// What the test keeps of the attempt the engine holds, to forge the browser's redirect and check the redeem.
+pub struct Browser {
+    pub state: String,
+    pub verifier: String,
+}
+
+impl Browser {
+    pub fn redirect(&self, query: &str) -> String {
+        format!("{REDIRECT_URI}?{query}&state={}", self.state)
+    }
+}
+
+/// Presses Enter on the sign-in screen and answers with a browser wait that no socket feeds.
+pub fn open_browser(engine: &mut Engine, at: Instant) -> Browser {
+    let effects = engine.update(
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        at,
+    );
+    assert_eq!(effects, [Effect::StartSignIn]);
+    let attempt = Attempt::random();
+    let browser = Browser {
+        state: attempt.state.clone(),
+        verifier: attempt.verifier.clone(),
+    };
+    let url = attempt.authorize_url("https://dev-null.sh", "SHA256:test", "devnull-tui");
+    engine.update(Event::SignIn(Ok(Wait::new(attempt, url))), at);
+    browser
 }
 
 pub fn key(ch: char) -> KeyEvent {

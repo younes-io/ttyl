@@ -327,6 +327,7 @@ impl Engine {
     }
 
     fn sign_out(&mut self) {
+        self.sched.reset();
         self.phase = Phase::SignIn(Step::Ready(None));
         self.health = None;
         self.timers = Timers::default();
