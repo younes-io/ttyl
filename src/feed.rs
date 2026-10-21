@@ -419,7 +419,11 @@ fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
     line
 }
 
-fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Vec<Span<'static>> {
+pub(crate) fn header<Tz: TimeZone>(
+    commit: &Commit,
+    width: usize,
+    now: &DateTime<Tz>,
+) -> Vec<Span<'static>> {
     let author = &commit.author;
     let bold = Style::new()
         .fg(theme::FOREGROUND)
@@ -485,7 +489,7 @@ fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
 
 /// Prose wraps at word boundaries and code blocks hard-wrap, both to `width`. A text segment's trailing newline
 /// before a block ends the line rather than adding a blank one, as `white-space: pre-wrap` renders it on the web.
-fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>> {
+pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>> {
     let text = Style::new().fg(theme::FOREGROUND);
     let mut lines = Vec::new();
     let mut paragraph: Vec<(String, Style)> = Vec::new();

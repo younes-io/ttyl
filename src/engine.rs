@@ -15,7 +15,7 @@ use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::fatal;
 use crate::keys::{
     self, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, SPLASH_SCOPES,
-    Scope,
+    Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::Log;
@@ -23,6 +23,7 @@ use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
 use crate::store::{Slot, Store};
 use crate::theme;
+use crate::thread::ThreadScreen;
 use crate::welcome::{self, Step, Wait};
 
 pub const WORKERS: usize = 2;
@@ -57,20 +58,59 @@ pub enum Phase {
 pub struct Session {
     pub store: Store,
     pub log: LogScreen,
+    threads: Vec<ThreadScreen>,
     help: bool,
     asked_to_refresh: HashSet<Log>,
 }
 
 impl Session {
-    fn log_allows(&self, action: Action) -> bool {
-        matches!(action, Action::Quit | Action::Help) || self.log.can(action, &self.store)
+    fn screen_scopes(&self) -> &'static [Scope] {
+        if self.threads.is_empty() {
+            LOG_SCOPES
+        } else {
+            THREAD_SCOPES
+        }
+    }
+
+    fn screen_allows(&self, action: Action) -> bool {
+        matches!(action, Action::Quit | Action::Help)
+            || match self.threads.last() {
+                Some(thread) => thread.can(action, &self.store),
+                None => self.log.can(action, &self.store),
+            }
+    }
+
+    fn on_thread(&mut self, action: Action, now: Instant) {
+        match action {
+            Action::Back => {
+                self.threads.pop();
+            }
+            Action::Show(_) | Action::NextLog => {
+                self.threads.clear();
+                self.log.act(action, &self.store);
+            }
+            Action::Open => {
+                if let Some(id) = self
+                    .threads
+                    .last()
+                    .and_then(|thread| thread.opens(&self.store))
+                {
+                    self.threads.push(ThreadScreen::new(id, now));
+                }
+            }
+            action => {
+                if let Some(thread) = self.threads.last_mut() {
+                    thread.act(action, &self.store);
+                }
+            }
+        }
     }
 
     fn can(&self, action: Action) -> bool {
         if self.help {
             matches!(action, Action::Quit | Action::Close)
         } else {
-            self.log_allows(action)
+            self.screen_allows(action)
         }
     }
 }
@@ -121,9 +161,16 @@ impl Engine {
         }
     }
 
+    pub fn thread(&self) -> Option<&ThreadScreen> {
+        match &self.phase {
+            Phase::Ready(session) => session.threads.last(),
+            Phase::Splash | Phase::SignIn(_) => None,
+        }
+    }
+
     pub fn update(&mut self, event: Event, now: Instant) -> Vec<Effect> {
         match event {
-            Event::Key(key) => self.key(key),
+            Event::Key(key) => self.key(key, now),
             Event::Reply(ticket, result) => {
                 if let Some((call, priority)) = self.sched.finish(ticket) {
                     match result {
@@ -245,7 +292,7 @@ impl Engine {
             Phase::Splash => SPLASH_SCOPES,
             Phase::SignIn(_) => GATE_SCOPES,
             Phase::Ready(session) if session.help => HELP_SCOPES,
-            Phase::Ready(_) => LOG_SCOPES,
+            Phase::Ready(session) => session.screen_scopes(),
         }
     }
 
@@ -256,7 +303,7 @@ impl Engine {
         }
     }
 
-    fn key(&mut self, event: KeyEvent) -> Vec<Effect> {
+    fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         let scopes = self.scopes();
         let mode = self.input_mode();
         let Engine {
@@ -267,20 +314,33 @@ impl Engine {
         } = self;
         let can = |action| can(phase, health.as_ref(), action);
         match keymap.resolve(event, mode, scopes, &can) {
-            Resolve::Act(action) => self.act(action),
+            Resolve::Act(action) => self.act(action, now),
             Resolve::Pending | Resolve::Text(_) | Resolve::Ignored => Vec::new(),
         }
     }
 
-    fn act(&mut self, action: Action) -> Vec<Effect> {
+    fn act(&mut self, action: Action, now: Instant) -> Vec<Effect> {
         match (&mut self.phase, action) {
             (_, Action::Quit) => return vec![Effect::Quit],
+            (Phase::Ready(session), Action::Help) => session.help = true,
+            (Phase::Ready(session), Action::Close) => session.help = false,
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(Timer::Retry);
                 self.sched.send(Call::Me, Priority::Now);
             }
             (Phase::SignIn(_), Action::SignIn) => return vec![Effect::StartSignIn],
             (Phase::SignIn(step), Action::StartOver) => *step = Step::Ready(None),
+            (Phase::Ready(session), action) if !session.threads.is_empty() => {
+                session.on_thread(action, now);
+            }
+            (Phase::Ready(session), Action::Open) => {
+                if let Some(id) = session
+                    .log
+                    .selected_id(session.log.active(), &session.store)
+                {
+                    session.threads.push(ThreadScreen::new(id.clone(), now));
+                }
+            }
             (Phase::Ready(session), Action::Refresh) => {
                 let log = session.log.active();
                 session.asked_to_refresh.insert(log);
@@ -288,8 +348,6 @@ impl Engine {
                 self.timers.clear(Timer::Older(log));
                 self.sched.send(Call::Page(log), Priority::Now);
             }
-            (Phase::Ready(session), Action::Help) => session.help = true,
-            (Phase::Ready(session), Action::Close) => session.help = false,
             (Phase::Ready(session), action) => session.log.act(action, &session.store),
             (Phase::Splash | Phase::SignIn(_), _) => {}
         }
@@ -322,6 +380,7 @@ impl Engine {
         self.phase = Phase::Ready(Box::new(Session {
             store: Store::new(account),
             log: LogScreen::default(),
+            threads: Vec::new(),
             help: false,
             asked_to_refresh: HashSet::new(),
         }));
@@ -462,8 +521,10 @@ impl Engine {
                     Slot::Loaded(listing) => Some(listing),
                     Slot::Loading | Slot::Failed(_) => None,
                 };
+                let on_log = session.threads.is_empty();
                 if let Some(listing) = loaded
                     && listing.new_commits > 0
+                    && on_log
                 {
                     frame.render_widget(pill(listing.new_commits), banner);
                 }
@@ -471,10 +532,15 @@ impl Engine {
                     page: self.timers.remaining(Timer::Reload(active), now),
                     older: self.timers.remaining(Timer::Older(active), now),
                 };
-                let failure = loaded.and_then(|listing| match &listing.failure {
-                    Some(failure) => Some((failure, retry.page)),
-                    None => self.health.as_ref().map(|failure| (failure, next_call)),
-                });
+                let health = self.health.as_ref().map(|failure| (failure, next_call));
+                let failure = if on_log {
+                    loaded.and_then(|listing| match &listing.failure {
+                        Some(failure) => Some((failure, retry.page)),
+                        None => health,
+                    })
+                } else {
+                    health
+                };
                 let error = failure
                     .filter(|_| self.toast.is_none() && self.keymap.pending().is_empty())
                     .and_then(|(failure, wait)| {
@@ -490,9 +556,12 @@ impl Engine {
                     ]),
                     None => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
-                session
-                    .log
-                    .draw(frame, inset(body), &session.store, retry, wall);
+                match session.threads.last_mut() {
+                    Some(thread) => thread.draw(frame, inset(body), &session.store, now, wall),
+                    None => session
+                        .log
+                        .draw(frame, inset(body), &session.store, retry, wall),
+                }
                 frame.render_widget(hint, foot);
                 if self.sched.busy() {
                     let frame_index =
@@ -554,7 +623,8 @@ fn pill(count: u32) -> Line<'static> {
 }
 
 fn draw_help(frame: &mut Frame, session: &Session) {
-    let rows: Vec<String> = keys::help(LOG_SCOPES, &|action| session.log_allows(action))
+    let allows = |action| session.screen_allows(action);
+    let rows: Vec<String> = keys::help(session.screen_scopes(), &allows)
         .into_iter()
         .map(|(key, help)| format!("{key:>8}  {help}"))
         .collect();

@@ -122,10 +122,14 @@ impl LogScreen {
                 .get(self.selected())
                 .and_then(|id| store.row(id))
                 .is_some_and(|row| row.commit.preview_segments.is_some()),
+            Action::Open => !ids.is_empty(),
             Action::Show(_) | Action::NextLog | Action::Refresh => true,
-            Action::Quit | Action::Help | Action::Close | Action::SignIn | Action::StartOver => {
-                false
-            }
+            Action::Back
+            | Action::Quit
+            | Action::Help
+            | Action::Close
+            | Action::SignIn
+            | Action::StartOver => false,
         }
     }
 

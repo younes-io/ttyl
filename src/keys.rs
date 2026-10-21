@@ -11,6 +11,8 @@ pub enum Action {
     Top,
     Bottom,
     Expand,
+    Open,
+    Back,
     Show(Log),
     NextLog,
     Refresh,
@@ -27,6 +29,7 @@ pub enum Scope {
     Gate,
     Help,
     Log,
+    Thread,
     List,
     Global,
 }
@@ -35,7 +38,14 @@ pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
 pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const LOG_SCOPES: &[Scope] = &[Scope::List, Scope::Log, Scope::Global, Scope::Always];
-pub const UNIONS: &[&[Scope]] = &[SPLASH_SCOPES, GATE_SCOPES, HELP_SCOPES, LOG_SCOPES];
+pub const THREAD_SCOPES: &[Scope] = &[Scope::List, Scope::Thread, Scope::Global, Scope::Always];
+pub const UNIONS: &[&[Scope]] = &[
+    SPLASH_SCOPES,
+    GATE_SCOPES,
+    HELP_SCOPES,
+    LOG_SCOPES,
+    THREAD_SCOPES,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -137,6 +147,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Log,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter/o open"),
+        help: "open the thread",
+    },
+    Binding {
+        scope: Scope::Log,
         chords: &[&[Key::ch(' ')]],
         action: Action::Expand,
         hint: Some("space expand"),
@@ -176,6 +193,62 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: Some("R refresh"),
         help: "refresh this log",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter open"),
+        help: "open this commit's thread",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::ch(' ')]],
+        action: Action::Expand,
+        hint: None,
+        help: "expand the selected commit",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::ch('1')]],
+        action: Action::Show(Log::Following),
+        hint: None,
+        help: "following",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::ch('2')]],
+        action: Action::Show(Log::Latest),
+        hint: None,
+        help: "latest",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::ch('3')]],
+        action: Action::Show(Log::Trending),
+        hint: None,
+        help: "trending",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::code(KeyCode::Tab)]],
+        action: Action::NextLog,
+        hint: None,
+        help: "next log",
+    },
+    Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::ch('R')]],
+        action: Action::Refresh,
+        hint: None,
+        help: "reload this thread",
     },
     Binding {
         scope: Scope::Global,

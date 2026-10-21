@@ -12,4 +12,5 @@ pub mod sched;
 pub mod signin;
 pub mod store;
 pub mod theme;
+pub mod thread;
 pub mod welcome;

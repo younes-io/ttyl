@@ -121,7 +121,7 @@ fn help_lists_exactly_the_keys_that_work_now() {
     for shown in ["following", "refresh this log", "quit", "these keys"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
-    for hidden in ["move down", "expand the selected commit"] {
+    for hidden in ["move down", "expand the selected commit", "open the thread"] {
         assert!(
             !contains(&rows, hidden),
             "{hidden} shown for an empty log: {rows:#?}"
@@ -568,7 +568,10 @@ fn refresh_toasts_then_the_hints_come_back() {
 
     engine.pump(at + secs(5));
     let rows = screen(&mut engine, 80, 20, at + secs(5));
-    assert_eq!(rows[19], " j/k move  1-3 log  R refresh  ? help  Q quit");
+    assert_eq!(
+        rows[19],
+        " j/k move  enter/o open  1-3 log  R refresh  ? help  Q quit"
+    );
 }
 
 #[test]

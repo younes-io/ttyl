@@ -242,3 +242,9 @@ pub fn contains(rows: &[String], needle: &str) -> bool {
 pub fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
+
+pub fn tap(engine: &mut Engine, code: KeyCode, at: Instant) -> Vec<Effect> {
+    let mut effects = engine.update(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), at);
+    effects.extend(engine.pump(at));
+    effects
+}
