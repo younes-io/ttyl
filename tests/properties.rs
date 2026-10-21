@@ -113,6 +113,47 @@ fn row() -> impl Strategy<Value = Row> {
         )
 }
 
+/// Takes what a row quotes, its reply preview and its media from the fixture rows that carry each kind, so the
+/// generated rows cover every kind the API sends.
+fn attachments(row: Row) -> impl Strategy<Value = Row> {
+    let rows = page("log-latest").rows;
+    let donor = move |hash: &str| {
+        rows.iter()
+            .find(|row| row.commit.short_hash == hash)
+            .unwrap()
+            .clone()
+    };
+    let quotes = vec![None, Some(donor("e4f5a62")), Some(donor("0000a01"))];
+    let replies = vec![donor("0000301"), donor("e4f5a61"), donor("0000201")];
+    let media = vec![
+        donor("0000301"),
+        donor("0000601"),
+        donor("0000701"),
+        donor("0000801"),
+    ];
+    (
+        prop::sample::select(quotes),
+        prop::sample::select(replies),
+        prop::sample::select(media),
+        prop::option::of(body()),
+        "\\PC{0,80}",
+    )
+        .prop_map(move |(quote, reply, media, title, url)| {
+            let mut row = row.clone();
+            if let Some(quote) = quote {
+                row.commit.quoted_commit_id = quote.commit.quoted_commit_id;
+                row.quoted_commit = quote.quoted_commit;
+            }
+            row.reply_preview = reply.reply_preview;
+            row.media = media.media;
+            if let Some(preview) = &mut row.media.link_preview {
+                preview.title = title;
+                preview.url = url;
+            }
+            row
+        })
+}
+
 fn suggestion(row: Row) -> Suggestion {
     Suggestion {
         commit: row.commit,
@@ -124,7 +165,7 @@ fn suggestion(row: Row) -> Suggestion {
 fn any_page() -> impl Strategy<Value = LogPage> {
     (
         prop::sample::select(vec![Log::Following, Log::Latest, Log::Trending]),
-        prop::collection::vec(row(), 0..5),
+        prop::collection::vec(row().prop_flat_map(attachments), 0..5),
         any::<bool>(),
         any::<bool>(),
         prop::collection::vec(row().prop_map(suggestion), 0..4),

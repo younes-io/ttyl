@@ -61,7 +61,7 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
 fn latest_draws_headers_day_markers_and_badges() {
     let mut app = app();
     press(&mut app, "2");
-    let rows = screen(&mut app, 70, 60);
+    let rows = screen(&mut app, 70, 120);
     assert!(rows[0].ends_with("@ada"), "signed-in user: {:?}", rows[0]);
     let first = rows
         .iter()
@@ -101,6 +101,113 @@ fn space_unfolds_the_selected_long_commit() {
     );
 }
 
+/// The screen rows from the header of the commit with `hash` up to the next header or day marker.
+fn commit_rows(rows: &[String], hash: &str) -> Vec<String> {
+    let start = rows
+        .iter()
+        .position(|row| row.contains(" ● ") && row.trim_end().ends_with(hash))
+        .unwrap_or_else(|| panic!("{hash} is on screen: {rows:#?}"));
+    let end = rows[start + 1..]
+        .iter()
+        .position(|row| row.starts_with(" ● ") || row.starts_with(" ┆"))
+        .map_or(rows.len(), |end| start + 1 + end);
+    rows[start..end].to_vec()
+}
+
+#[test]
+fn a_quoted_commit_sits_in_a_box_under_the_quoting_commit() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = commit_rows(&screen(&mut app, 70, 120), "e4f5a62");
+    let top = rows
+        .iter()
+        .position(|row| row.contains("╭"))
+        .expect("box top");
+    assert!(rows[top].trim_end().ends_with("╮"), "{rows:#?}");
+    assert!(
+        rows[top + 1].starts_with(" │ │ Margaret @margaret · 11h"),
+        "{rows:#?}"
+    );
+    assert!(rows[top + 1].trim_end().ends_with("0000401 │"), "{rows:#?}");
+    let bottom = rows
+        .iter()
+        .position(|row| row.contains("╰"))
+        .expect("box bottom");
+    assert!(
+        rows[top + 1..bottom]
+            .iter()
+            .all(|row| row.trim_end().ends_with('│')),
+        "every line inside the box is closed on the right: {rows:#?}"
+    );
+    assert!(
+        rows[top..=bottom]
+            .iter()
+            .all(|row| row.trim_end().chars().count() == 70 - 1),
+        "the box spans the content width: {rows:#?}"
+    );
+    assert!(
+        rows[bottom + 1].contains("↩ 0   ★ 0"),
+        "the footer follows the box: {rows:#?}"
+    );
+}
+
+#[test]
+fn a_deleted_quote_and_a_deleted_reply_read_as_bad_objects() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = screen(&mut app, 70, 120);
+    let quote = commit_rows(&rows, "0000a01");
+    assert!(
+        contains(&quote, "│ │ fatal: bad object 0000b01"),
+        "{quote:#?}"
+    );
+    assert!(contains(&quote, "This commit is no longer available."));
+    let reply = commit_rows(&rows, "0000201");
+    assert!(
+        reply
+            .iter()
+            .any(|row| row.trim_end().ends_with("○ fatal: bad object 0000202")),
+        "{reply:#?}"
+    );
+}
+
+#[test]
+fn the_newest_reply_previews_on_one_line_under_its_commit() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = commit_rows(&screen(&mut app, 70, 120), "e4f5a61");
+    let footer = rows
+        .iter()
+        .position(|row| row.contains("↩ 3   ★ 12"))
+        .expect("footer");
+    assert_eq!(
+        rows[footer + 1].trim_end(),
+        " ┃   ● Grace @grace · 10m  @ada did you keep an index on created_at?"
+    );
+}
+
+#[test]
+fn link_previews_images_and_polls_each_take_one_line() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = screen(&mut app, 80, 120);
+    assert!(
+        contains(
+            &commit_rows(&rows, "0000601"),
+            "│ We need tool support for keyset pagination · use-the-index-luke.com"
+        ),
+        "{rows:#?}"
+    );
+    assert!(contains(
+        &commit_rows(&rows, "0000701"),
+        "│ [2 images on the web]"
+    ));
+    assert!(contains(
+        &commit_rows(&rows, "0000801"),
+        "│ [a poll on the web]"
+    ));
+}
+
 #[test]
 fn selection_stays_on_screen_while_moving_down_a_short_terminal() {
     let mut app = app();
@@ -134,7 +241,7 @@ fn selection_stays_on_screen_while_moving_down_a_short_terminal() {
 fn trending_is_ranked_so_it_has_no_day_markers_and_ends_at_the_root() {
     let mut app = app();
     press(&mut app, "3");
-    let rows = screen(&mut app, 70, 80);
+    let rows = screen(&mut app, 70, 120);
     assert!(!contains(&rows, "┆"));
     assert!(contains(
         &rows,

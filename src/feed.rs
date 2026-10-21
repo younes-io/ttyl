@@ -12,7 +12,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::code;
-use crate::model::{Commit, CommitId, Log, LogPage, Row, Segment, Status};
+use crate::model::{
+    Commit, CommitId, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown, Status,
+};
 use crate::theme;
 
 const RAIL_WIDTH: usize = 2;
@@ -129,6 +131,11 @@ impl Writer {
         }
     }
 
+    fn line(&mut self, rail: Span<'static>, mut spans: Vec<Span<'static>>) {
+        spans.insert(0, rail);
+        self.lines.push(Line::from(spans));
+    }
+
     fn gap(&mut self) {
         self.push(Span::styled("│", Style::new().fg(theme::RAIL)), Vec::new());
     }
@@ -161,6 +168,19 @@ fn row_lines<Tz: TimeZone>(
             vec![Span::styled("… show more", Style::new().fg(theme::PRIMARY))],
         );
     }
+    let mut lines = Vec::new();
+    web_only(&row.media, out.content(), &mut lines);
+    for line in lines {
+        out.line(rail.clone(), line);
+    }
+    if commit.quoted_commit_id.is_some() {
+        quote(out, &rail, row.quoted_commit.as_ref(), now);
+    }
+    let mut lines = Vec::new();
+    link_preview(&row.media, out.content(), &mut lines);
+    for line in lines {
+        out.line(rail.clone(), line);
+    }
 
     let star = if row.starred {
         Style::new().fg(theme::AMBER)
@@ -168,13 +188,209 @@ fn row_lines<Tz: TimeZone>(
         theme::muted()
     };
     out.push(
-        rail,
+        rail.clone(),
         vec![
             Span::styled(format!("↩ {}", row.replies_count), theme::muted()),
             Span::raw("   "),
             Span::styled(format!("★ {}", row.stars_count), star),
         ],
     );
+    if let Some(reply) = row.reply_preview.data.first() {
+        let width = out.content();
+        out.line(rail, reply_line(reply, width, now));
+    }
+}
+
+/// Images and polls are not in the API, so the feed only says they exist.
+fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
+    let mut parts = Vec::new();
+    match media.images.len() {
+        0 => {}
+        1 => parts.push("1 image".to_owned()),
+        count => parts.push(format!("{count} images")),
+    }
+    if media.poll.is_some() {
+        parts.push("a poll".to_owned());
+    }
+    if !parts.is_empty() {
+        let note = format!("[{} on the web]", parts.join(" and "));
+        wrap(&[(note, theme::muted())], width, out);
+    }
+}
+
+/// The web draws no card until the server has fetched the page's title.
+fn link_preview(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
+    let Some(preview) = &media.link_preview else {
+        return;
+    };
+    let Some(title) = &preview.title else {
+        return;
+    };
+    wrap(
+        &[
+            (title.clone(), Style::new().fg(theme::FOREGROUND)),
+            (format!(" · {}", domain(&preview.url)), theme::muted()),
+        ],
+        width,
+        out,
+    );
+}
+
+/// Mirrors the web's `hostname`, which drops a leading `www.`.
+fn domain(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+    let host = host.split(':').next().unwrap_or(host);
+    host.strip_prefix("www.").unwrap_or(host)
+}
+
+const QUOTE_LINES: usize = 4;
+
+fn quote<Tz: TimeZone>(
+    out: &mut Writer,
+    rail: &Span<'static>,
+    quoted: Option<&Shown<Quote>>,
+    now: &DateTime<Tz>,
+) {
+    let inner = out.content().saturating_sub(4).max(1);
+    let mut lines = Vec::new();
+    match quoted {
+        Some(Shown::Live(quote)) => {
+            let commit = &quote.commit;
+            lines.push(header(commit, inner, now));
+            let segments = commit
+                .preview_segments
+                .as_ref()
+                .unwrap_or(&commit.body_segments);
+            let mut text = body(segments, inner);
+            if text.len() > QUOTE_LINES {
+                text.truncate(QUOTE_LINES);
+                text.push(vec![Span::styled("…", theme::muted())]);
+            }
+            lines.extend(text);
+            web_only(&quote.media, inner, &mut lines);
+            link_preview(&quote.media, inner, &mut lines);
+        }
+        Some(Shown::Deleted(tombstone)) => {
+            for text in [
+                bad_object(&tombstone.short_hash()),
+                "This commit is no longer available.".to_owned(),
+            ] {
+                wrap(&[(text, theme::muted())], inner, &mut lines);
+            }
+        }
+        None => wrap(
+            &[("This commit isn't available.".to_owned(), theme::muted())],
+            inner,
+            &mut lines,
+        ),
+    }
+
+    let border = Style::new().fg(theme::RAIL);
+    let edge = "─".repeat(inner + 2);
+    out.line(
+        rail.clone(),
+        vec![Span::styled(format!("╭{edge}╮"), border)],
+    );
+    for mut line in lines {
+        let used: usize = line.iter().map(Span::width).sum();
+        line.insert(0, Span::styled("│ ", border));
+        line.push(Span::raw(" ".repeat(inner.saturating_sub(used))));
+        line.push(Span::styled(" │", border));
+        out.line(rail.clone(), line);
+    }
+    out.line(
+        rail.clone(),
+        vec![Span::styled(format!("╰{edge}╯"), border)],
+    );
+}
+
+fn bad_object(short_hash: &str) -> String {
+    format!("fatal: bad object {short_hash}")
+}
+
+/// The newest reply, on one line under its commit, as the web previews it.
+fn reply_line<Tz: TimeZone>(
+    reply: &Shown<Reply>,
+    width: usize,
+    now: &DateTime<Tz>,
+) -> Vec<Span<'static>> {
+    let reply = match reply {
+        Shown::Live(reply) => reply,
+        Shown::Deleted(tombstone) => {
+            return fit(
+                vec![
+                    Span::styled("  ○ ", Style::new().fg(theme::RAIL)),
+                    Span::styled(bad_object(&tombstone.short_hash()), theme::muted()),
+                ],
+                width,
+            );
+        }
+    };
+    let commit = &reply.commit;
+    let author = &commit.author;
+    let mut spans = vec![
+        Span::styled("  ● ", Style::new().fg(theme::lane(author.lane))),
+        Span::styled(
+            author.name.clone(),
+            Style::new()
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                " @{} · {}  ",
+                author.username,
+                relative_time(commit.created_at, now)
+            ),
+            theme::muted(),
+        ),
+    ];
+    spans.extend(one_line(
+        &commit.body_segments,
+        Style::new().fg(theme::FOREGROUND),
+    ));
+    fit(spans, width)
+}
+
+/// A body on one line, the way the web's `truncate` shows it: runs of whitespace collapse to one space, and a
+/// code block keeps only its first line.
+fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
+    let mut line = Vec::new();
+    let mut gap = false;
+    let mut add = |piece: &str, style: Style, gap: &mut bool| {
+        if piece.is_empty() {
+            return;
+        }
+        if mem::take(gap) && !line.is_empty() {
+            append(&mut line, " ", text);
+        }
+        append(&mut line, piece, style);
+    };
+    for segment in segments {
+        match segment {
+            Segment::Text { text: body } => {
+                for (index, word) in body.split(char::is_whitespace).enumerate() {
+                    gap |= index > 0;
+                    add(word, text, &mut gap);
+                }
+            }
+            Segment::Code { code } => add(&code.replace('\t', TAB), theme::hl(None), &mut gap),
+            Segment::Block { html, .. } => {
+                gap = true;
+                let lines = code::block_lines(html);
+                let first = lines
+                    .iter()
+                    .find(|line| line.iter().any(|span| !span.text.trim().is_empty()));
+                for span in first.into_iter().flatten() {
+                    add(&span.text.replace('\t', TAB), theme::hl(span.hl), &mut gap);
+                }
+                gap = true;
+            }
+        }
+    }
+    line
 }
 
 fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Vec<Span<'static>> {
