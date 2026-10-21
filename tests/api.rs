@@ -172,7 +172,10 @@ fn a_log_page_is_read_from_its_route() {
     };
     assert_eq!(page.log, Log::Trending);
     assert!(page.is_ranked);
-    assert!(seen.head.starts_with("GET /api/v1/log/trending HTTP/1.1\r\n"));
+    assert!(
+        seen.head
+            .starts_with("GET /api/v1/log/trending HTTP/1.1\r\n")
+    );
 }
 
 #[test]

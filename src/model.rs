@@ -10,7 +10,7 @@ pub struct CommitId(pub String);
 #[serde(transparent)]
 pub struct UserId(pub String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Log {
     Following,
