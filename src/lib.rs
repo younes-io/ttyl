@@ -4,6 +4,7 @@ pub mod clock;
 pub mod code;
 pub mod device;
 pub mod feed;
+pub mod keys;
 pub mod model;
 pub mod sched;
 pub mod signin;
