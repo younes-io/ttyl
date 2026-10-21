@@ -72,8 +72,8 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
     loop {
         let now = Instant::now();
         let effects = runtime.engine.pump(now);
-        if runtime.perform(effects).is_break() {
-            return Ok(());
+        if let ControlFlow::Break(result) = runtime.perform(effects) {
+            return result;
         }
         terminal.draw(|frame| runtime.engine.draw(frame, now, &Local::now()))?;
         let event = match runtime.engine.next_wake(Instant::now()) {
@@ -92,15 +92,15 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
         pending.extend(inbox.try_iter());
         for event in pending {
             let effects = runtime.engine.update(event, Instant::now());
-            if runtime.perform(effects).is_break() {
-                return Ok(());
+            if let ControlFlow::Break(result) = runtime.perform(effects) {
+                return result;
             }
         }
     }
 }
 
 impl Runtime {
-    fn perform(&mut self, effects: Vec<Effect>) -> ControlFlow<()> {
+    fn perform(&mut self, effects: Vec<Effect>) -> ControlFlow<io::Result<()>> {
         for effect in effects {
             match effect {
                 Effect::Run(ticket, call) => {
@@ -112,7 +112,10 @@ impl Runtime {
                     let effects = self.engine.update(Event::SignIn(started), Instant::now());
                     self.perform(effects)?;
                 }
-                Effect::Quit => return ControlFlow::Break(()),
+                Effect::Quit => return ControlFlow::Break(Ok(())),
+                Effect::Abort(message) => {
+                    return ControlFlow::Break(Err(io::Error::other(message)));
+                }
             }
         }
         ControlFlow::Continue(())
@@ -126,7 +129,10 @@ fn spawn_input(events: Sender<Event>) {
                 Ok(Input::Key(key)) => Event::Key(key),
                 Ok(Input::Resize(..)) => Event::Tick,
                 Ok(_) => continue,
-                Err(_) => return,
+                Err(error) => {
+                    let _ = events.send(Event::InputLost(error));
+                    return;
+                }
             };
             if events.send(event).is_err() {
                 return;

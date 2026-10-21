@@ -33,6 +33,7 @@ pub enum Event {
     Tick,
     SignIn(io::Result<Wait>),
     Link(io::Result<String>),
+    InputLost(io::Error),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +41,8 @@ pub enum Effect {
     Run(Ticket, Call),
     StartSignIn,
     Quit,
+    /// Ends the app with a message for stderr and a failing exit code.
+    Abort(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +164,9 @@ impl Engine {
             Event::Link(result) => {
                 self.link(result);
                 Vec::new()
+            }
+            Event::InputLost(error) => {
+                vec![Effect::Abort(format!("can't read the keyboard: {error}"))]
             }
         }
     }

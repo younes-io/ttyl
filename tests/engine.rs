@@ -36,7 +36,7 @@ fn runs(effects: &[Effect]) -> Vec<&Call> {
         .iter()
         .filter_map(|effect| match effect {
             Effect::Run(_, call) => Some(call),
-            Effect::StartSignIn | Effect::Quit => None,
+            Effect::StartSignIn | Effect::Quit | Effect::Abort(_) => None,
         })
         .collect()
 }
@@ -555,6 +555,19 @@ fn a_refresh_folded_into_a_call_in_flight_still_answers_the_user() {
         "{rows:#?}"
     );
     assert!(!contains(&rows, "refreshed"), "{rows:#?}");
+}
+
+#[test]
+fn losing_the_keyboard_ends_the_app_with_a_reason() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = engine.update(Event::InputLost(io::Error::other("tty gone")), at);
+    assert_eq!(
+        effects,
+        [Effect::Abort(
+            "can't read the keyboard: tty gone".to_owned()
+        )]
+    );
 }
 
 #[test]
