@@ -1,10 +1,11 @@
 pub mod api;
-pub mod app;
 pub mod clock;
 pub mod code;
 pub mod device;
+pub mod engine;
 pub mod feed;
 pub mod keys;
+pub mod log;
 pub mod model;
 pub mod sched;
 pub mod signin;

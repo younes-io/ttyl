@@ -1,3 +1,6 @@
+//! Helpers shared by the integration tests. Each test file uses a few of them.
+#![allow(dead_code)]
+
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -56,4 +59,107 @@ pub fn openssh_accepts(
         .write_all(message.as_bytes())
         .unwrap();
     child.wait().unwrap().success()
+}
+
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, FixedOffset};
+use devnull::api::{Account, Call, Reply};
+use devnull::engine::{Effect, Engine, Event};
+use devnull::model::{Log, LogPage};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+pub fn page(log: Log) -> LogPage {
+    let json = std::fs::read_to_string(format!(
+        "{}/fixtures/log-{}.json",
+        env!("CARGO_MANIFEST_DIR"),
+        log.slug()
+    ))
+    .unwrap();
+    LogPage::parse(&json).unwrap()
+}
+
+pub fn account(unread: u32) -> Account {
+    serde_json::from_value(serde_json::json!({
+        "data": { "username": "ada", "name": "Ada" },
+        "unread_notifications_count": unread,
+    }))
+    .unwrap()
+}
+
+pub fn now() -> DateTime<FixedOffset> {
+    DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
+}
+
+/// An engine past its first `/me`, with every page served. `at` is the moment the pages landed.
+pub fn boot(at: Instant) -> Engine {
+    let mut engine = Engine::new("devnull-tui".to_owned(), at);
+    let effects = engine.pump(at);
+    let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
+        panic!("the engine asks for /me first: {effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Ok(Reply::Account(account(3)))), at);
+    serve(&mut engine, at);
+    engine
+}
+
+/// Answers every page the engine asks for from the fixtures until it asks for nothing more.
+pub fn serve(engine: &mut Engine, at: Instant) {
+    loop {
+        let effects = engine.pump(at);
+        if effects.is_empty() {
+            return;
+        }
+        for effect in effects {
+            match effect {
+                Effect::Run(ticket, Call::Page(log)) => {
+                    engine.update(Event::Reply(ticket, Ok(Reply::Page(page(log)))), at);
+                }
+                Effect::Run(ticket, Call::Me) => {
+                    engine.update(Event::Reply(ticket, Ok(Reply::Account(account(3)))), at);
+                }
+                other => panic!("unexpected effect while serving: {other:?}"),
+            }
+        }
+    }
+}
+
+pub fn key(ch: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
+}
+
+pub fn press(engine: &mut Engine, keys: &str, at: Instant) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    for ch in keys.chars() {
+        effects.extend(engine.update(Event::Key(key(ch)), at));
+        effects.extend(engine.pump(at));
+    }
+    effects
+}
+
+pub fn screen(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| engine.draw(frame, at, &now()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+pub fn contains(rows: &[String], needle: &str) -> bool {
+    rows.iter().any(|row| row.contains(needle))
+}
+
+pub fn secs(n: u64) -> Duration {
+    Duration::from_secs(n)
 }

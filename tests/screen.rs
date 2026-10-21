@@ -1,60 +1,24 @@
+mod common;
+
 use std::collections::HashSet;
+use std::time::Instant;
 
-use chrono::{DateTime, FixedOffset};
-use devnull::app::App;
+use common::{boot, contains, now, page};
+use devnull::engine::Engine;
 use devnull::feed;
-use devnull::model::LogPage;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use devnull::model::Log;
 
-fn page(name: &str) -> LogPage {
-    let json = std::fs::read_to_string(format!(
-        "{}/fixtures/{name}.json",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
-    LogPage::parse(&json).unwrap()
+fn app() -> (Engine, Instant) {
+    let at = Instant::now();
+    (boot(at), at)
 }
 
-fn now() -> DateTime<FixedOffset> {
-    DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
+fn press(app: &mut (Engine, Instant), keys: &str) {
+    common::press(&mut app.0, keys, app.1);
 }
 
-fn app() -> App {
-    App::new(
-        "ada".to_owned(),
-        [
-            page("log-following"),
-            page("log-latest"),
-            page("log-trending"),
-        ],
-    )
-}
-
-fn press(app: &mut App, keys: &str) {
-    for ch in keys.chars() {
-        app.key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-    }
-}
-
-fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| app.draw(frame, &now())).unwrap();
-    let buffer = terminal.backend().buffer();
-    (0..height)
-        .map(|y| {
-            (0..width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_owned()
-        })
-        .collect()
-}
-
-fn contains(rows: &[String], needle: &str) -> bool {
-    rows.iter().any(|row| row.contains(needle))
+fn screen(app: &mut (Engine, Instant), width: u16, height: u16) -> Vec<String> {
+    common::screen(&mut app.0, width, height, app.1)
 }
 
 #[test]
@@ -70,6 +34,7 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
     ));
     let authors: Vec<_> = rows
         .iter()
+        .skip(1)
         .filter(|row| row.contains(" ● "))
         .map(|row| row.rsplit('@').next().unwrap())
         .collect();
@@ -167,7 +132,7 @@ fn trending_is_ranked_so_it_has_no_day_markers_and_ends_at_the_root() {
 
 #[test]
 fn every_line_fits_the_width_it_was_laid_out_for() {
-    let page = page("log-latest");
+    let page = page(Log::Latest);
     let expanded = page
         .entries
         .iter()

@@ -1,15 +1,19 @@
 use std::env;
 use std::io;
 use std::process::ExitCode;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Instant;
 
 use chrono::Local;
-use devnull::api::{self, Client};
-use devnull::app::App;
+use devnull::api::{self, Call, Client};
 use devnull::device::{self, DeviceKey};
-use devnull::model::LogPage;
+use devnull::engine::{Effect, Engine, Event, WORKERS};
+use devnull::sched::Ticket;
 use devnull::{signin, welcome};
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self as input, Event as Input};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -34,47 +38,125 @@ fn report(result: Result<(), String>) -> ExitCode {
 fn start() -> Result<(), String> {
     let path = device::key_path().map_err(|error| error.to_string())?;
     let key = DeviceKey::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let client = Client::new(
+    let client = Arc::new(Client::new(
         env::var("DEVNULL_URL").unwrap_or_else(|_| api::BASE.to_owned()),
         key,
-    );
-    let me = match client.me() {
-        Ok(account) => Some(account.me),
-        Err(error) if error.needs_sign_in() => None,
-        Err(error) => return Err(error.to_string()),
-    };
+    ));
     let mut terminal = ratatui::init();
-    let result = signed_in(&mut terminal, &client, me);
+    let result = run(&mut terminal, client);
     ratatui::restore();
     result.map_err(|error| error.to_string())
 }
 
-fn signed_in(
-    terminal: &mut DefaultTerminal,
-    client: &Client,
-    me: Option<api::Me>,
-) -> io::Result<()> {
-    let me = match me {
-        Some(me) => me,
-        None => match welcome::run(terminal, client)? {
-            Some(me) => me,
-            None => return Ok(()),
-        },
+/// The threads around the engine: input, the workers, and the channel they all answer on.
+struct Runtime {
+    engine: Engine,
+    client: Arc<Client>,
+    events: Sender<Event>,
+    jobs: Sender<(Ticket, Call)>,
+    device_name: String,
+}
+
+fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
+    let (events, inbox) = mpsc::channel();
+    let jobs = spawn_workers(Arc::clone(&client), events.clone());
+    spawn_input(events.clone());
+    let device_name = welcome::device_name();
+    let mut runtime = Runtime {
+        engine: Engine::new(device_name.clone(), Instant::now()),
+        client,
+        events,
+        jobs,
+        device_name,
     };
-    let page = |json: &str| LogPage::parse(json).expect("fixture parses");
-    let mut app = App::new(
-        me.username,
-        [
-            page(include_str!("../fixtures/log-following.json")),
-            page(include_str!("../fixtures/log-latest.json")),
-            page(include_str!("../fixtures/log-trending.json")),
-        ],
-    );
-    while !app.quit {
-        terminal.draw(|frame| app.draw(frame, &Local::now()))?;
-        if let Event::Key(key) = event::read()? {
-            app.key(key);
+    loop {
+        let now = Instant::now();
+        let effects = runtime.engine.pump(now);
+        if runtime.perform(effects) {
+            return Ok(());
+        }
+        terminal.draw(|frame| runtime.engine.draw(frame, now, &Local::now()))?;
+        let event = match runtime.engine.next_wake(Instant::now()) {
+            Some(wake) => {
+                match inbox.recv_timeout(wake.saturating_duration_since(Instant::now())) {
+                    Ok(event) => event,
+                    Err(RecvTimeoutError::Timeout) => Event::Tick,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        unreachable!("the runtime holds a sender")
+                    }
+                }
+            }
+            None => inbox.recv().expect("the runtime holds a sender"),
+        };
+        let mut pending = vec![event];
+        pending.extend(inbox.try_iter());
+        for event in pending {
+            let effects = runtime.engine.update(event, Instant::now());
+            if runtime.perform(effects) {
+                return Ok(());
+            }
         }
     }
-    Ok(())
+}
+
+impl Runtime {
+    /// Carries out effects, and says whether the engine asked to quit.
+    fn perform(&mut self, effects: Vec<Effect>) -> bool {
+        for effect in effects {
+            match effect {
+                Effect::Run(ticket, call) => {
+                    let _ = self.jobs.send((ticket, call));
+                }
+                Effect::StartSignIn => {
+                    let started =
+                        welcome::start(&self.client, &self.device_name, self.events.clone());
+                    let effects = self.engine.update(Event::SignIn(started), Instant::now());
+                    if self.perform(effects) {
+                        return true;
+                    }
+                }
+                Effect::Quit => return true,
+            }
+        }
+        false
+    }
+}
+
+fn spawn_input(events: Sender<Event>) {
+    thread::spawn(move || {
+        loop {
+            let event = match input::read() {
+                Ok(Input::Key(key)) => Event::Key(key),
+                Ok(Input::Resize(..)) => Event::Tick,
+                Ok(_) => continue,
+                Err(_) => return,
+            };
+            if events.send(event).is_err() {
+                return;
+            }
+        }
+    });
+}
+
+fn spawn_workers(client: Arc<Client>, events: Sender<Event>) -> Sender<(Ticket, Call)> {
+    let (jobs, queue) = mpsc::channel::<(Ticket, Call)>();
+    let queue = Arc::new(Mutex::new(queue));
+    for _ in 0..WORKERS {
+        let client = Arc::clone(&client);
+        let events = events.clone();
+        let queue = Arc::clone(&queue);
+        thread::spawn(move || {
+            loop {
+                let job = queue.lock().map(|queue| queue.recv());
+                let Ok(Ok((ticket, call))) = job else {
+                    return;
+                };
+                let result = client.call(&call);
+                if events.send(Event::Reply(ticket, result)).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+    jobs
 }

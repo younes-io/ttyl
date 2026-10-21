@@ -1,92 +1,53 @@
-//! The screen a device without approval opens on. It sends the user to dev-null.sh to approve this terminal and
+//! The phase a device without approval opens on. It sends the user to dev-null.sh to approve this terminal and
 //! waits for the browser to hand the approval back.
 
 use std::fs;
 use std::io;
 use std::process::{Command, Stdio};
-use std::thread;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
-use ratatui::{DefaultTerminal, Frame};
 
-use crate::api::{Client, Me};
-use crate::signin::{Attempt, Callback, Handler, Inbox};
+use crate::api::Client;
+use crate::engine::Event;
+use crate::signin::{Attempt, Handler, Inbox};
 use crate::theme;
 
-enum Step {
+pub enum Step {
     /// Waiting for the user to start, with what went wrong last time.
     Ready(Option<String>),
     Browser(Wait),
-    Redeeming {
-        code: String,
-        verifier: String,
-    },
+    Redeeming,
 }
 
 /// Holds the `devnull://` handler while the browser is out, and gives it back when dropped.
-struct Wait {
-    attempt: Attempt,
-    url: String,
-    inbox: Inbox,
+pub struct Wait {
+    pub attempt: Attempt,
+    pub url: String,
     _handler: Handler,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
 }
 
-/// Runs until the device is approved, or `None` when the user quits first.
-pub fn run(terminal: &mut DefaultTerminal, client: &Client) -> io::Result<Option<Me>> {
-    let device_name = device_name();
-    let mut step = Step::Ready(None);
-    loop {
-        terminal.draw(|frame| draw(frame, &step, &device_name))?;
-        step = match step {
-            Step::Redeeming { code, verifier } => match client.redeem(&code, &verifier) {
-                Ok(account) => return Ok(Some(account.me)),
-                Err(error) => Step::Ready(Some(error.to_string())),
-            },
-            Step::Browser(wait) => match wait.inbox.poll() {
-                Ok(link) => match link.and_then(|link| wait.attempt.callback(&link)) {
-                    Some(Callback::Approved(code)) => Step::Redeeming {
-                        code,
-                        verifier: wait.attempt.verifier,
-                    },
-                    Some(Callback::Denied) => {
-                        Step::Ready(Some("You cancelled in the browser.".to_owned()))
-                    }
-                    None => Step::Browser(wait),
-                },
-                Err(error) => Step::Ready(Some(error.to_string())),
-            },
-            ready => ready,
-        };
-        if matches!(step, Step::Redeeming { .. }) || !event::poll(Duration::from_millis(100))? {
-            continue;
-        }
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-        match (&step, key.code) {
-            (_, KeyCode::Char('Q')) => return Ok(None),
-            (_, KeyCode::Char('c')) if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(None);
-            }
-            (Step::Ready(_), KeyCode::Enter) => {
-                step = start(client, &device_name)
-                    .unwrap_or_else(|error| Step::Ready(Some(error.to_string())));
-            }
-            (Step::Browser(_), KeyCode::Esc) => step = Step::Ready(None),
-            _ => {}
+impl Drop for Wait {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
 
-fn start(client: &Client, device_name: &str) -> io::Result<Step> {
+/// Opens the browser and listens for its redirect on a thread, which sends every link it gets as an event.
+pub fn start(client: &Client, device_name: &str, events: Sender<Event>) -> io::Result<Wait> {
     let handler = Handler::install()?;
     let inbox = Inbox::bind()?;
     let attempt = Attempt::random();
@@ -101,16 +62,35 @@ fn start(client: &Client, device_name: &str) -> io::Result<Step> {
     {
         thread::spawn(move || browser.wait());
     }
-    Ok(Step::Browser(Wait {
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread = {
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                match inbox.poll() {
+                    Ok(None) => thread::sleep(Duration::from_millis(100)),
+                    Ok(Some(link)) => {
+                        let _ = events.send(Event::Link(Ok(link)));
+                    }
+                    Err(error) => {
+                        let _ = events.send(Event::Link(Err(error)));
+                        return;
+                    }
+                }
+            }
+        })
+    };
+    Ok(Wait {
         attempt,
         url,
-        inbox,
         _handler: handler,
-    }))
+        stop,
+        thread: Some(thread),
+    })
 }
 
 /// What dev-null.sh lists this terminal as, within the server's 100 characters.
-fn device_name() -> String {
+pub fn device_name() -> String {
     let host = fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
     match host.trim() {
         "" => "devnull-tui".to_owned(),
@@ -118,7 +98,7 @@ fn device_name() -> String {
     }
 }
 
-fn draw(frame: &mut Frame, step: &Step, device_name: &str) {
+pub fn draw(frame: &mut Frame, step: &Step, device_name: &str, keys: &str) {
     let area = frame.area();
     frame.render_widget(
         Block::new().style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND)),
@@ -131,7 +111,7 @@ fn draw(frame: &mut Frame, step: &Step, device_name: &str) {
         ),
         Line::default(),
     ];
-    let keys = match step {
+    match step {
         Step::Ready(notice) => {
             lines.push(Line::raw("Sign in to read your logs."));
             lines.push(Line::raw(format!(
@@ -144,7 +124,6 @@ fn draw(frame: &mut Frame, step: &Step, device_name: &str) {
                     Style::new().fg(theme::DESTRUCTIVE),
                 ));
             }
-            "enter sign in  Q quit"
         }
         Step::Browser(wait) => {
             lines.push(Line::raw("Waiting for you in the browser."));
@@ -160,15 +139,11 @@ fn draw(frame: &mut Frame, step: &Step, device_name: &str) {
                 wait.url.as_str(),
                 Style::new().fg(theme::PRIMARY),
             ));
-            "esc start over  Q quit"
         }
-        Step::Redeeming { .. } => {
-            lines.push(Line::raw("Signing in."));
-            ""
-        }
-    };
+        Step::Redeeming => lines.push(Line::raw("Signing in.")),
+    }
     lines.push(Line::default());
-    lines.push(Line::styled(keys, theme::muted()));
+    lines.push(Line::styled(keys.to_owned(), theme::muted()));
 
     let width = area.width.saturating_sub(4).min(72);
     let column = Rect {

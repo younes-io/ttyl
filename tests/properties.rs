@@ -1,14 +1,16 @@
+mod common;
+
 use std::collections::HashSet;
+use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset};
-use devnull::app::App;
 use devnull::code;
+use devnull::engine::Engine;
 use devnull::feed;
 use devnull::model::{Commit, Entry, Log, LogPage, Segment, Status, Tombstone};
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::text::Line;
 
 fn page(name: &str) -> LogPage {
@@ -238,12 +240,11 @@ proptest! {
 
     #[test]
     fn the_selected_header_stays_on_screen(
-        keys in prop::collection::vec(prop::sample::select(vec!['j', 'k', 'g', 'G', ' ']), 0..30),
+        keys in prop::collection::vec(prop::sample::select(vec!["j", "k", "gg", "G", " "]), 0..30),
         width in 70u16..120,
         height in 4u16..30,
     ) {
-        let latest = page("log-latest");
-        let hashes: Vec<_> = latest
+        let hashes: Vec<_> = page("log-latest")
             .entries
             .iter()
             .map(|entry| match entry {
@@ -251,20 +252,21 @@ proptest! {
                 Entry::Tombstone(_) => "[deleted]".to_owned(),
             })
             .collect();
-        let mut app = App::new("ada".to_owned(), [page("log-following"), latest, page("log-trending")]);
+        let at = Instant::now();
+        let mut engine: Engine = common::boot(at);
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut selected = 0usize;
         let last = hashes.len() - 1;
-        for key in std::iter::once('2').chain(keys) {
+        for key in std::iter::once("2").chain(keys) {
             selected = match key {
-                'j' => (selected + 1).min(last),
-                'k' => selected.saturating_sub(1),
-                'g' => 0,
-                'G' => last,
+                "j" => (selected + 1).min(last),
+                "k" => selected.saturating_sub(1),
+                "gg" => 0,
+                "G" => last,
                 _ => selected,
             };
-            app.key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
-            terminal.draw(|frame| app.draw(frame, &now())).unwrap();
+            common::press(&mut engine, key, at);
+            terminal.draw(|frame| engine.draw(frame, at, &now())).unwrap();
         }
         let buffer = terminal.backend().buffer();
         let rows: Vec<String> = (0..height)
