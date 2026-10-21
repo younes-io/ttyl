@@ -10,8 +10,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use crate::api::{Account, Call, Error, Reply};
+use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
+use crate::fatal;
 use crate::keys::{
     self, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, SPLASH_SCOPES,
     Scope,
@@ -43,24 +44,6 @@ pub enum Effect {
     StartSignIn,
     Quit,
     Abort(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Failure {
-    Down,
-    Offline(String),
-    Refused(String),
-}
-
-impl Failure {
-    fn of(error: &Error) -> Self {
-        match error {
-            Error::Unexpected(_) => Failure::Down,
-            Error::Http(error) => Failure::Offline(error.to_string()),
-            Error::Api { message, .. } => Failure::Refused(message.clone()),
-            Error::Malformed(_) => Failure::Refused(error.to_string()),
-        }
-    }
 }
 
 pub enum Phase {
@@ -373,7 +356,7 @@ impl Engine {
                 match call {
                     Call::Page(log) => {
                         session.asked_to_refresh.remove(&log);
-                        session.store.fail(log, error.to_string());
+                        session.store.fail(log, failure.clone());
                         self.timers.set(Timer::Reload(log), now + RETRY);
                     }
                     Call::Older { log, .. } => self.timers.set(Timer::Older(log), now + RETRY),
@@ -448,15 +431,11 @@ impl Engine {
                 frame.render_widget(session.log.tabs(), top);
                 frame.render_widget(account_line(&session.store).right_aligned(), top);
                 let active = session.log.active();
-                if let Some(failure) = &self.health {
-                    frame.render_widget(
-                        Line::styled(
-                            format!(" {}", banner_text(failure)),
-                            Style::new().fg(theme::DESTRUCTIVE),
-                        ),
-                        banner,
-                    );
-                } else if let Slot::Loaded(listing) = session.store.slot(active)
+                let loaded = match session.store.slot(active) {
+                    Slot::Loaded(listing) => Some(listing),
+                    Slot::Loading | Slot::Failed(_) => None,
+                };
+                if let Some(listing) = loaded
                     && listing.new_commits > 0
                 {
                     frame.render_widget(pill(listing.new_commits), banner);
@@ -465,10 +444,27 @@ impl Engine {
                     page: self.timers.remaining(Timer::Reload(active), now),
                     older: self.timers.remaining(Timer::Older(active), now),
                 };
+                let hint = match &self.health {
+                    Some(failure)
+                        if loaded.is_some()
+                            && self.toast.is_none()
+                            && self.keymap.pending().is_empty() =>
+                    {
+                        let wait = retry
+                            .page
+                            .or_else(|| self.timers.remaining(Timer::Poll, now));
+                        let room = usize::from(foot.width).saturating_sub(3);
+                        Line::styled(
+                            format!(" {}", fatal::hint(failure, wait, room)),
+                            Style::new().fg(theme::DESTRUCTIVE),
+                        )
+                    }
+                    _ => Line::styled(format!(" {bottom}"), theme::muted()),
+                };
                 session
                     .log
                     .draw(frame, inset(body), &session.store, retry, wall);
-                frame.render_widget(Line::styled(format!(" {bottom}"), theme::muted()), foot);
+                frame.render_widget(hint, foot);
                 if self.sched.busy() {
                     let frame_index =
                         usize::try_from((now - self.start).as_millis() / 100).unwrap_or(0);
@@ -503,36 +499,10 @@ impl Engine {
         ];
         match &self.health {
             None => lines.push(Line::styled("Loading…", theme::muted())),
-            Some(failure) => {
-                lines.push(Line::styled(
-                    "fatal: unable to access 'https://dev-null.sh/':",
-                    Style::new().fg(theme::DESTRUCTIVE),
-                ));
-                match failure {
-                    Failure::Down => {
-                        lines.push(Line::raw("  the site is in maintenance"));
-                        lines.push(Line::default());
-                        lines.push(Line::styled(
-                            "We are not down, we're making sure the only",
-                            theme::muted(),
-                        ));
-                        lines.push(Line::styled(
-                            "remote code running here is ours.",
-                            theme::muted(),
-                        ));
-                    }
-                    Failure::Offline(detail) | Failure::Refused(detail) => {
-                        lines.push(Line::raw(format!("  {detail}")));
-                    }
-                }
-                if let Some(left) = self.timers.remaining(Timer::Retry, now) {
-                    lines.push(Line::default());
-                    lines.push(Line::styled(
-                        format!("Retrying in {}s.", left.as_secs()),
-                        theme::muted(),
-                    ));
-                }
-            }
+            Some(failure) => lines.extend(fatal::screen(
+                failure,
+                self.timers.remaining(Timer::Retry, now),
+            )),
         }
         lines.push(Line::default());
         lines.push(Line::styled(hints.to_owned(), theme::muted()));
@@ -565,16 +535,6 @@ fn pill(count: u32) -> Line<'static> {
         Style::new().fg(theme::PRIMARY),
     )
     .centered()
-}
-
-fn banner_text(failure: &Failure) -> String {
-    match failure {
-        Failure::Down => "fatal: the site is in maintenance · your log is still here".to_owned(),
-        Failure::Offline(_) => {
-            "fatal: could not reach dev-null.sh · your log is still here".to_owned()
-        }
-        Failure::Refused(message) => format!("fatal: {message}"),
-    }
 }
 
 fn draw_help(frame: &mut Frame, session: &Session) {

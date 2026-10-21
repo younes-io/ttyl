@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::api::{Account, Call, Me, Reply};
+use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::model::{CommitId, Log, LogPage, Row, Suggestion};
 
 pub struct Store {
@@ -13,7 +13,7 @@ pub struct Store {
 #[derive(Debug, Clone)]
 pub enum Slot {
     Loading,
-    Failed(String),
+    Failed(Failure),
     Loaded(Listing),
 }
 
@@ -103,9 +103,9 @@ impl Store {
             .collect()
     }
 
-    pub fn fail(&mut self, log: Log, message: String) {
+    pub fn fail(&mut self, log: Log, failure: Failure) {
         if !matches!(self.slot(log), Slot::Loaded(_)) {
-            self.logs.insert(log, Slot::Failed(message));
+            self.logs.insert(log, Slot::Failed(failure));
         }
     }
 

@@ -85,6 +85,29 @@ impl fmt::Display for Error {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    Down,
+    Offline(String),
+    Refused(String),
+}
+
+impl Failure {
+    pub fn of(error: &Error) -> Self {
+        match error {
+            Error::Unexpected(_) => Failure::Down,
+            Error::Http(error) => Failure::Offline(match error {
+                ureq::Error::HostNotFound => "Could not resolve host: dev-null.sh".to_owned(),
+                ureq::Error::ConnectionFailed => "Failed to connect to dev-null.sh".to_owned(),
+                ureq::Error::Timeout(_) => "Operation timed out".to_owned(),
+                error => error.to_string(),
+            }),
+            Error::Api { message, .. } => Failure::Refused(message.clone()),
+            Error::Malformed(_) => Failure::Refused(error.to_string()),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct Refusal {
     message: String,

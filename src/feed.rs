@@ -23,9 +23,12 @@ const TAB: &str = "    ";
 
 pub struct Feed {
     pub lines: Vec<Line<'static>>,
-    /// The lines each of the page's rows occupies, in page order. The last row also owns what ends the feed, so
-    /// selecting it scrolls that into view.
-    pub entries: Vec<Range<usize>>,
+    pub entries: Vec<Entry>,
+}
+
+pub struct Entry {
+    pub lines: Range<usize>,
+    pub header: usize,
 }
 
 impl Feed {
@@ -45,7 +48,7 @@ impl Feed {
             ),
         ]));
         if let Some(last) = self.entries.last_mut() {
-            last.end = self.lines.len();
+            last.lines.end = self.lines.len();
         }
     }
 }
@@ -75,6 +78,7 @@ pub fn layout<Tz: TimeZone>(
         if index > 0 {
             out.gap();
         }
+        let start = out.lines.len();
         if !page.is_ranked {
             let day = row
                 .commit
@@ -90,7 +94,7 @@ pub fn layout<Tz: TimeZone>(
                 last_day = Some(day);
             }
         }
-        let start = out.lines.len();
+        let header = out.lines.len();
         row_lines(
             &mut out,
             row,
@@ -98,7 +102,10 @@ pub fn layout<Tz: TimeZone>(
             expanded.contains(&row.commit.id),
             now,
         );
-        entries.push(start..out.lines.len());
+        entries.push(Entry {
+            lines: start..out.lines.len(),
+            header,
+        });
     }
 
     let last_lane = page.rows.last().map(|row| row.commit.author.lane);
@@ -114,7 +121,7 @@ pub fn layout<Tz: TimeZone>(
         );
     }
     if let Some(last) = entries.last_mut() {
-        last.end = out.lines.len();
+        last.lines.end = out.lines.len();
     }
 
     Feed {
@@ -613,44 +620,66 @@ fn block(html: &str, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
 }
 
 fn empty(out: &mut Writer, page: &LogPage) {
-    let mut lines = Vec::new();
+    let text = |text: &str| (text.to_owned(), Style::new().fg(theme::FOREGROUND));
+    let trending = || {
+        (
+            "Trending".to_owned(),
+            Style::new()
+                .fg(theme::PRIMARY)
+                .add_modifier(Modifier::UNDERLINED),
+        )
+    };
     let (command, message) = match page.log {
+        Log::Following if page.suggestions.is_empty() => (
+            "fatal: your log does not have any commits yet",
+            vec![
+                text(
+                    "Your log shows your commits and commits from people you follow. Find someone worth following on ",
+                ),
+                trending(),
+                text("."),
+            ],
+        ),
         Log::Following => (
             "fatal: your log does not have any commits yet",
-            if page.suggestions.is_empty() {
-                "Your log shows your commits and commits from people you follow. Find someone worth following on Trending."
-            } else {
-                "Your log shows your commits and commits from people you follow. Here is what a few developers committed lately:"
-            },
+            vec![text(
+                "Your log shows your commits and commits from people you follow. Here is what a few developers committed lately:",
+            )],
         ),
         Log::Latest | Log::Trending => (
             "fatal: no commits yet",
-            "Nobody has committed anything. Be the first. It's just plain text; you'll be fine.",
+            vec![text(
+                "Nobody has committed anything. Be the first. It's just plain text; you'll be fine.",
+            )],
         ),
     };
+    let mut lines = Vec::new();
     wrap(
         &[(command.to_owned(), theme::muted())],
         out.width,
         &mut lines,
     );
     lines.push(Vec::new());
-    wrap(
-        &[(message.to_owned(), Style::new().fg(theme::FOREGROUND))],
-        out.width,
-        &mut lines,
-    );
+    wrap(&message, out.width, &mut lines);
 
     if !page.suggestions.is_empty() {
         lines.push(Vec::new());
-    }
-    for suggestion in &page.suggestions {
-        lines.push(one_liner(
-            "● ",
-            &suggestion.commit,
-            "",
-            theme::muted(),
+        for suggestion in &page.suggestions {
+            lines.push(one_liner(
+                "● ",
+                &suggestion.commit,
+                "",
+                theme::muted(),
+                out.width,
+            ));
+        }
+        lines.push(Vec::new());
+        let muted = |text: &str| (text.to_owned(), theme::muted());
+        wrap(
+            &[muted("Or browse "), trending(), muted(" for more.")],
             out.width,
-        ));
+            &mut lines,
+        );
     }
     out.lines.extend(lines.into_iter().map(Line::from));
 }

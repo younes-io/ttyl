@@ -1,4 +1,4 @@
-use devnull::api::{Account, Call, Me, Reply};
+use devnull::api::{Account, Call, Failure, Me, Reply};
 use devnull::model::{CommitId, Log, LogPage};
 use devnull::store::{Slot, Store};
 
@@ -55,17 +55,17 @@ fn a_page_reply_is_read_back_in_order_with_its_suggestions() {
 #[test]
 fn a_failure_shows_only_where_nothing_loaded() {
     let mut store = store();
-    store.fail(Log::Trending, "the site is in maintenance".to_owned());
+    store.fail(Log::Trending, Failure::Down);
     assert!(matches!(
         store.slot(Log::Trending),
-        Slot::Failed(message) if message == "the site is in maintenance"
+        Slot::Failed(Failure::Down)
     ));
 
     store.apply(
         &Call::Page(Log::Trending),
         Reply::Page(page("log-trending")),
     );
-    store.fail(Log::Trending, "the site is in maintenance".to_owned());
+    store.fail(Log::Trending, Failure::Down);
     assert!(store.page(Log::Trending).is_some());
 }
 

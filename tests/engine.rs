@@ -195,7 +195,7 @@ fn maintenance_before_the_first_load_fills_the_screen_and_retries() {
     engine.update(Event::Reply(me, Err(maintenance())), at);
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
-    assert!(contains(&rows, "Retrying in 30s."), "{rows:#?}");
+    assert!(contains(&rows, "retrying in 30s"), "{rows:#?}");
     assert!(contains(&rows, "R retry now  Q quit"), "{rows:#?}");
     assert!(!contains(&rows, "following"), "no tab bar: {rows:#?}");
 
@@ -217,7 +217,7 @@ fn maintenance_before_the_first_load_fills_the_screen_and_retries() {
 }
 
 #[test]
-fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
+fn maintenance_after_the_first_load_takes_the_hint_line_over_a_working_screen() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "2", at);
@@ -232,9 +232,12 @@ fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(30));
 
     let rows = screen(&mut engine, 80, 40, at + secs(30));
-    assert_eq!(
-        rows[1],
-        " fatal: the site is in maintenance · your log is still here"
+    assert!(
+        rows[39].starts_with(
+            " fatal: the site is in maintenance · your log is still here · retrying in 30s"
+        ),
+        "{:?}",
+        rows[39]
     );
     assert!(contains(&rows, "@ada · 18m"), "{rows:#?}");
     press(&mut engine, "j", at + secs(30));
@@ -249,7 +252,11 @@ fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
         at + secs(60),
     );
     let rows = screen(&mut engine, 80, 40, at + secs(60));
-    assert_eq!(rows[1], "", "the banner clears once the server answers");
+    assert!(
+        !rows[39].contains("fatal"),
+        "the hints come back once the server answers: {:?}",
+        rows[39]
+    );
 }
 
 #[test]
@@ -271,31 +278,34 @@ fn a_page_that_fails_waits_its_turn_instead_of_refiring_on_every_key() {
     );
     engine.update(Event::Reply(*following, Err(Error::Unexpected(502))), at);
     let rows = screen(&mut engine, 100, 20, at);
+    assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
+    assert!(contains(&rows, "retrying in 30s"), "{rows:#?}");
     assert!(
-        contains(&rows, "fatal: /dev/null answered 502"),
-        "{rows:#?}"
+        !contains(&rows, "your log is still here"),
+        "the screen says it once: {rows:#?}"
     );
+    let effects = press(&mut engine, "2", at);
+    let [Effect::Run(trending, Call::Page(Log::Trending))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let rows = screen(&mut engine, 100, 20, at);
     assert!(
-        contains(&rows, "retrying in 30s · R retry now"),
-        "{rows:#?}"
+        rows[19].starts_with(" fatal: the site is in maintenance · your log is still here"),
+        "a loaded log keeps its rows and says it in the hint line: {:?}",
+        rows[19]
     );
-    assert!(
-        contains(
-            &rows,
-            "fatal: the site is in maintenance · your log is still here"
-        ),
-        "{rows:#?}"
+    engine.update(
+        Event::Reply(*trending, Ok(Reply::Page(page(Log::Trending)))),
+        at,
     );
-    serve(&mut engine, at);
     let rows = screen(&mut engine, 100, 20, at);
     assert!(
         !contains(&rows, "your log is still here"),
-        "the next good answer clears the banner: {rows:#?}"
+        "the next good answer clears the hint: {rows:#?}"
     );
-    assert!(
-        contains(&rows, "fatal: /dev/null answered 502"),
-        "{rows:#?}"
-    );
+    press(&mut engine, "1", at);
+    let rows = screen(&mut engine, 100, 20, at);
+    assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
 
     assert!(press(&mut engine, "jk", at + secs(1)).is_empty());
     assert!(engine.update(Event::Tick, at + secs(2)).is_empty());
@@ -308,6 +318,68 @@ fn a_page_that_fails_waits_its_turn_instead_of_refiring_on_every_key() {
         [&Call::Me, &Call::Page(Log::Following)],
         "the poll and the retry share the window"
     );
+}
+
+fn following_fails_with(error: Error, at: Instant) -> Engine {
+    let (mut engine, me) = fresh(at);
+    engine.update(Event::Reply(me, Ok(Reply::Account(account(0)))), at);
+    let effects = engine.pump(at);
+    let [
+        Effect::Run(following, Call::Page(Log::Following)),
+        Effect::Run(latest, _),
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    engine.update(
+        Event::Reply(*latest, Ok(Reply::Page(page(Log::Latest)))),
+        at,
+    );
+    engine.update(Event::Reply(*following, Err(error)), at);
+    engine
+}
+
+#[test]
+fn offline_fills_an_empty_log_and_takes_the_hint_line_of_a_loaded_one() {
+    let at = Instant::now();
+    let mut engine = following_fails_with(Error::Http(ureq::Error::HostNotFound), at);
+    let rows = screen(&mut engine, 80, 20, at);
+    assert_eq!(
+        rows[2..6],
+        [
+            " fatal: unable to access 'https://dev-null.sh/':",
+            "        Could not resolve host: dev-null.sh",
+            "",
+            " retrying in 30s",
+        ],
+        "{rows:#?}"
+    );
+
+    press(&mut engine, "2", at);
+    let rows = screen(&mut engine, 80, 20, at);
+    assert!(contains(&rows, "@ada · 18m"), "{rows:#?}");
+    assert!(
+        rows[19].starts_with(" fatal: Could not resolve host: dev-null.sh · retrying in 30s"),
+        "too narrow to also say the log is still here: {:?}",
+        rows[19]
+    );
+    let rows = screen(&mut engine, 100, 20, at);
+    assert!(
+        rows[19].starts_with(
+            " fatal: Could not resolve host: dev-null.sh · your log is still here · retrying in 30s"
+        ),
+        "{:?}",
+        rows[19]
+    );
+}
+
+#[test]
+fn a_refusal_says_what_the_server_said() {
+    let at = Instant::now();
+    let mut engine = following_fails_with(refused(500, "server_error"), at);
+    let rows = screen(&mut engine, 80, 20, at);
+    assert_eq!(rows[2], " fatal: server_error from the server", "{rows:#?}");
+    assert!(!contains(&rows, "unable to access"), "{rows:#?}");
 }
 
 #[test]
@@ -557,10 +629,7 @@ fn a_refresh_folded_into_a_call_in_flight_still_answers_the_user() {
     press(&mut engine, "R", at);
     engine.update(Event::Reply(*following, Err(maintenance())), at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));
-    assert!(
-        contains(&rows, "fatal: the site is in maintenance"),
-        "{rows:#?}"
-    );
+    assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
     assert!(!contains(&rows, "refreshed"), "{rows:#?}");
 }
 

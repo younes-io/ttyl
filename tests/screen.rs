@@ -6,7 +6,7 @@ use std::time::Instant;
 use common::{boot, boot_serving, contains, following_nobody, now, page};
 use devnull::engine::Engine;
 use devnull::feed;
-use devnull::model::Log;
+use devnull::model::{Log, LogPage};
 use devnull::theme;
 
 fn app() -> (Engine, Instant) {
@@ -57,6 +57,89 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
         ],
         "one line per suggestion, the code block cut to its first line: {rows:#?}"
     );
+}
+
+#[test]
+fn suggestions_end_on_a_way_to_trending() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, |log| match log {
+        Log::Following => following_nobody(),
+        other => page(other),
+    });
+    let rows = common::screen(&mut engine, 120, 30, at);
+    let last = rows
+        .iter()
+        .rposition(|row| row.starts_with(" ● "))
+        .expect("suggestions");
+    assert_eq!(rows[last + 2], " Or browse Trending for more.", "{rows:#?}");
+    let buffer = common::buffer(&mut engine, 120, 30, at);
+    let y = u16::try_from(last + 2).unwrap();
+    assert_eq!(
+        buffer[(11, y)].fg,
+        theme::PRIMARY,
+        "Trending reads as a link"
+    );
+    assert_ne!(buffer[(1, y)].fg, theme::PRIMARY);
+}
+
+#[test]
+fn following_nobody_with_nothing_to_suggest_points_at_trending() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, |log| match log {
+        Log::Following => LogPage {
+            suggestions: Vec::new(),
+            ..following_nobody()
+        },
+        other => page(other),
+    });
+    let rows = common::screen(&mut engine, 120, 30, at);
+    assert_eq!(
+        rows[2..5],
+        [
+            " fatal: your log does not have any commits yet",
+            "",
+            " Your log shows your commits and commits from people you follow. Find someone worth following on Trending.",
+        ],
+        "{rows:#?}"
+    );
+    assert!(!contains(&rows, "Or browse"), "{rows:#?}");
+}
+
+#[test]
+fn an_empty_latest_asks_for_the_first_commit() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, |log| LogPage {
+        rows: Vec::new(),
+        suggestions: Vec::new(),
+        ..page(log)
+    });
+    common::press(&mut engine, "2", at);
+    let rows = common::screen(&mut engine, 120, 30, at);
+    assert_eq!(
+        rows[2..5],
+        [
+            " fatal: no commits yet",
+            "",
+            " Nobody has committed anything. Be the first. It's just plain text; you'll be fine.",
+        ],
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn moving_up_onto_the_first_commit_of_a_day_shows_its_day() {
+    let mut app = app();
+    press(&mut app, "2G");
+    while app.0.log().unwrap().selected() > 4 {
+        press(&mut app, "k");
+    }
+    let rows = screen(&mut app, 80, 12);
+    assert!(contains(&rows, "0000401"), "{rows:#?}");
+    assert!(contains(&rows, "┆ Yesterday"), "{rows:#?}");
+
+    press(&mut app, "gg");
+    let rows = screen(&mut app, 80, 12);
+    assert!(contains(&rows, "┆ Today"), "{rows:#?}");
 }
 
 #[test]

@@ -3,6 +3,7 @@ pub mod clock;
 pub mod code;
 pub mod device;
 pub mod engine;
+pub mod fatal;
 pub mod feed;
 pub mod keys;
 pub mod log;

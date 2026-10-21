@@ -6,13 +6,13 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::feed;
 use crate::keys::{Action, InputMode};
 use crate::model::{CommitId, Log};
 use crate::store::{Slot, Store};
 use crate::theme;
+use crate::{fatal, feed};
 
 pub const LOGS: [Log; 3] = [Log::Following, Log::Latest, Log::Trending];
 
@@ -153,19 +153,10 @@ impl LogScreen {
     ) {
         match store.slot(self.active) {
             Slot::Loading => frame.render_widget(Line::styled("Loading…", theme::muted()), area),
-            Slot::Failed(message) => {
-                let mut lines = vec![Line::styled(
-                    format!("fatal: {message}"),
-                    Style::new().fg(theme::DESTRUCTIVE),
-                )];
-                if let Some(retry) = retry.page {
-                    lines.push(Line::styled(
-                        format!("retrying in {}s · R retry now", retry.as_secs()),
-                        theme::muted(),
-                    ));
-                }
-                frame.render_widget(Paragraph::new(lines), area);
-            }
+            Slot::Failed(failure) => frame.render_widget(
+                Paragraph::new(fatal::screen(failure, retry.page)).wrap(Wrap { trim: false }),
+                area,
+            ),
             Slot::Loaded(_) => {
                 let page = store.page(self.active).expect("a loaded slot has a page");
                 let place = &mut self.places[index(self.active)];
@@ -176,7 +167,7 @@ impl LogScreen {
                     feed.stall(wait);
                 }
                 let id = selected.map(|at| page.rows[at].commit.id.clone());
-                let start = |at: usize| feed.entries.get(at).map_or(0, |range| range.start);
+                let start = |at: usize| feed.entries.get(at).map_or(0, |entry| entry.header);
                 if let (Some((seen, line)), Some(id)) = (&place.seen, &id)
                     && seen == id
                 {
@@ -200,19 +191,17 @@ impl LogScreen {
 }
 
 fn scroll(feed: &feed::Feed, selected: usize, offset: usize, height: usize) -> usize {
-    let Some(range) = feed.entries.get(selected) else {
+    let Some(entry) = feed.entries.get(selected) else {
         return 0;
     };
-    let offset = if selected == 0 {
-        0
+    let range = &entry.lines;
+    let offset = offset.min(feed.lines.len().saturating_sub(height));
+    let offset = if range.start < offset {
+        range.start
+    } else if range.end > offset + height {
+        (range.end - height).min(range.start)
     } else {
-        offset.min(feed.lines.len().saturating_sub(height))
+        offset
     };
-    if range.start < offset {
-        return range.start;
-    }
-    if range.end > offset + height {
-        return (range.end - height).min(range.start);
-    }
-    offset
+    offset.max((entry.header + 1).saturating_sub(height))
 }
