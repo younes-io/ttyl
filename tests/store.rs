@@ -1,5 +1,5 @@
 use devnull::api::{Account, Call, Me, Reply};
-use devnull::model::{Log, LogPage};
+use devnull::model::{CommitId, Log, LogPage};
 use devnull::store::{Slot, Store};
 
 fn page(name: &str) -> LogPage {
@@ -86,13 +86,6 @@ fn an_account_reply_moves_the_unread_count() {
     assert_eq!(store.me.name.as_deref(), Some("Ada"));
 }
 
-fn ids(store: &Store, log: Log) -> Vec<String> {
-    let Slot::Loaded(listing) = store.slot(log) else {
-        panic!("{log:?} is loaded");
-    };
-    listing.ids.iter().map(|id| id.0.clone()).collect()
-}
-
 #[test]
 fn an_older_page_is_appended_without_the_rows_already_listed() {
     let mut store = store();
@@ -103,7 +96,7 @@ fn an_older_page_is_appended_without_the_rows_already_listed() {
     older.next_cursor = None;
     let overlap = older.rows[0].commit.id.0.clone();
     store.apply(&Call::Page(Log::Latest), Reply::Page(latest));
-    let before = ids(&store, Log::Latest);
+    let before = listed(&store, Log::Latest).0;
     assert!(before.contains(&overlap));
 
     store.apply(
@@ -114,7 +107,7 @@ fn an_older_page_is_appended_without_the_rows_already_listed() {
         Reply::Page(older),
     );
 
-    assert_eq!(ids(&store, Log::Latest), before);
+    assert_eq!(listed(&store, Log::Latest).0, before);
     assert!(store.page(Log::Latest).unwrap().next_cursor.is_none());
 }
 
@@ -122,7 +115,7 @@ fn an_older_page_is_appended_without_the_rows_already_listed() {
 fn an_older_page_for_a_listing_a_refresh_replaced_is_dropped() {
     let mut store = store();
     store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
-    let before = ids(&store, Log::Latest);
+    let before = listed(&store, Log::Latest).0;
     let mut older = page("log-trending");
     older.log = Log::Latest;
 
@@ -134,5 +127,122 @@ fn an_older_page_for_a_listing_a_refresh_replaced_is_dropped() {
         Reply::Page(older),
     );
 
-    assert_eq!(ids(&store, Log::Latest), before);
+    assert_eq!(listed(&store, Log::Latest).0, before);
+}
+
+fn renamed(mut page: LogPage, prefix: &str) -> LogPage {
+    for (index, row) in page.rows.iter_mut().enumerate() {
+        row.commit.id = CommitId(format!("{prefix}-{index}"));
+    }
+    page
+}
+
+fn listed(store: &Store, log: Log) -> (Vec<String>, Option<String>, u32) {
+    let Slot::Loaded(listing) = store.slot(log) else {
+        panic!("{log:?} is loaded");
+    };
+    let ids = listing.ids.iter().map(|id| id.0.clone()).collect();
+    (ids, listing.next_cursor.clone(), listing.new_commits)
+}
+
+/// The fixture's latest log with one older page of three rows loaded below it.
+fn paged() -> Store {
+    let mut store = store();
+    let latest = page("log-latest");
+    let cursor = latest.next_cursor.clone().unwrap();
+    store.apply(&Call::Page(Log::Latest), Reply::Page(latest));
+    let mut older = renamed(page("log-latest"), "old");
+    older.rows.truncate(3);
+    older.next_cursor = Some("after-old".to_owned());
+    store.apply(
+        &Call::Older {
+            log: Log::Latest,
+            cursor,
+        },
+        Reply::Page(older),
+    );
+    store
+}
+
+#[test]
+fn a_first_page_that_overlaps_lands_on_top_and_keeps_the_older_pages() {
+    let mut store = paged();
+    let (before, _, _) = listed(&store, Log::Latest);
+    let mut first = renamed(page("log-latest"), "new");
+    first.rows.truncate(2);
+    first
+        .rows
+        .extend(page("log-latest").rows.into_iter().take(9));
+    first.next_cursor = Some("after-first".to_owned());
+
+    store.apply(&Call::Page(Log::Latest), Reply::Page(first));
+
+    let (ids, cursor, _) = listed(&store, Log::Latest);
+    assert_eq!(ids[..2], ["new-0", "new-1"]);
+    assert_eq!(ids[2..], before[..]);
+    assert_eq!(cursor.as_deref(), Some("after-old"));
+}
+
+#[test]
+fn a_first_page_with_no_listed_commit_replaces_the_log() {
+    let mut store = paged();
+    let fresh = renamed(page("log-latest"), "new");
+    let expected: Vec<String> = fresh
+        .rows
+        .iter()
+        .map(|row| row.commit.id.0.clone())
+        .collect();
+
+    store.apply(&Call::Page(Log::Latest), Reply::Page(fresh));
+
+    let (ids, cursor, _) = listed(&store, Log::Latest);
+    assert_eq!(ids, expected);
+    assert_eq!(cursor, page("log-latest").next_cursor);
+}
+
+#[test]
+fn a_ranked_log_is_always_replaced() {
+    let mut store = store();
+    let trending = page("log-trending");
+    store.apply(&Call::Page(Log::Trending), Reply::Page(trending.clone()));
+    let mut reranked = trending;
+    reranked.rows.reverse();
+    reranked.rows.truncate(4);
+    let expected: Vec<String> = reranked
+        .rows
+        .iter()
+        .map(|row| row.commit.id.0.clone())
+        .collect();
+
+    store.apply(&Call::Page(Log::Trending), Reply::Page(reranked));
+
+    assert_eq!(listed(&store, Log::Trending).0, expected);
+}
+
+#[test]
+fn a_count_of_new_commits_holds_only_for_the_newest_commit_it_was_asked_about() {
+    let mut store = paged();
+    let newest = page("log-latest").rows[0].commit.id.clone();
+    let mut counted = page("log-latest");
+    counted.new_commits_count = Some(3);
+    let since = |id: &CommitId| Call::Since {
+        log: Log::Latest,
+        since: id.clone(),
+    };
+
+    store.apply(
+        &since(&CommitId("gone".to_owned())),
+        Reply::Page(counted.clone()),
+    );
+    assert_eq!(listed(&store, Log::Latest).2, 0);
+    store.apply(&since(&newest), Reply::Page(counted));
+    assert_eq!(listed(&store, Log::Latest).2, 3);
+    assert_eq!(
+        listed(&store, Log::Latest).0.len(),
+        14,
+        "the count moves no row"
+    );
+
+    store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
+    assert_eq!(listed(&store, Log::Latest).2, 0);
 }

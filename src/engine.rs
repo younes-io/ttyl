@@ -66,7 +66,7 @@ impl Failure {
 pub enum Phase {
     Splash,
     SignIn(Step),
-    Ready(Session),
+    Ready(Box<Session>),
 }
 
 pub struct Session {
@@ -176,6 +176,7 @@ impl Engine {
             match timer {
                 Timer::Poll => {
                     self.sched.send(Call::Me, Priority::Later);
+                    self.poll_new();
                     self.timers.set(Timer::Poll, now + POLL);
                 }
                 Timer::Retry => self.sched.send(Call::Me, Priority::Now),
@@ -222,6 +223,22 @@ impl Engine {
         if left <= AHEAD && !self.timers.is_set(Timer::Older(log)) {
             let cursor = cursor.clone();
             self.sched.send(Call::Older { log, cursor }, Priority::Now);
+        }
+    }
+
+    fn poll_new(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        let log = session.log.active();
+        if log == Log::Trending {
+            return;
+        }
+        if let Slot::Loaded(listing) = session.store.slot(log)
+            && let Some(newest) = listing.ids.first()
+        {
+            let since = newest.clone();
+            self.sched.send(Call::Since { log, since }, Priority::Later);
         }
     }
 
@@ -295,23 +312,26 @@ impl Engine {
             }
             return;
         };
-        let refreshed = match call {
-            Call::Page(log) if session.asked_to_refresh.remove(log) => Some(*log),
-            _ => None,
+        let Call::Page(log) = call else {
+            session.store.apply(call, reply);
+            return;
         };
+        let refreshed = session.asked_to_refresh.remove(log);
+        let selected = session.log.selected_id(*log, &session.store).cloned();
         session.store.apply(call, reply);
-        if let Some(log) = refreshed {
+        session.log.keep(*log, selected.as_ref(), &session.store);
+        if refreshed {
             self.toast(format!("{} refreshed", log.slug()), now);
         }
     }
 
     fn open(&mut self, account: Account, now: Instant) {
-        self.phase = Phase::Ready(Session {
+        self.phase = Phase::Ready(Box::new(Session {
             store: Store::new(account),
             log: LogScreen::default(),
             help: false,
             asked_to_refresh: HashSet::new(),
-        });
+        }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
         }
@@ -357,7 +377,7 @@ impl Engine {
                         self.timers.set(Timer::Reload(log), now + RETRY);
                     }
                     Call::Older { log, .. } => self.timers.set(Timer::Older(log), now + RETRY),
-                    Call::Me | Call::Redeem { .. } => {}
+                    Call::Me | Call::Redeem { .. } | Call::Since { .. } => {}
                 }
                 self.health = Some(failure);
             }
@@ -427,6 +447,7 @@ impl Engine {
                 .areas(area);
                 frame.render_widget(session.log.tabs(), top);
                 frame.render_widget(account_line(&session.store).right_aligned(), top);
+                let active = session.log.active();
                 if let Some(failure) = &self.health {
                     frame.render_widget(
                         Line::styled(
@@ -435,8 +456,11 @@ impl Engine {
                         ),
                         banner,
                     );
+                } else if let Slot::Loaded(listing) = session.store.slot(active)
+                    && listing.new_commits > 0
+                {
+                    frame.render_widget(pill(listing.new_commits), banner);
                 }
-                let active = session.log.active();
                 let retry = Retry {
                     page: self.timers.remaining(Timer::Reload(active), now),
                     older: self.timers.remaining(Timer::Older(active), now),
@@ -532,6 +556,15 @@ fn account_line(store: &Store) -> Line<'static> {
         theme::muted(),
     ));
     Line::from(spans)
+}
+
+fn pill(count: u32) -> Line<'static> {
+    let noun = if count == 1 { "commit" } else { "commits" };
+    Line::styled(
+        format!("↑ {count} new {noun} · R to load"),
+        Style::new().fg(theme::PRIMARY),
+    )
+    .centered()
 }
 
 fn banner_text(failure: &Failure) -> String {

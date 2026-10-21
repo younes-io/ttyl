@@ -24,6 +24,7 @@ pub enum CallKey {
     Redeem,
     Page(Log),
     Older(Log),
+    Since(Log),
 }
 
 impl Call {
@@ -33,6 +34,7 @@ impl Call {
             Call::Redeem { .. } => CallKey::Redeem,
             Call::Page(log) => CallKey::Page(*log),
             Call::Older { log, .. } => CallKey::Older(*log),
+            Call::Since { log, .. } => CallKey::Since(*log),
         }
     }
 }

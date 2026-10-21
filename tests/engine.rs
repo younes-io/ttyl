@@ -222,7 +222,11 @@ fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
     let mut engine = boot(at);
     press(&mut engine, "2", at);
     let effects = engine.pump(at + secs(30));
-    let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
+    let [
+        Effect::Run(ticket, Call::Me),
+        Effect::Run(_, Call::Since { .. }),
+    ] = effects.as_slice()
+    else {
         panic!("{effects:?}");
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(30));
@@ -237,7 +241,7 @@ fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
     assert_eq!(engine.log().unwrap().selected(), 1);
 
     let effects = engine.pump(at + secs(60));
-    let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Me), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     engine.update(
@@ -336,7 +340,7 @@ fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
     let mut engine = boot(at);
     press(&mut engine, "2jj", at);
     let effects = engine.pump(at + secs(30));
-    let [Effect::Run(poll, Call::Me)] = effects.as_slice() else {
+    let [Effect::Run(poll, Call::Me), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     engine.update(
@@ -357,9 +361,17 @@ fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
 fn revoked_mid_flight(at: Instant) -> (Engine, devnull::sched::Ticket) {
     let mut engine = boot(at);
     let effects = engine.pump(at + secs(30));
-    let [Effect::Run(poll, Call::Me)] = effects.as_slice() else {
+    let [
+        Effect::Run(poll, Call::Me),
+        Effect::Run(since, Call::Since { .. }),
+    ] = effects.as_slice()
+    else {
         panic!("{effects:?}");
     };
+    engine.update(
+        Event::Reply(*since, Ok(Reply::Page(page(Log::Following)))),
+        at + secs(30),
+    );
     let effects = press(&mut engine, "R", at + secs(30));
     let [Effect::Run(following, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");

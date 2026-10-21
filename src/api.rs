@@ -8,7 +8,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
-use crate::model::{Log, LogPage};
+use crate::model::{CommitId, Log, LogPage};
 
 pub const BASE: &str = "https://dev-null.sh";
 
@@ -39,6 +39,7 @@ pub enum Call {
     Redeem { code: String, verifier: String },
     Page(Log),
     Older { log: Log, cursor: String },
+    Since { log: Log, since: CommitId },
 }
 
 #[derive(Debug)]
@@ -120,6 +121,9 @@ impl Client {
             Call::Page(log) => self.page(*log, None).map(Reply::Page),
             Call::Older { log, cursor } => {
                 self.page(*log, Some(("cursor", cursor))).map(Reply::Page)
+            }
+            Call::Since { log, since } => {
+                self.page(*log, Some(("since", &since.0))).map(Reply::Page)
             }
         }
     }

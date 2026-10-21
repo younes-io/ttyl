@@ -8,7 +8,7 @@ use std::time::Duration;
 use common::openssh_accepts;
 use devnull::api::{Call, Client, Error, Reply};
 use devnull::device::DeviceKey;
-use devnull::model::Log;
+use devnull::model::{CommitId, Log};
 
 struct Seen {
     head: String,
@@ -207,6 +207,46 @@ fn an_older_page_passes_its_cursor_back_in_the_signed_path() {
         "GET",
         "/api/v1/log/latest?cursor=eyJpZCI6MX0%2B%2F%3D",
         "api-older"
+    ));
+}
+
+#[test]
+fn a_check_for_new_commits_names_the_newest_listed_and_reads_the_count() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/log-following.json"
+    ))
+    .unwrap()
+    .replace(
+        r#""is_ranked": false"#,
+        r#""is_ranked": false, "new_commits_count": 2"#,
+    );
+    let (base, server) = serve("200 OK", &fixture);
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    let reply = client
+        .call(&Call::Since {
+            log: Log::Following,
+            since: CommitId("9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61".to_owned()),
+        })
+        .unwrap();
+    let seen = server.join().unwrap();
+
+    let Reply::Page(page) = reply else {
+        panic!("a page");
+    };
+    assert_eq!(page.new_commits_count, Some(2));
+    let path = "/api/v1/log/following?since=9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61";
+    assert!(
+        seen.head.starts_with(&format!("GET {path} HTTP/1.1\r\n")),
+        "{}",
+        seen.head
+    );
+    assert!(signature_holds(
+        client.key(),
+        &seen,
+        "GET",
+        path,
+        "api-since"
     ));
 }
 

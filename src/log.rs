@@ -28,17 +28,20 @@ pub struct LogScreen {
     expanded: HashSet<CommitId>,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 struct Place {
     selected: usize,
     offset: usize,
+    /// The commit selected at the last draw and the screen line it started on, so rows arriving above it leave it
+    /// where it was.
+    seen: Option<(CommitId, usize)>,
 }
 
 impl Default for LogScreen {
     fn default() -> Self {
         LogScreen {
             active: Log::Following,
-            places: [Place::default(); 3],
+            places: Default::default(),
             expanded: HashSet::new(),
         }
     }
@@ -57,6 +60,21 @@ impl LogScreen {
 
     pub fn selected(&self) -> usize {
         self.places[index(self.active)].selected
+    }
+
+    pub fn selected_id<'a>(&self, log: Log, store: &'a Store) -> Option<&'a CommitId> {
+        match store.slot(log) {
+            Slot::Loaded(listing) => listing.ids.get(self.places[index(log)].selected),
+            Slot::Loading | Slot::Failed(_) => None,
+        }
+    }
+
+    /// Selects `id` again after the listing of `log` changed around it.
+    pub fn keep(&mut self, log: Log, id: Option<&CommitId>, store: &Store) {
+        if let (Some(id), Slot::Loaded(listing)) = (id, store.slot(log)) {
+            let place = &mut self.places[index(log)];
+            place.selected = listing.ids.iter().position(|each| each == id).unwrap_or(0);
+        }
     }
 
     pub fn input_mode(&self) -> InputMode {
@@ -157,12 +175,20 @@ impl LogScreen {
                 if let Some(wait) = retry.older {
                     feed.stall(wait);
                 }
+                let id = selected.map(|at| page.rows[at].commit.id.clone());
+                let start = |at: usize| feed.entries.get(at).map_or(0, |range| range.start);
+                if let (Some((seen, line)), Some(id)) = (&place.seen, &id)
+                    && seen == id
+                {
+                    place.offset = start(place.selected).saturating_sub(*line);
+                }
                 place.offset = scroll(
                     &feed,
                     place.selected,
                     place.offset,
                     usize::from(area.height),
                 );
+                place.seen = id.map(|id| (id, start(place.selected).saturating_sub(place.offset)));
                 frame.render_widget(
                     Paragraph::new(feed.lines)
                         .scroll((u16::try_from(place.offset).unwrap_or(u16::MAX), 0)),

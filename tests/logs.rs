@@ -2,12 +2,13 @@ mod common;
 
 use std::time::Instant;
 
-use common::{boot, contains, cursor, older, press, runs, screen, secs};
+use common::{account, boot, contains, cursor, older, page, press, runs, screen, secs};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::Log;
+use devnull::sched::Ticket;
 
-fn older_of(effects: &[Effect]) -> (devnull::sched::Ticket, String) {
+fn older_of(effects: &[Effect]) -> (Ticket, String) {
     let [
         Effect::Run(
             ticket,
@@ -118,4 +119,116 @@ fn a_failed_older_page_says_so_at_the_end_and_waits_for_its_retry() {
         }),
         "{effects:?}"
     );
+}
+
+/// Runs the 30-second poll, answers its account check, and returns the check for new commits if one ran.
+fn poll(engine: &mut Engine, at: Instant) -> Option<(Ticket, Call)> {
+    let mut since = None;
+    for effect in engine.pump(at) {
+        match effect {
+            Effect::Run(ticket, Call::Me) => {
+                engine.update(Event::Reply(ticket, Ok(Reply::Account(account(0)))), at);
+            }
+            Effect::Run(ticket, call @ Call::Since { .. }) if since.is_none() => {
+                since = Some((ticket, call));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    since
+}
+
+fn new_commits(engine: &mut Engine, ticket: Ticket, log: Log, count: u32, at: Instant) {
+    let mut reply = page(log);
+    reply.new_commits_count = Some(count);
+    engine.update(Event::Reply(ticket, Ok(Reply::Page(reply))), at);
+}
+
+#[test]
+fn only_the_visible_log_asks_for_new_commits_and_never_trending() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "3", at);
+    assert!(poll(&mut engine, at + secs(30)).is_none());
+
+    press(&mut engine, "2", at + secs(30));
+    let (_, call) = poll(&mut engine, at + secs(60)).expect("latest asks");
+    assert_eq!(
+        call,
+        Call::Since {
+            log: Log::Latest,
+            since: page(Log::Latest).rows[0].commit.id.clone()
+        }
+    );
+}
+
+#[test]
+fn new_commits_show_a_pill_and_leave_the_feed_where_it_is() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2jj", at);
+    let before = screen(&mut engine, 100, 30, at);
+    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
+
+    let after = screen(&mut engine, 100, 30, at + secs(30));
+    assert_eq!(after[1].trim(), "↑ 2 new commits · R to load");
+    assert_eq!(after[2..], before[2..]);
+    assert_eq!(selected(&engine), 2);
+}
+
+#[test]
+fn r_loads_the_new_commits_above_and_keeps_the_cursor_on_its_commit() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2j", at);
+    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
+    let hash = page(Log::Latest).rows[1].commit.short_hash.clone();
+    let line = |rows: &[String]| rows.iter().position(|row| row.contains(&hash));
+    let before = screen(&mut engine, 100, 40, at + secs(30));
+
+    let effects = press(&mut engine, "R", at + secs(30));
+    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let mut first = older(Log::Latest, "new", 2, Some(&cursor(Log::Latest)));
+    first.rows.extend(page(Log::Latest).rows);
+    engine.update(Event::Reply(*ticket, Ok(Reply::Page(first))), at + secs(30));
+
+    let after = screen(&mut engine, 100, 40, at + secs(30));
+    assert_eq!(after[1], "", "the pill goes");
+    assert_eq!(selected(&engine), 3);
+    assert_eq!(line(&after), line(&before), "{after:#?}");
+    press(&mut engine, "gg", at + secs(30));
+    assert!(contains(
+        &screen(&mut engine, 100, 40, at + secs(30)),
+        "new001"
+    ));
+}
+
+#[test]
+fn each_log_keeps_its_own_count_across_tab_switches() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2", at);
+    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
+    press(&mut engine, "1", at + secs(30));
+    let (ticket, call) = poll(&mut engine, at + secs(60)).unwrap();
+    assert!(matches!(
+        call,
+        Call::Since {
+            log: Log::Following,
+            ..
+        }
+    ));
+    new_commits(&mut engine, ticket, Log::Following, 1, at + secs(60));
+
+    let pill = |engine: &mut Engine| screen(engine, 100, 20, at + secs(60))[1].trim().to_owned();
+    assert_eq!(pill(&mut engine), "↑ 1 new commit · R to load");
+    press(&mut engine, "2", at + secs(60));
+    assert_eq!(pill(&mut engine), "↑ 2 new commits · R to load");
+    press(&mut engine, "3", at + secs(60));
+    assert_eq!(pill(&mut engine), "");
 }

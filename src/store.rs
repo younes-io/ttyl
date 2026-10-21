@@ -22,6 +22,7 @@ pub struct Listing {
     pub ids: Vec<CommitId>,
     pub is_ranked: bool,
     pub next_cursor: Option<String>,
+    pub new_commits: u32,
     suggestions: Vec<Suggestion>,
 }
 
@@ -42,16 +43,36 @@ impl Store {
                 self.unread = account.unread;
             }
             (Call::Older { log, cursor }, Reply::Page(page)) => self.append(*log, cursor, page),
-            (_, Reply::Page(page)) => {
-                let listing = Listing {
-                    ids: self.absorb(page.rows),
-                    is_ranked: page.is_ranked,
-                    next_cursor: page.next_cursor,
-                    suggestions: page.suggestions,
-                };
-                self.logs.insert(page.log, Slot::Loaded(listing));
+            (Call::Since { log, since }, Reply::Page(page)) => {
+                if let Some(Slot::Loaded(listing)) = self.logs.get_mut(log)
+                    && listing.ids.first() == Some(since)
+                {
+                    listing.new_commits = page.new_commits_count.unwrap_or(0);
+                }
             }
+            (_, Reply::Page(page)) => self.replace(page),
         }
+    }
+
+    /// A first page that overlaps a chronological log lands on top of it, so the older pages below stay loaded.
+    fn replace(&mut self, page: LogPage) {
+        let mut ids = self.absorb(page.rows);
+        let mut next_cursor = page.next_cursor;
+        if let Some(Slot::Loaded(old)) = self.logs.get(&page.log)
+            && !page.is_ranked
+            && let Some(last) = old.ids.iter().rposition(|id| ids.contains(id))
+        {
+            ids.extend(old.ids[last + 1..].iter().cloned());
+            next_cursor.clone_from(&old.next_cursor);
+        }
+        let listing = Listing {
+            ids,
+            is_ranked: page.is_ranked,
+            next_cursor,
+            new_commits: 0,
+            suggestions: page.suggestions,
+        };
+        self.logs.insert(page.log, Slot::Loaded(listing));
     }
 
     /// A page asked for after a refresh moved the cursor on belongs to a listing that is gone, so it is dropped.
