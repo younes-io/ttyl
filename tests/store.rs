@@ -1,5 +1,5 @@
 use devnull::api::{Account, Me, Reply};
-use devnull::model::{Entry, Log, LogPage};
+use devnull::model::{Log, LogPage};
 use devnull::store::{Slot, Store};
 
 fn page(name: &str) -> LogPage {
@@ -22,19 +22,16 @@ fn store() -> Store {
 }
 
 fn hashes(page: &LogPage) -> Vec<String> {
-    page.entries
+    page.rows
         .iter()
-        .map(|entry| match entry {
-            Entry::Commit(commit) => commit.short_hash.clone(),
-            Entry::Tombstone(tombstone) => tombstone.id.0.clone(),
-        })
+        .map(|row| row.commit.short_hash.clone())
         .collect()
 }
 
 #[test]
 fn a_page_reply_is_read_back_in_order_with_its_suggestions() {
     let mut store = store();
-    assert_eq!(*store.slot(Log::Latest), Slot::Loading);
+    assert!(matches!(store.slot(Log::Latest), Slot::Loading));
     assert!(store.page(Log::Latest).is_none());
 
     let latest = page("log-latest");
@@ -48,7 +45,7 @@ fn a_page_reply_is_read_back_in_order_with_its_suggestions() {
     assert!(!shown.is_ranked);
 
     let following = store.page(Log::Following).unwrap();
-    assert!(following.entries.is_empty());
+    assert_eq!(following.rows.len(), 3);
     assert_eq!(following.suggestions.len(), 3);
 }
 
@@ -56,10 +53,10 @@ fn a_page_reply_is_read_back_in_order_with_its_suggestions() {
 fn a_failure_shows_only_where_nothing_loaded() {
     let mut store = store();
     store.fail(Log::Trending, "the site is in maintenance".to_owned());
-    assert_eq!(
-        *store.slot(Log::Trending),
-        Slot::Failed("the site is in maintenance".to_owned())
-    );
+    assert!(matches!(
+        store.slot(Log::Trending),
+        Slot::Failed(message) if message == "the site is in maintenance"
+    ));
 
     store.apply(Reply::Page(page("log-trending")));
     store.fail(Log::Trending, "the site is in maintenance".to_owned());

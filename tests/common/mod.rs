@@ -94,18 +94,34 @@ pub fn now() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
 }
 
+/// Following as the server sends it to someone who follows nobody and has not committed yet.
+pub fn following_nobody() -> LogPage {
+    LogPage {
+        rows: Vec::new(),
+        ..page(Log::Following)
+    }
+}
+
 pub fn boot(at: Instant) -> Engine {
+    boot_serving(at, page)
+}
+
+pub fn boot_serving(at: Instant, pages: fn(Log) -> LogPage) -> Engine {
     let mut engine = Engine::new("devnull-tui".to_owned(), at);
     let effects = engine.pump(at);
     let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
         panic!("the engine asks for /me first: {effects:?}");
     };
     engine.update(Event::Reply(*ticket, Ok(Reply::Account(account(3)))), at);
-    serve(&mut engine, at);
+    serve_with(&mut engine, at, pages);
     engine
 }
 
 pub fn serve(engine: &mut Engine, at: Instant) {
+    serve_with(engine, at, page);
+}
+
+pub fn serve_with(engine: &mut Engine, at: Instant, pages: fn(Log) -> LogPage) {
     loop {
         let effects = engine.pump(at);
         if effects.is_empty() {
@@ -114,7 +130,7 @@ pub fn serve(engine: &mut Engine, at: Instant) {
         for effect in effects {
             match effect {
                 Effect::Run(ticket, Call::Page(log)) => {
-                    engine.update(Event::Reply(ticket, Ok(Reply::Page(page(log)))), at);
+                    engine.update(Event::Reply(ticket, Ok(Reply::Page(pages(log)))), at);
                 }
                 Effect::Run(ticket, Call::Me) => {
                     engine.update(Event::Reply(ticket, Ok(Reply::Account(account(3)))), at);

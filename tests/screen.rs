@@ -3,7 +3,7 @@ mod common;
 use std::collections::HashSet;
 use std::time::Instant;
 
-use common::{boot, contains, now, page};
+use common::{boot, boot_serving, contains, following_nobody, now, page};
 use devnull::engine::Engine;
 use devnull::feed;
 use devnull::model::Log;
@@ -23,7 +23,15 @@ fn screen(app: &mut (Engine, Instant), width: u16, height: u16) -> Vec<String> {
 
 #[test]
 fn opens_on_following_with_the_empty_state_and_suggestions() {
-    let rows = screen(&mut app(), 120, 30);
+    let at = Instant::now();
+    let mut app = (
+        boot_serving(at, |log| match log {
+            Log::Following => following_nobody(),
+            other => page(other),
+        }),
+        at,
+    );
+    let rows = screen(&mut app, 120, 30);
     assert!(contains(
         &rows,
         "fatal: your log does not have any commits yet"
@@ -40,7 +48,7 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
         .collect();
     assert_eq!(
         authors,
-        ["ada", "grace", "linus"],
+        ["grace", "linus", "margaret"],
         "one suggestion per author, newest first"
     );
     assert!(
@@ -66,7 +74,8 @@ fn latest_draws_headers_day_markers_and_badges() {
         "short hash sits at the right edge: {first:?}"
     );
     assert!(contains(&rows, "┆ Today"));
-    assert!(contains(&rows, "@linus · 2h  in review"));
+    assert!(contains(&rows, "@ada · 29m  in review"), "{rows:#?}");
+    assert!(contains(&rows, "@ada · 15h  rejected"), "{rows:#?}");
     assert!(contains(&rows, "↩ 3   ★ 12"));
     assert!(contains(&rows, "today's footgun:"));
     assert!(
@@ -96,7 +105,19 @@ fn space_unfolds_the_selected_long_commit() {
 fn selection_stays_on_screen_while_moving_down_a_short_terminal() {
     let mut app = app();
     press(&mut app, "2");
-    for author in ["@ada", "@ada", "@grace", "@linus", "@margaret", "@ken"] {
+    for author in [
+        "@ada",
+        "@ada",
+        "@grace",
+        "@linus",
+        "@margaret",
+        "@grace",
+        "@ken",
+        "@margaret",
+        "@ada",
+        "@linus",
+        "@ken",
+    ] {
         let rows = screen(&mut app, 50, 12);
         let header = rows
             .iter()
@@ -134,18 +155,15 @@ fn trending_is_ranked_so_it_has_no_day_markers_and_ends_at_the_root() {
 fn every_line_fits_the_width_it_was_laid_out_for() {
     let page = page(Log::Latest);
     let expanded = page
-        .entries
+        .rows
         .iter()
-        .filter_map(|entry| match entry {
-            devnull::model::Entry::Commit(commit) => Some(commit.id.clone()),
-            devnull::model::Entry::Tombstone(_) => None,
-        })
+        .map(|row| row.commit.id.clone())
         .collect::<HashSet<_>>();
     for width in [24, 40, 57, 80, 120] {
         let feed = feed::layout(&page, width, Some(2), &expanded, &now());
         for line in &feed.lines {
             assert!(line.width() <= usize::from(width), "{width}: {line:?}");
         }
-        assert_eq!(feed.entries.len(), page.entries.len());
+        assert_eq!(feed.entries.len(), page.rows.len());
     }
 }

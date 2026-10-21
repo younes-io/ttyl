@@ -58,6 +58,8 @@ pub enum Error {
     Http(ureq::Error),
     /// The server answered with something other than the JSON it documents, such as a proxy's error page.
     Unexpected(u16),
+    /// The server answered with JSON whose shape this build does not read.
+    Malformed(String),
 }
 
 impl Error {
@@ -76,6 +78,7 @@ impl fmt::Display for Error {
                 f,
                 "/dev/null answered {status} with a page instead of data. The site may be down for maintenance."
             ),
+            Error::Malformed(detail) => write!(f, "can't read what /dev/null sent: {detail}"),
         }
     }
 }
@@ -132,7 +135,7 @@ impl Client {
     pub fn page(&self, log: Log) -> Result<LogPage, Error> {
         let path = format!("/api/v1/log/{}", log.slug());
         let (status, text) = self.send("GET", &path, String::new())?;
-        LogPage::parse(&text).map_err(|_| Error::Unexpected(status))
+        LogPage::parse(&text).map_err(|error| malformed(status, error))
     }
 
     fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {
@@ -174,5 +177,14 @@ impl Client {
 }
 
 fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {
-    serde_json::from_str(text).map_err(|_| Error::Unexpected(status))
+    serde_json::from_str(text).map_err(|error| malformed(status, error))
+}
+
+/// JSON that does not parse at all is a page from something in front of the server. JSON that parses but has the
+/// wrong shape came from the server itself, so its detail names the field to fix.
+fn malformed(status: u16, error: serde_json::Error) -> Error {
+    match error.classify() {
+        serde_json::error::Category::Data => Error::Malformed(error.to_string()),
+        _ => Error::Unexpected(status),
+    }
 }

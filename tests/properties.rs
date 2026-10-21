@@ -7,7 +7,7 @@ use chrono::{DateTime, FixedOffset};
 use devnull::code;
 use devnull::engine::Engine;
 use devnull::feed;
-use devnull::model::{Commit, Entry, Log, LogPage, Segment, Status, Tombstone};
+use devnull::model::{Log, LogPage, Row, Segment, Status, Suggestion};
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -26,11 +26,8 @@ fn now() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
 }
 
-fn fixture_commit() -> Commit {
-    match &page("log-latest").entries[0] {
-        Entry::Commit(commit) => (**commit).clone(),
-        Entry::Tombstone(_) => panic!("the first latest entry is a commit"),
-    }
+fn fixture_row() -> Row {
+    page("log-latest").rows[0].clone()
 }
 
 fn text(line: &Line) -> String {
@@ -86,21 +83,24 @@ fn segment() -> impl Strategy<Value = Segment> {
     ]
 }
 
-fn commit() -> impl Strategy<Value = Commit> {
+fn row() -> impl Strategy<Value = Row> {
     (
         prop::collection::vec(segment(), 1..6),
         prop::option::of(prop::collection::vec(segment(), 1..3)),
-        prop::option::of("\\PC{0,60}"),
+        "\\PC{0,60}",
         "[a-z0-9_]{1,40}",
         body(),
         0i64..20_000,
         prop::sample::select(vec![Status::Approved, Status::Pending, Status::Rejected]),
-        prop::option::of(0u32..2_000_000),
-        prop::option::of(0u32..2_000_000),
+        0u32..2_000_000,
+        0u32..2_000_000,
     )
         .prop_map(
             |(segments, preview, name, username, body, hours, status, replies, stars)| {
-                let mut commit = fixture_commit();
+                let mut row = fixture_row();
+                row.replies_count = replies;
+                row.stars_count = stars;
+                let commit = &mut row.commit;
                 commit.body_segments = segments;
                 commit.preview_segments = preview;
                 commit.author.name = name;
@@ -108,36 +108,30 @@ fn commit() -> impl Strategy<Value = Commit> {
                 commit.body = body;
                 commit.created_at = now().to_utc() - chrono::Duration::hours(hours);
                 commit.status = status;
-                commit.replies_count = replies;
-                commit.stars_count = stars;
-                commit
+                row
             },
         )
 }
 
-fn entry() -> impl Strategy<Value = Entry> {
-    prop_oneof![
-        4 => commit().prop_map(|commit| Entry::Commit(Box::new(commit))),
-        1 => Just(Entry::Tombstone(Tombstone {
-            id: devnull::model::CommitId("deleted".to_owned()),
-            parent_id: None,
-            deleted_at: now().to_utc(),
-            replies_count: Some(2),
-        })),
-    ]
+fn suggestion(row: Row) -> Suggestion {
+    Suggestion {
+        commit: row.commit,
+        stars_count: row.stars_count,
+        starred: row.starred,
+    }
 }
 
 fn any_page() -> impl Strategy<Value = LogPage> {
     (
         prop::sample::select(vec![Log::Following, Log::Latest, Log::Trending]),
-        prop::collection::vec(entry(), 0..5),
+        prop::collection::vec(row(), 0..5),
         any::<bool>(),
         any::<bool>(),
-        prop::collection::vec(entry(), 0..4),
+        prop::collection::vec(row().prop_map(suggestion), 0..4),
     )
-        .prop_map(|(log, entries, more, is_ranked, suggestions)| LogPage {
+        .prop_map(|(log, rows, more, is_ranked, suggestions)| LogPage {
             log,
-            entries,
+            rows,
             next_cursor: more.then(|| "cursor".to_owned()),
             is_ranked,
             new_commits_count: None,
@@ -145,9 +139,9 @@ fn any_page() -> impl Strategy<Value = LogPage> {
         })
 }
 
-fn commit_page(commit: Commit) -> LogPage {
+fn row_page(row: Row) -> LogPage {
     LogPage {
-        entries: vec![Entry::Commit(Box::new(commit))],
+        rows: vec![row],
         ..page("log-latest")
     }
 }
@@ -161,12 +155,10 @@ proptest! {
         expand in any::<bool>(),
     ) {
         let expanded = page
-            .entries
+            .rows
             .iter()
-            .filter_map(|entry| match entry {
-                Entry::Commit(commit) if expand => Some(commit.id.clone()),
-                _ => None,
-            })
+            .filter(|_| expand)
+            .map(|row| row.commit.id.clone())
             .collect();
         let feed = feed::layout(&page, width, selected, &expanded, &now());
         for line in &feed.lines {
@@ -179,10 +171,10 @@ proptest! {
         body in body(),
         width in 10u16..160,
     ) {
-        let mut commit = fixture_commit();
-        commit.body_segments = vec![Segment::Text { text: body.clone() }];
-        commit.preview_segments = None;
-        let page = commit_page(commit);
+        let mut row = fixture_row();
+        row.commit.body_segments = vec![Segment::Text { text: body.clone() }];
+        row.commit.preview_segments = None;
+        let page = row_page(row);
         let feed = feed::layout(&page, width, Some(0), &HashSet::new(), &now());
         let rendered: String = feed
             .lines
@@ -201,9 +193,10 @@ proptest! {
         width in 10u16..160,
     ) {
         let mut following = page("log-following");
-        let mut commit = fixture_commit();
-        commit.body = body.clone();
-        following.suggestions = vec![Entry::Commit(Box::new(commit))];
+        let mut row = fixture_row();
+        row.commit.body = body.clone();
+        following.rows.clear();
+        following.suggestions = vec![suggestion(row)];
         let feed = feed::layout(&following, width, None, &HashSet::new(), &now());
         let at = feed
             .lines
@@ -245,12 +238,9 @@ proptest! {
         height in 4u16..30,
     ) {
         let hashes: Vec<_> = page("log-latest")
-            .entries
+            .rows
             .iter()
-            .map(|entry| match entry {
-                Entry::Commit(commit) => commit.short_hash.clone(),
-                Entry::Tombstone(_) => "[deleted]".to_owned(),
-            })
+            .map(|row| row.commit.short_hash.clone())
             .collect();
         let at = Instant::now();
         let mut engine: Engine = common::boot(at);

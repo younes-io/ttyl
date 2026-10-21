@@ -3,7 +3,10 @@ mod common;
 use std::io;
 use std::time::Instant;
 
-use common::{account, boot, contains, key, open_browser, page, press, screen, secs, serve};
+use common::{
+    account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press,
+    screen, secs, serve,
+};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::Log;
@@ -118,7 +121,10 @@ fn g_twice_goes_to_the_top_and_g_then_an_unbound_key_does_nothing() {
 #[test]
 fn help_lists_exactly_the_keys_that_work_now() {
     let at = Instant::now();
-    let mut engine = boot(at);
+    let mut engine = boot_serving(at, |log| match log {
+        Log::Following => following_nobody(),
+        other => page(other),
+    });
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");

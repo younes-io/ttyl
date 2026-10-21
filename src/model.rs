@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use serde::de::{self, Deserializer};
+use serde::de::{self, DeserializeOwned, Deserializer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
@@ -67,7 +67,11 @@ impl<'de> Deserialize<'de> for Lane {
 
 fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     let digits = hex.strip_prefix('#')?;
-    if digits.len() != 6 || !digits.is_ascii() {
+    if digits.len() != 6
+        || !digits
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
         return None;
     }
     let channel = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
@@ -93,12 +97,21 @@ pub enum Segment {
 pub struct User {
     pub id: UserId,
     pub username: String,
-    pub name: Option<String>,
+    pub name: String,
     pub avatar_url: Option<String>,
     pub html_url: String,
     pub lane: Lane,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Mention {
+    pub username: String,
+    pub offset: usize,
+    pub length: usize,
+}
+
+/// The fields every signed commit carries, wherever it appears. What else comes with it depends on where it is
+/// listed, so each place has its own type around it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Commit {
     pub id: CommitId,
@@ -107,16 +120,100 @@ pub struct Commit {
     pub parent_id: Option<CommitId>,
     pub html_url: String,
     pub created_at: DateTime<Utc>,
-    pub stars_count: Option<u32>,
-    pub replies_count: Option<u32>,
     pub author: User,
     pub body_segments: Vec<Segment>,
     pub preview_segments: Option<Vec<Segment>>,
+    pub mentions: Vec<Mention>,
     pub status: Status,
     pub is_pinned: bool,
-    pub starred: Option<bool>,
+    pub pasteis_count: u32,
     pub quoted_commit_id: Option<CommitId>,
-    pub reply_preview: Option<ReplyPreview>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LinkPreview {
+    pub url: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub site_name: Option<String>,
+    pub is_pending: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Image {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+    pub description: Option<String>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Poll {
+    pub id: String,
+    pub closes_at: Option<DateTime<Utc>>,
+    pub is_closed: bool,
+    pub has_voted: bool,
+    pub total_votes: Option<u32>,
+    pub options: Vec<PollOption>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PollOption {
+    pub id: String,
+    pub label: String,
+    pub votes_count: Option<u32>,
+    pub voted: bool,
+    pub percentage: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Media {
+    pub link_preview: Option<LinkPreview>,
+    pub images: Vec<Image>,
+    pub poll: Option<Poll>,
+}
+
+/// A top-level commit in a log. Logs never list deleted commits, but what a row quotes or previews may be deleted.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Row {
+    #[serde(flatten)]
+    pub commit: Commit,
+    #[serde(flatten)]
+    pub media: Media,
+    pub stars_count: u32,
+    pub starred: bool,
+    pub replies_count: u32,
+    pub quoted_commit: Option<Shown<Quote>>,
+    pub reply_preview: ReplyPreview,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Quote {
+    #[serde(flatten)]
+    pub commit: Commit,
+    #[serde(flatten)]
+    pub media: Media,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Reply {
+    #[serde(flatten)]
+    pub commit: Commit,
+    #[serde(flatten)]
+    pub media: Media,
+    pub stars_count: u32,
+    pub starred: bool,
+    pub replies_count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Suggestion {
+    #[serde(flatten)]
+    pub commit: Commit,
+    pub stars_count: u32,
+    pub starred: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,35 +224,34 @@ pub struct Tombstone {
     pub replies_count: Option<u32>,
 }
 
-/// The server sends a deleted commit with replies as a tombstone, told apart from a live commit by a non-null
-/// `deleted_at`. Branching on that field keeps serde's error for a malformed commit instead of untagged's
-/// "did not match any variant".
-#[derive(Debug, Clone)]
-pub enum Entry {
-    Commit(Box<Commit>),
-    Tombstone(Tombstone),
-}
-
-impl Entry {
-    pub fn id(&self) -> &CommitId {
-        match self {
-            Entry::Commit(commit) => &commit.id,
-            Entry::Tombstone(tombstone) => &tombstone.id,
-        }
+impl Tombstone {
+    /// A tombstone has no `short_hash`, so it is derived the way the server derives one.
+    pub fn short_hash(&self) -> String {
+        let hex: Vec<char> = self.id.0.chars().filter(|c| *c != '-').collect();
+        hex[hex.len().saturating_sub(7)..].iter().collect()
     }
 }
 
-impl<'de> Deserialize<'de> for Entry {
+/// The server sends a deleted commit as a tombstone, told apart from a live commit by a non-null `deleted_at`.
+/// Branching on that field keeps serde's error for a malformed commit instead of untagged's "did not match any
+/// variant".
+#[derive(Debug, Clone)]
+pub enum Shown<T> {
+    Live(Box<T>),
+    Deleted(Tombstone),
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Shown<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
         let deleted = value.get("deleted_at").is_some_and(|at| !at.is_null());
         if deleted {
             Tombstone::deserialize(value)
-                .map(Entry::Tombstone)
+                .map(Shown::Deleted)
                 .map_err(de::Error::custom)
         } else {
-            Commit::deserialize(value)
-                .map(|c| Entry::Commit(Box::new(c)))
+            T::deserialize(value)
+                .map(|live| Shown::Live(Box::new(live)))
                 .map_err(de::Error::custom)
         }
     }
@@ -163,30 +259,30 @@ impl<'de> Deserialize<'de> for Entry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplyPreview {
-    pub data: Vec<Entry>,
+    pub data: Vec<Shown<Reply>>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LogPage {
     pub log: Log,
-    pub entries: Vec<Entry>,
+    pub rows: Vec<Row>,
     pub next_cursor: Option<String>,
     pub is_ranked: bool,
     pub new_commits_count: Option<u32>,
-    pub suggestions: Vec<Entry>,
+    pub suggestions: Vec<Suggestion>,
 }
 
 impl LogPage {
     pub fn parse(json: &str) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Wire {
-            data: Vec<Entry>,
+            data: Vec<Row>,
             meta: Meta,
             log: Log,
             is_ranked: bool,
             new_commits_count: Option<u32>,
-            suggestions: Vec<Entry>,
+            suggestions: Vec<Suggestion>,
         }
 
         #[derive(Deserialize)]
@@ -197,7 +293,7 @@ impl LogPage {
         let wire: Wire = serde_json::from_str(json)?;
         Ok(LogPage {
             log: wire.log,
-            entries: wire.data,
+            rows: wire.data,
             next_cursor: wire.meta.next_cursor,
             is_ranked: wire.is_ranked,
             new_commits_count: wire.new_commits_count,

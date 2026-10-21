@@ -10,7 +10,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::feed;
 use crate::keys::{Action, InputMode};
-use crate::model::{CommitId, Entry, Log};
+use crate::model::{CommitId, Log};
 use crate::store::{Slot, Store};
 use crate::theme;
 
@@ -70,16 +70,12 @@ impl LogScreen {
             Action::Down | Action::Up | Action::Top | Action::Bottom => !ids.is_empty(),
             Action::Expand => ids
                 .get(self.selected())
-                .and_then(|id| store.entry(id))
-                .is_some_and(|entry| {
-                    matches!(entry, Entry::Commit(commit) if commit.preview_segments.is_some())
-                }),
+                .and_then(|id| store.row(id))
+                .is_some_and(|row| row.commit.preview_segments.is_some()),
             Action::Show(_) | Action::NextLog | Action::Refresh => true,
-            Action::Quit
-            | Action::Help
-            | Action::Close
-            | Action::SignIn
-            | Action::StartOver => false,
+            Action::Quit | Action::Help | Action::Close | Action::SignIn | Action::StartOver => {
+                false
+            }
         }
     }
 
@@ -149,8 +145,8 @@ impl LogScreen {
             Slot::Loaded(_) => {
                 let page = store.page(self.active).expect("a loaded slot has a page");
                 let place = &mut self.places[index(self.active)];
-                place.selected = place.selected.min(page.entries.len().saturating_sub(1));
-                let selected = (!page.entries.is_empty()).then_some(place.selected);
+                place.selected = place.selected.min(page.rows.len().saturating_sub(1));
+                let selected = (!page.rows.is_empty()).then_some(place.selected);
                 let feed = feed::layout(&page, area.width, selected, &self.expanded, now);
                 place.offset = scroll(
                     &feed,

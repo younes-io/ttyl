@@ -1,28 +1,28 @@
 use std::collections::HashMap;
 
 use crate::api::{Account, Me, Reply};
-use crate::model::{CommitId, Entry, Log, LogPage};
+use crate::model::{CommitId, Log, LogPage, Row, Suggestion};
 
 pub struct Store {
     pub me: Me,
     pub unread: u32,
-    entries: HashMap<CommitId, Entry>,
+    rows: HashMap<CommitId, Row>,
     logs: HashMap<Log, Slot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Slot {
     Loading,
     Failed(String),
     Loaded(Listing),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Listing {
     pub ids: Vec<CommitId>,
     pub is_ranked: bool,
     pub next_cursor: Option<String>,
-    suggestions: Vec<CommitId>,
+    suggestions: Vec<Suggestion>,
 }
 
 impl Store {
@@ -30,7 +30,7 @@ impl Store {
         Store {
             me: account.me,
             unread: account.unread,
-            entries: HashMap::new(),
+            rows: HashMap::new(),
             logs: HashMap::new(),
         }
     }
@@ -43,22 +43,21 @@ impl Store {
             }
             Reply::Page(page) => {
                 let listing = Listing {
-                    ids: self.absorb(page.entries),
+                    ids: self.absorb(page.rows),
                     is_ranked: page.is_ranked,
                     next_cursor: page.next_cursor,
-                    suggestions: self.absorb(page.suggestions),
+                    suggestions: page.suggestions,
                 };
                 self.logs.insert(page.log, Slot::Loaded(listing));
             }
         }
     }
 
-    fn absorb(&mut self, entries: Vec<Entry>) -> Vec<CommitId> {
-        entries
-            .into_iter()
-            .map(|entry| {
-                let id = entry.id().clone();
-                self.entries.insert(id.clone(), entry);
+    fn absorb(&mut self, rows: Vec<Row>) -> Vec<CommitId> {
+        rows.into_iter()
+            .map(|row| {
+                let id = row.commit.id.clone();
+                self.rows.insert(id.clone(), row);
                 id
             })
             .collect()
@@ -74,26 +73,25 @@ impl Store {
         self.logs.get(&log).unwrap_or(&Slot::Loading)
     }
 
-    pub fn entry(&self, id: &CommitId) -> Option<&Entry> {
-        self.entries.get(id)
+    pub fn row(&self, id: &CommitId) -> Option<&Row> {
+        self.rows.get(id)
     }
 
     pub fn page(&self, log: Log) -> Option<LogPage> {
         let Slot::Loaded(listing) = self.slot(log) else {
             return None;
         };
-        let resolve = |ids: &[CommitId]| {
-            ids.iter()
-                .filter_map(|id| self.entries.get(id).cloned())
-                .collect()
-        };
         Some(LogPage {
             log,
-            entries: resolve(&listing.ids),
+            rows: listing
+                .ids
+                .iter()
+                .filter_map(|id| self.rows.get(id).cloned())
+                .collect(),
             next_cursor: listing.next_cursor.clone(),
             is_ranked: listing.is_ranked,
             new_commits_count: None,
-            suggestions: resolve(&listing.suggestions),
+            suggestions: listing.suggestions.clone(),
         })
     }
 }

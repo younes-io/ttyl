@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::code;
-use crate::model::{Commit, CommitId, Entry, Log, LogPage, Segment, Status};
+use crate::model::{Commit, CommitId, Log, LogPage, Row, Segment, Status};
 use crate::theme;
 
 const RAIL_WIDTH: usize = 2;
@@ -20,7 +20,7 @@ const TAB: &str = "    ";
 
 pub struct Feed {
     pub lines: Vec<Line<'static>>,
-    /// The lines each of the page's entries occupies, in page order.
+    /// The lines each of the page's rows occupies, in page order.
     pub entries: Vec<Range<usize>>,
 }
 
@@ -35,7 +35,7 @@ pub fn layout<Tz: TimeZone>(
         lines: Vec::new(),
         width: usize::from(width).max(RAIL_WIDTH + 8),
     };
-    if page.entries.is_empty() {
+    if page.rows.is_empty() {
         empty(&mut out, page);
         return Feed {
             lines: out.lines,
@@ -43,14 +43,15 @@ pub fn layout<Tz: TimeZone>(
         };
     }
 
-    let mut entries = Vec::with_capacity(page.entries.len());
+    let mut entries = Vec::with_capacity(page.rows.len());
     let mut last_day = None;
-    for (index, entry) in page.entries.iter().enumerate() {
+    for (index, row) in page.rows.iter().enumerate() {
         if index > 0 {
             out.gap();
         }
-        if let (false, Entry::Commit(commit)) = (page.is_ranked, entry) {
-            let day = commit
+        if !page.is_ranked {
+            let day = row
+                .commit
                 .created_at
                 .with_timezone(&now.timezone())
                 .date_naive();
@@ -64,30 +65,17 @@ pub fn layout<Tz: TimeZone>(
             }
         }
         let start = out.lines.len();
-        match entry {
-            Entry::Commit(commit) => commit_lines(
-                &mut out,
-                commit,
-                selected == Some(index),
-                expanded.contains(&commit.id),
-                now,
-            ),
-            Entry::Tombstone(_) => out.node(
-                Span::styled("○ ", Style::new().fg(theme::RAIL)),
-                Span::styled("│ ", Style::new().fg(theme::RAIL)),
-                vec![Span::styled(
-                    "[deleted] This commit was deleted.",
-                    theme::muted(),
-                )],
-            ),
-        }
+        row_lines(
+            &mut out,
+            row,
+            selected == Some(index),
+            expanded.contains(&row.commit.id),
+            now,
+        );
         entries.push(start..out.lines.len());
     }
 
-    let last_lane = page.entries.iter().rev().find_map(|entry| match entry {
-        Entry::Commit(commit) => Some(commit.author.lane),
-        Entry::Tombstone(_) => None,
-    });
+    let last_lane = page.rows.last().map(|row| row.commit.author.lane);
     if let (None, Some(lane)) = (&page.next_cursor, last_lane) {
         out.gap();
         out.node(
@@ -146,13 +134,14 @@ impl Writer {
     }
 }
 
-fn commit_lines<Tz: TimeZone>(
+fn row_lines<Tz: TimeZone>(
     out: &mut Writer,
-    commit: &Commit,
+    row: &Row,
     selected: bool,
     expanded: bool,
     now: &DateTime<Tz>,
 ) {
+    let commit = &row.commit;
     let lane = Style::new().fg(theme::lane(commit.author.lane));
     let rail = if selected {
         Span::styled("┃ ", lane)
@@ -173,24 +162,19 @@ fn commit_lines<Tz: TimeZone>(
         );
     }
 
-    let mut footer = Vec::new();
-    if let Some(replies) = commit.replies_count {
-        footer.push(Span::styled(format!("↩ {replies}"), theme::muted()));
-    }
-    if let Some(stars) = commit.stars_count {
-        if !footer.is_empty() {
-            footer.push(Span::raw("   "));
-        }
-        let style = if commit.starred == Some(true) {
-            Style::new().fg(theme::AMBER)
-        } else {
-            theme::muted()
-        };
-        footer.push(Span::styled(format!("★ {stars}"), style));
-    }
-    if !footer.is_empty() {
-        out.push(rail, footer);
-    }
+    let star = if row.starred {
+        Style::new().fg(theme::AMBER)
+    } else {
+        theme::muted()
+    };
+    out.push(
+        rail,
+        vec![
+            Span::styled(format!("↩ {}", row.replies_count), theme::muted()),
+            Span::raw("   "),
+            Span::styled(format!("★ {}", row.stars_count), star),
+        ],
+    );
 }
 
 fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Vec<Span<'static>> {
@@ -198,13 +182,10 @@ fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Ve
     let bold = Style::new()
         .fg(theme::FOREGROUND)
         .add_modifier(Modifier::BOLD);
-    let mut spans = match &author.name {
-        Some(name) => vec![
-            Span::styled(name.clone(), bold),
-            Span::styled(format!(" @{}", author.username), theme::muted()),
-        ],
-        None => vec![Span::styled(format!("@{}", author.username), bold)],
-    };
+    let mut spans = vec![
+        Span::styled(author.name.clone(), bold),
+        Span::styled(format!(" @{}", author.username), theme::muted()),
+    ];
     spans.push(Span::styled(
         format!(" · {}", relative_time(commit.created_at, now)),
         theme::muted(),
@@ -391,20 +372,15 @@ fn empty(out: &mut Writer, page: &LogPage) {
         &mut lines,
     );
 
-    for entry in &page.suggestions {
-        let Entry::Commit(commit) = entry else {
-            continue;
-        };
+    for suggestion in &page.suggestions {
+        let commit = &suggestion.commit;
         let author = &commit.author;
         lines.push(Vec::new());
         lines.push(fit(
             vec![
                 Span::styled("● ", Style::new().fg(theme::lane(author.lane))),
                 Span::styled(
-                    author
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| author.username.clone()),
+                    author.name.clone(),
                     Style::new()
                         .fg(theme::FOREGROUND)
                         .add_modifier(Modifier::BOLD),

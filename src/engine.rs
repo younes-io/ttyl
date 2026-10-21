@@ -57,6 +57,7 @@ impl Failure {
             Error::Unexpected(_) => Failure::Down,
             Error::Http(error) => Failure::Offline(error.to_string()),
             Error::Api { message, .. } => Failure::Refused(message.clone()),
+            Error::Malformed(_) => Failure::Refused(error.to_string()),
         }
     }
 }
