@@ -408,6 +408,72 @@ fn sign_out_drops_queued_calls_and_ignores_replies_to_calls_sent_before_it() {
 }
 
 #[test]
+fn an_approved_link_redeems_the_code_and_the_app_opens_without_a_restart() {
+    let at = Instant::now();
+    let (mut engine, me) = fresh(at);
+    engine.update(
+        Event::Reply(me, Err(refused(401, "device_not_approved"))),
+        at,
+    );
+    let browser = open_browser(&mut engine, at);
+    let rows = screen(&mut engine, 80, 20, at);
+    assert!(
+        contains(&rows, "Waiting for you in the browser."),
+        "{rows:#?}"
+    );
+    assert!(contains(&rows, "esc start over  Q quit"), "{rows:#?}");
+
+    engine.update(
+        Event::Link(Ok("devnull://signed-in?code=stale&state=other".into())),
+        at,
+    );
+    assert!(
+        engine.pump(at).is_empty(),
+        "a link for another attempt is noise"
+    );
+    engine.update(Event::Link(Ok(browser.redirect("code=c0de"))), at);
+    let effects = engine.pump(at);
+    let [Effect::Run(redeem, Call::Redeem { code, verifier })] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(code, "c0de");
+    assert_eq!(*verifier, browser.verifier);
+    let rows = screen(&mut engine, 80, 20, at);
+    assert!(contains(&rows, "Signing in."), "{rows:#?}");
+
+    engine.update(
+        Event::Reply(*redeem, Ok(Reply::Account(account(2)))),
+        at + secs(1),
+    );
+    serve(&mut engine, at + secs(1));
+    let rows = screen(&mut engine, 80, 20, at + secs(1));
+    assert!(rows[0].contains("1 following"), "{:?}", rows[0]);
+    assert!(rows[0].ends_with("● 2  @ada"), "{:?}", rows[0]);
+    press(&mut engine, "2", at + secs(1));
+    let rows = screen(&mut engine, 80, 20, at + secs(1));
+    assert!(contains(&rows, "@ada · 18m"), "{rows:#?}");
+}
+
+#[test]
+fn a_denied_link_says_so_and_offers_to_try_again() {
+    let at = Instant::now();
+    let (mut engine, me) = fresh(at);
+    engine.update(
+        Event::Reply(me, Err(refused(401, "device_not_approved"))),
+        at,
+    );
+    let browser = open_browser(&mut engine, at);
+    engine.update(Event::Link(Ok(browser.redirect("error=access_denied"))), at);
+    assert!(engine.pump(at).is_empty(), "nothing to redeem");
+    let rows = screen(&mut engine, 80, 20, at);
+    assert!(
+        contains(&rows, "You cancelled in the browser."),
+        "{rows:#?}"
+    );
+    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+}
+
+#[test]
 fn refresh_toasts_then_the_hints_come_back() {
     let at = Instant::now();
     let mut engine = boot(at);
