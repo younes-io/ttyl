@@ -121,8 +121,7 @@ fn a_failed_older_page_says_so_at_the_end_and_waits_for_its_retry() {
     );
 }
 
-/// Runs the 30-second poll, answers its account check, and returns the check for new commits if one ran.
-fn poll(engine: &mut Engine, at: Instant) -> Option<(Ticket, Call)> {
+fn poll_for_since(engine: &mut Engine, at: Instant) -> Option<(Ticket, Call)> {
     let mut since = None;
     for effect in engine.pump(at) {
         match effect {
@@ -149,10 +148,10 @@ fn only_the_visible_log_asks_for_new_commits_and_never_trending() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "3", at);
-    assert!(poll(&mut engine, at + secs(30)).is_none());
+    assert!(poll_for_since(&mut engine, at + secs(30)).is_none());
 
     press(&mut engine, "2", at + secs(30));
-    let (_, call) = poll(&mut engine, at + secs(60)).expect("latest asks");
+    let (_, call) = poll_for_since(&mut engine, at + secs(60)).expect("latest asks");
     assert_eq!(
         call,
         Call::Since {
@@ -168,7 +167,7 @@ fn new_commits_show_a_pill_and_leave_the_feed_where_it_is() {
     let mut engine = boot(at);
     press(&mut engine, "2jj", at);
     let before = screen(&mut engine, 100, 30, at);
-    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    let (ticket, _) = poll_for_since(&mut engine, at + secs(30)).unwrap();
     new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
 
     let after = screen(&mut engine, 100, 30, at + secs(30));
@@ -182,7 +181,7 @@ fn r_loads_the_new_commits_above_and_keeps_the_cursor_on_its_commit() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "2j", at);
-    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    let (ticket, _) = poll_for_since(&mut engine, at + secs(30)).unwrap();
     new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
     let hash = page(Log::Latest).rows[1].commit.short_hash.clone();
     let line = |rows: &[String]| rows.iter().position(|row| row.contains(&hash));
@@ -212,10 +211,10 @@ fn each_log_keeps_its_own_count_across_tab_switches() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "2", at);
-    let (ticket, _) = poll(&mut engine, at + secs(30)).unwrap();
+    let (ticket, _) = poll_for_since(&mut engine, at + secs(30)).unwrap();
     new_commits(&mut engine, ticket, Log::Latest, 2, at + secs(30));
     press(&mut engine, "1", at + secs(30));
-    let (ticket, call) = poll(&mut engine, at + secs(60)).unwrap();
+    let (ticket, call) = poll_for_since(&mut engine, at + secs(60)).unwrap();
     assert!(matches!(
         call,
         Call::Since {

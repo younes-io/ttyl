@@ -145,8 +145,7 @@ fn listed(store: &Store, log: Log) -> (Vec<String>, Option<String>, u32) {
     (ids, listing.next_cursor.clone(), listing.new_commits)
 }
 
-/// The fixture's latest log with one older page of three rows loaded below it.
-fn paged() -> Store {
+fn latest_and_an_older_page() -> Store {
     let mut store = store();
     let latest = page("log-latest");
     let cursor = latest.next_cursor.clone().unwrap();
@@ -166,7 +165,7 @@ fn paged() -> Store {
 
 #[test]
 fn a_first_page_that_overlaps_lands_on_top_and_keeps_the_older_pages() {
-    let mut store = paged();
+    let mut store = latest_and_an_older_page();
     let (before, _, _) = listed(&store, Log::Latest);
     let mut first = renamed(page("log-latest"), "new");
     first.rows.truncate(2);
@@ -185,7 +184,7 @@ fn a_first_page_that_overlaps_lands_on_top_and_keeps_the_older_pages() {
 
 #[test]
 fn a_first_page_with_no_listed_commit_replaces_the_log() {
-    let mut store = paged();
+    let mut store = latest_and_an_older_page();
     let fresh = renamed(page("log-latest"), "new");
     let expected: Vec<String> = fresh
         .rows
@@ -221,7 +220,7 @@ fn a_ranked_log_is_always_replaced() {
 
 #[test]
 fn a_count_of_new_commits_holds_only_for_the_newest_commit_it_was_asked_about() {
-    let mut store = paged();
+    let mut store = latest_and_an_older_page();
     let newest = page("log-latest").rows[0].commit.id.clone();
     let mut counted = page("log-latest");
     counted.new_commits_count = Some(3);

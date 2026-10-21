@@ -32,8 +32,7 @@ pub struct Entry {
 }
 
 impl Feed {
-    /// Ends the feed with why the next page is missing.
-    pub fn stall(&mut self, retry: Duration) {
+    pub fn older_failed(&mut self, retry: Duration) {
         self.lines
             .push(Line::from(Span::styled("│", Style::new().fg(theme::RAIL))));
         self.lines.push(Line::from(vec![
@@ -47,9 +46,6 @@ impl Feed {
                 theme::muted(),
             ),
         ]));
-        if let Some(last) = self.entries.last_mut() {
-            last.lines.end = self.lines.len();
-        }
     }
 }
 
@@ -119,9 +115,6 @@ pub fn layout<Tz: TimeZone>(
                 theme::muted(),
             )],
         );
-    }
-    if let Some(last) = entries.last_mut() {
-        last.lines.end = out.lines.len();
     }
 
     Feed {
@@ -235,7 +228,6 @@ fn row_lines<Tz: TimeZone>(
     }
 }
 
-/// Images and polls are not in the API, so the feed only says they exist.
 fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
     let mut parts = Vec::new();
     match media.images.len() {
@@ -252,7 +244,6 @@ fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
     }
 }
 
-/// The web draws no card until the server has fetched the page's title.
 fn link_preview(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
     let Some(preview) = &media.link_preview else {
         return;
@@ -270,7 +261,6 @@ fn link_preview(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) 
     );
 }
 
-/// Mirrors the web's `hostname`, which drops a leading `www.`.
 fn domain(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
@@ -344,7 +334,6 @@ fn bad_object(short_hash: &str) -> String {
     format!("fatal: bad object {short_hash}")
 }
 
-/// The newest reply, on one line under its commit, as the web previews it.
 fn reply_line<Tz: TimeZone>(
     reply: &Shown<Reply>,
     width: usize,
@@ -373,8 +362,6 @@ fn reply_line<Tz: TimeZone>(
     )
 }
 
-/// A commit on one line after its author, as the web lists replies under a commit and suggestions on an empty
-/// log.
 fn one_liner(
     node: &'static str,
     commit: &Commit,
@@ -397,8 +384,6 @@ fn one_liner(
     fit(spans, width)
 }
 
-/// A body on one line, the way the web's `truncate` shows it: runs of whitespace collapse to one space, and a
-/// code block keeps only its first line.
 fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
     let mut line = Vec::new();
     let mut gap = false;

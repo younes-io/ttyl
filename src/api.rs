@@ -60,8 +60,7 @@ pub enum Error {
     Http(ureq::Error),
     /// The server answered with something other than the JSON it documents, such as a proxy's error page.
     Unexpected(u16),
-    /// The server answered with JSON whose shape this build does not read.
-    Malformed(String),
+    WrongShape(String),
 }
 
 impl Error {
@@ -80,7 +79,7 @@ impl fmt::Display for Error {
                 f,
                 "/dev/null answered {status} with a page instead of data. The site may be down for maintenance."
             ),
-            Error::Malformed(detail) => write!(f, "can't read what /dev/null sent: {detail}"),
+            Error::WrongShape(detail) => write!(f, "can't read what /dev/null sent: {detail}"),
         }
     }
 }
@@ -103,7 +102,7 @@ impl Failure {
                 error => error.to_string(),
             }),
             Error::Api { message, .. } => Failure::Refused(message.clone()),
-            Error::Malformed(_) => Failure::Refused(error.to_string()),
+            Error::WrongShape(_) => Failure::Refused(error.to_string()),
         }
     }
 }
@@ -169,7 +168,7 @@ impl Client {
             path.push_str(&format!("?{name}={}", escape(value)));
         }
         let (status, text) = self.send("GET", &path, String::new())?;
-        LogPage::parse(&text).map_err(|error| malformed(status, error))
+        LogPage::parse(&text).map_err(|error| unreadable(status, error))
     }
 
     fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {
@@ -223,14 +222,12 @@ fn escape(value: &str) -> String {
 }
 
 fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {
-    serde_json::from_str(text).map_err(|error| malformed(status, error))
+    serde_json::from_str(text).map_err(|error| unreadable(status, error))
 }
 
-/// JSON that does not parse at all is a page from something in front of the server. JSON that parses but has the
-/// wrong shape came from the server itself, so its detail names the field to fix.
-fn malformed(status: u16, error: serde_json::Error) -> Error {
+fn unreadable(status: u16, error: serde_json::Error) -> Error {
     match error.classify() {
-        serde_json::error::Category::Data => Error::Malformed(error.to_string()),
+        serde_json::error::Category::Data => Error::WrongShape(error.to_string()),
         _ => Error::Unexpected(status),
     }
 }

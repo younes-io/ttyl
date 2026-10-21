@@ -83,7 +83,6 @@ pub fn page(log: Log) -> LogPage {
     LogPage::parse(&json).unwrap()
 }
 
-/// A page of rows older than the fixture's, each with an id that starts with `prefix`.
 pub fn older(log: Log, prefix: &str, count: usize, next_cursor: Option<&str>) -> LogPage {
     let first = page(log);
     let rows = (0..count)
@@ -129,7 +128,6 @@ pub fn now() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
 }
 
-/// Following as the server sends it to someone who follows nobody and has not committed yet.
 pub fn following_nobody() -> LogPage {
     LogPage {
         rows: Vec::new(),

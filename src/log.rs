@@ -16,7 +16,6 @@ use crate::{fatal, feed};
 
 pub const LOGS: [Log; 3] = [Log::Following, Log::Latest, Log::Trending];
 
-/// How long until each failed load of the active log is tried again.
 pub struct Retry {
     pub page: Option<Duration>,
     pub older: Option<Duration>,
@@ -32,9 +31,12 @@ pub struct LogScreen {
 struct Place {
     selected: usize,
     offset: usize,
-    /// The commit selected at the last draw and the screen line it started on, so rows arriving above it leave it
-    /// where it was.
-    seen: Option<(CommitId, usize)>,
+    anchor: Option<Anchor>,
+}
+
+struct Anchor {
+    id: CommitId,
+    line: usize,
 }
 
 impl Default for LogScreen {
@@ -69,8 +71,7 @@ impl LogScreen {
         }
     }
 
-    /// Selects `id` again after the listing of `log` changed around it.
-    pub fn keep(&mut self, log: Log, id: Option<&CommitId>, store: &Store) {
+    pub fn reselect(&mut self, log: Log, id: Option<&CommitId>, store: &Store) {
         if let (Some(id), Slot::Loaded(listing)) = (id, store.slot(log)) {
             let place = &mut self.places[index(log)];
             place.selected = listing.ids.iter().position(|each| each == id).unwrap_or(0);
@@ -164,14 +165,14 @@ impl LogScreen {
                 let selected = (!page.rows.is_empty()).then_some(place.selected);
                 let mut feed = feed::layout(&page, area.width, selected, &self.expanded, now);
                 if let Some(wait) = retry.older {
-                    feed.stall(wait);
+                    feed.older_failed(wait);
                 }
                 let id = selected.map(|at| page.rows[at].commit.id.clone());
                 let start = |at: usize| feed.entries.get(at).map_or(0, |entry| entry.header);
-                if let (Some((seen, line)), Some(id)) = (&place.seen, &id)
-                    && seen == id
+                if let (Some(anchor), Some(id)) = (&place.anchor, &id)
+                    && anchor.id == *id
                 {
-                    place.offset = start(place.selected).saturating_sub(*line);
+                    place.offset = start(place.selected).saturating_sub(anchor.line);
                 }
                 place.offset = scroll(
                     &feed,
@@ -179,7 +180,10 @@ impl LogScreen {
                     place.offset,
                     usize::from(area.height),
                 );
-                place.seen = id.map(|id| (id, start(place.selected).saturating_sub(place.offset)));
+                place.anchor = id.map(|id| Anchor {
+                    id,
+                    line: start(place.selected).saturating_sub(place.offset),
+                });
                 frame.render_widget(
                     Paragraph::new(feed.lines)
                         .scroll((u16::try_from(place.offset).unwrap_or(u16::MAX), 0)),
@@ -194,12 +198,18 @@ fn scroll(feed: &feed::Feed, selected: usize, offset: usize, height: usize) -> u
     let Some(entry) = feed.entries.get(selected) else {
         return 0;
     };
-    let range = &entry.lines;
+    let is_last = selected + 1 == feed.entries.len();
+    let start = entry.lines.start;
+    let end = if is_last {
+        feed.lines.len()
+    } else {
+        entry.lines.end
+    };
     let offset = offset.min(feed.lines.len().saturating_sub(height));
-    let offset = if range.start < offset {
-        range.start
-    } else if range.end > offset + height {
-        (range.end - height).min(range.start)
+    let offset = if start < offset {
+        start
+    } else if end > offset + height {
+        (end - height).min(start)
     } else {
         offset
     };

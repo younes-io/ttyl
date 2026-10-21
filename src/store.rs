@@ -26,6 +26,12 @@ pub struct Listing {
     suggestions: Vec<Suggestion>,
 }
 
+impl Listing {
+    fn ends_at(&self, cursor: &str) -> bool {
+        self.next_cursor.as_deref() == Some(cursor)
+    }
+}
+
 impl Store {
     pub fn new(account: Account) -> Self {
         Store {
@@ -50,12 +56,11 @@ impl Store {
                     listing.new_commits = page.new_commits_count.unwrap_or(0);
                 }
             }
-            (_, Reply::Page(page)) => self.replace(page),
+            (_, Reply::Page(page)) => self.land_first_page(page),
         }
     }
 
-    /// A first page that overlaps a chronological log lands on top of it, so the older pages below stay loaded.
-    fn replace(&mut self, page: LogPage) {
+    fn land_first_page(&mut self, page: LogPage) {
         let mut ids = self.absorb(page.rows);
         let mut next_cursor = page.next_cursor;
         if let Some(Slot::Loaded(old)) = self.logs.get(&page.log)
@@ -75,12 +80,11 @@ impl Store {
         self.logs.insert(page.log, Slot::Loaded(listing));
     }
 
-    /// A page asked for after a refresh moved the cursor on belongs to a listing that is gone, so it is dropped.
     fn append(&mut self, log: Log, cursor: &str, page: LogPage) {
         let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log) else {
             return;
         };
-        if listing.next_cursor.as_deref() != Some(cursor) {
+        if !listing.ends_at(cursor) {
             return;
         }
         listing.next_cursor = page.next_cursor;

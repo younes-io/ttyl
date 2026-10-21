@@ -290,14 +290,14 @@ fn a_page_that_is_not_the_api_is_unexpected() {
 }
 
 #[test]
-fn json_of_the_wrong_shape_is_malformed_and_names_the_field() {
+fn json_of_the_wrong_shape_names_the_field() {
     let (base, _server) = serve("200 OK", r#"{"data":{"name":"Ada"}}"#);
     let error = Client::new(base, DeviceKey::generate().unwrap())
         .me()
         .unwrap_err();
 
     assert!(
-        matches!(&error, Error::Malformed(detail) if detail.contains("username")),
+        matches!(&error, Error::WrongShape(detail) if detail.contains("username")),
         "{error:?}"
     );
 }

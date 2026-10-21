@@ -113,8 +113,6 @@ fn row() -> impl Strategy<Value = Row> {
         )
 }
 
-/// Takes what a row quotes, its reply preview and its media from the fixture rows that carry each kind, so the
-/// generated rows cover every kind the API sends.
 fn attachments(row: Row) -> impl Strategy<Value = Row> {
     let rows = page("log-latest").rows;
     let donor = move |hash: &str| {

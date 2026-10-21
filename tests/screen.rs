@@ -213,7 +213,6 @@ fn space_unfolds_the_selected_long_commit() {
     );
 }
 
-/// The screen rows from the header of the commit with `hash` up to the next header or day marker.
 fn commit_rows(rows: &[String], hash: &str) -> Vec<String> {
     let start = rows
         .iter()

@@ -28,6 +28,8 @@ use crate::welcome::{self, Step, Wait};
 pub const WORKERS: usize = 2;
 pub const AHEAD: usize = 5;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_CELLS: usize = 2;
+const HINT_INDENT: &str = " ";
 
 pub enum Event {
     Key(KeyEvent),
@@ -189,8 +191,6 @@ impl Engine {
         .min()
     }
 
-    /// Asks for the active log's next page once the cursor is within `AHEAD` commits of the end, unless the last
-    /// try failed and its retry is not due yet.
     fn load_older(&mut self) {
         let Phase::Ready(session) = &self.phase else {
             return;
@@ -302,7 +302,9 @@ impl Engine {
         let refreshed = session.asked_to_refresh.remove(log);
         let selected = session.log.selected_id(*log, &session.store).cloned();
         session.store.apply(call, reply);
-        session.log.keep(*log, selected.as_ref(), &session.store);
+        session
+            .log
+            .reselect(*log, selected.as_ref(), &session.store);
         if refreshed {
             self.toast(format!("{} refreshed", log.slug()), now);
         }
@@ -453,13 +455,14 @@ impl Engine {
                         let wait = retry
                             .page
                             .or_else(|| self.timers.remaining(Timer::Poll, now));
-                        let room = usize::from(foot.width).saturating_sub(3);
+                        let room = usize::from(foot.width)
+                            .saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
                         Line::styled(
-                            format!(" {}", fatal::hint(failure, wait, room)),
+                            format!("{HINT_INDENT}{}", fatal::hint(failure, wait, room)),
                             Style::new().fg(theme::DESTRUCTIVE),
                         )
                     }
-                    _ => Line::styled(format!(" {bottom}"), theme::muted()),
+                    _ => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
                 session
                     .log

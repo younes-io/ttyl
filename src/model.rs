@@ -110,8 +110,6 @@ pub struct Mention {
     pub length: usize,
 }
 
-/// The fields every signed commit carries, wherever it appears. What else comes with it depends on where it is
-/// listed, so each place has its own type around it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Commit {
     pub id: CommitId,
@@ -175,7 +173,6 @@ pub struct Media {
     pub poll: Option<Poll>,
 }
 
-/// A top-level commit in a log. Logs never list deleted commits, but what a row quotes or previews may be deleted.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Row {
     #[serde(flatten)]
@@ -232,8 +229,7 @@ impl Tombstone {
     }
 }
 
-/// The server sends a deleted commit as a tombstone, told apart from a live commit by a non-null `deleted_at`.
-/// Branching on that field keeps serde's error for a malformed commit instead of untagged's "did not match any
+/// Branching on `deleted_at` keeps serde's error for a malformed commit instead of untagged's "did not match any
 /// variant".
 #[derive(Debug, Clone)]
 pub enum Shown<T> {
