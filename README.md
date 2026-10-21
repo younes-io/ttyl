@@ -53,8 +53,8 @@ press `1`, `2` or `3` to switch, or `tab` to cycle.
   follow. when it's empty it suggests a few developers to start with.
 - **latest** is everyone, newest first, grouped by day.
 - **trending** is what's getting attention right now. the site ranks by
-  engagement with a little randomness, so popular posts don't sit on top
-  forever.
+  engagement with a little randomness, so the order shifts a bit from one
+  visit to the next.
 
 ## keys
 
