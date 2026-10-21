@@ -23,6 +23,7 @@ pub struct Listing {
     pub is_ranked: bool,
     pub next_cursor: Option<String>,
     pub new_commits: u32,
+    pub failure: Option<Failure>,
     suggestions: Vec<Suggestion>,
 }
 
@@ -75,6 +76,7 @@ impl Store {
             is_ranked: page.is_ranked,
             next_cursor,
             new_commits: 0,
+            failure: None,
             suggestions: page.suggestions,
         };
         self.logs.insert(page.log, Slot::Loaded(listing));
@@ -108,8 +110,11 @@ impl Store {
     }
 
     pub fn fail(&mut self, log: Log, failure: Failure) {
-        if !matches!(self.slot(log), Slot::Loaded(_)) {
-            self.logs.insert(log, Slot::Failed(failure));
+        match self.logs.get_mut(&log) {
+            Some(Slot::Loaded(listing)) => listing.failure = Some(failure),
+            Some(Slot::Loading | Slot::Failed(_)) | None => {
+                self.logs.insert(log, Slot::Failed(failure));
+            }
         }
     }
 

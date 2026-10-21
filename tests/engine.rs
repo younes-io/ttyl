@@ -290,18 +290,12 @@ fn a_page_that_fails_waits_its_turn_instead_of_refiring_on_every_key() {
     };
     let rows = screen(&mut engine, 100, 20, at);
     assert!(
-        rows[19].starts_with(" fatal: the site is in maintenance · your log is still here"),
-        "a loaded log keeps its rows and says it in the hint line: {:?}",
-        rows[19]
+        !contains(&rows, "fatal"),
+        "another log's failure stays off this log's screen: {rows:#?}"
     );
     engine.update(
         Event::Reply(*trending, Ok(Reply::Page(page(Log::Trending)))),
         at,
-    );
-    let rows = screen(&mut engine, 100, 20, at);
-    assert!(
-        !contains(&rows, "your log is still here"),
-        "the next good answer clears the hint: {rows:#?}"
     );
     press(&mut engine, "1", at);
     let rows = screen(&mut engine, 100, 20, at);
@@ -654,4 +648,112 @@ fn quit_works_in_every_phase() {
     let mut engine = boot(at);
     press(&mut engine, "?", at);
     assert_eq!(engine.update(Event::Key(key('Q')), at), [Effect::Quit]);
+}
+
+#[test]
+fn another_logs_failure_stays_off_the_active_logs_footer() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "R", at);
+    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    press(&mut engine, "2", at);
+    engine.update(Event::Reply(*ticket, Err(refused(500, "server_error"))), at);
+    let rows = screen(&mut engine, 120, 30, at + secs(1));
+    assert!(
+        !rows[29].contains("fatal") && rows[29].contains("? help"),
+        "latest keeps its hints: {:?}",
+        rows[29]
+    );
+    press(&mut engine, "1", at + secs(1));
+    let rows = screen(&mut engine, 120, 30, at + secs(1));
+    assert!(
+        rows[29].starts_with(
+            " fatal: server_error from the server · your log is still here · retrying in 29s"
+        ),
+        "following owns the failure and its countdown: {:?}",
+        rows[29]
+    );
+}
+
+#[test]
+fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2", at);
+    let effects = press(&mut engine, "R", at + secs(10));
+    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(10));
+    let rows = screen(&mut engine, 120, 30, at + secs(11));
+    assert!(
+        rows[29].starts_with(
+            " fatal: the site is in maintenance · your log is still here · retrying in 29s"
+        ),
+        "{:?}",
+        rows[29]
+    );
+    for effect in engine.pump(at + secs(30)) {
+        match effect {
+            Effect::Run(ticket, Call::Me) => {
+                engine.update(
+                    Event::Reply(ticket, Ok(Reply::Account(account(0)))),
+                    at + secs(30),
+                );
+            }
+            Effect::Run(ticket, Call::Since { log, .. }) => {
+                engine.update(
+                    Event::Reply(ticket, Ok(Reply::Page(page(log)))),
+                    at + secs(30),
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    let rows = screen(&mut engine, 120, 30, at + secs(31));
+    assert!(
+        rows[29].starts_with(
+            " fatal: the site is in maintenance · your log is still here · retrying in 9s"
+        ),
+        "an unrelated success leaves the refresh error and its countdown: {:?}",
+        rows[29]
+    );
+    let effects = engine.pump(at + secs(40));
+    let [Effect::Run(reload, Call::Page(Log::Latest))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    engine.update(
+        Event::Reply(*reload, Ok(Reply::Page(page(Log::Latest)))),
+        at + secs(40),
+    );
+    let rows = screen(&mut engine, 120, 30, at + secs(40));
+    assert!(
+        !rows[29].contains("fatal"),
+        "the reload that answers clears it: {:?}",
+        rows[29]
+    );
+}
+
+#[test]
+fn an_older_page_failure_speaks_only_at_the_end_of_the_feed() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "2G", at + secs(5));
+    let Some(Effect::Run(ticket, Call::Older { .. })) = effects.first() else {
+        panic!("{effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(5));
+    let rows = screen(&mut engine, 120, 30, at + secs(12));
+    assert_eq!(
+        rows[28].trim(),
+        "fatal: could not load older commits · retrying in 23s",
+        "{rows:#?}"
+    );
+    assert!(
+        !rows[29].contains("fatal") && rows[29].contains("? help"),
+        "{:?}",
+        rows[29]
+    );
 }

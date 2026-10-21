@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
@@ -225,6 +225,17 @@ impl Engine {
         }
     }
 
+    fn next_call(&self, now: Instant) -> Option<Duration> {
+        [Timer::Retry, Timer::Poll]
+            .into_iter()
+            .chain(
+                LOGS.iter()
+                    .flat_map(|log| [Timer::Reload(*log), Timer::Older(*log)]),
+            )
+            .filter_map(|timer| self.timers.remaining(timer, now))
+            .min()
+    }
+
     fn counting_down(&self) -> bool {
         self.timers.is_set(Timer::Retry)
             || LOGS.iter().any(|log| {
@@ -355,16 +366,23 @@ impl Engine {
             }
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
-                match call {
+                let offline = matches!(failure, Failure::Offline(_));
+                let connection = match call {
                     Call::Page(log) => {
                         session.asked_to_refresh.remove(&log);
                         session.store.fail(log, failure.clone());
                         self.timers.set(Timer::Reload(log), now + RETRY);
+                        offline
                     }
-                    Call::Older { log, .. } => self.timers.set(Timer::Older(log), now + RETRY),
-                    Call::Me | Call::Redeem { .. } | Call::Since { .. } => {}
+                    Call::Older { log, .. } => {
+                        self.timers.set(Timer::Older(log), now + RETRY);
+                        offline
+                    }
+                    Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
+                };
+                if connection {
+                    self.health = Some(failure);
                 }
-                self.health = Some(failure);
             }
         }
     }
@@ -414,6 +432,7 @@ impl Engine {
             Some(toast) if self.keymap.pending().is_empty() => toast.clone(),
             _ => hints,
         };
+        let next_call = self.next_call(now);
         match &mut self.phase {
             Phase::Splash => self.draw_splash(frame, now, &bottom),
             Phase::SignIn(step) => welcome::draw(frame, step, &self.device_name, &bottom),
@@ -446,15 +465,14 @@ impl Engine {
                     page: self.timers.remaining(Timer::Reload(active), now),
                     older: self.timers.remaining(Timer::Older(active), now),
                 };
-                let hint = match &self.health {
-                    Some(failure)
-                        if loaded.is_some()
-                            && self.toast.is_none()
-                            && self.keymap.pending().is_empty() =>
+                let failure = loaded.and_then(|listing| match &listing.failure {
+                    Some(failure) => Some((failure, retry.page)),
+                    None => self.health.as_ref().map(|failure| (failure, next_call)),
+                });
+                let hint = match failure {
+                    Some((failure, wait))
+                        if self.toast.is_none() && self.keymap.pending().is_empty() =>
                     {
-                        let wait = retry
-                            .page
-                            .or_else(|| self.timers.remaining(Timer::Poll, now));
                         let room = usize::from(foot.width)
                             .saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
                         Line::styled(
