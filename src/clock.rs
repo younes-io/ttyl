@@ -17,6 +17,7 @@ pub enum Timer {
     RelativeTimes,
     Toast,
     Reload(Log),
+    Older(Log),
 }
 
 #[derive(Default)]

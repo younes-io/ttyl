@@ -38,6 +38,7 @@ pub enum Call {
     Me,
     Redeem { code: String, verifier: String },
     Page(Log),
+    Older { log: Log, cursor: String },
 }
 
 #[derive(Debug)]
@@ -116,7 +117,10 @@ impl Client {
         match call {
             Call::Me => self.me().map(Reply::Account),
             Call::Redeem { code, verifier } => self.redeem(code, verifier).map(Reply::Account),
-            Call::Page(log) => self.page(*log).map(Reply::Page),
+            Call::Page(log) => self.page(*log, None).map(Reply::Page),
+            Call::Older { log, cursor } => {
+                self.page(*log, Some(("cursor", cursor))).map(Reply::Page)
+            }
         }
     }
 
@@ -132,8 +136,11 @@ impl Client {
         parse(status, &text)
     }
 
-    pub fn page(&self, log: Log) -> Result<LogPage, Error> {
-        let path = format!("/api/v1/log/{}", log.slug());
+    pub fn page(&self, log: Log, query: Option<(&str, &str)>) -> Result<LogPage, Error> {
+        let mut path = format!("/api/v1/log/{}", log.slug());
+        if let Some((name, value)) = query {
+            path.push_str(&format!("?{name}={}", escape(value)));
+        }
         let (status, text) = self.send("GET", &path, String::new())?;
         LogPage::parse(&text).map_err(|error| malformed(status, error))
     }
@@ -174,6 +181,18 @@ impl Client {
             retry_after,
         })
     }
+}
+
+fn escape(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {

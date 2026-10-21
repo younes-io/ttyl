@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::api::{Account, Me, Reply};
+use crate::api::{Account, Call, Me, Reply};
 use crate::model::{CommitId, Log, LogPage, Row, Suggestion};
 
 pub struct Store {
@@ -35,13 +35,14 @@ impl Store {
         }
     }
 
-    pub fn apply(&mut self, reply: Reply) {
-        match reply {
-            Reply::Account(account) => {
+    pub fn apply(&mut self, call: &Call, reply: Reply) {
+        match (call, reply) {
+            (_, Reply::Account(account)) => {
                 self.me = account.me;
                 self.unread = account.unread;
             }
-            Reply::Page(page) => {
+            (Call::Older { log, cursor }, Reply::Page(page)) => self.append(*log, cursor, page),
+            (_, Reply::Page(page)) => {
                 let listing = Listing {
                     ids: self.absorb(page.rows),
                     is_ranked: page.is_ranked,
@@ -50,6 +51,24 @@ impl Store {
                 };
                 self.logs.insert(page.log, Slot::Loaded(listing));
             }
+        }
+    }
+
+    /// A page asked for after a refresh moved the cursor on belongs to a listing that is gone, so it is dropped.
+    fn append(&mut self, log: Log, cursor: &str, page: LogPage) {
+        let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log) else {
+            return;
+        };
+        if listing.next_cursor.as_deref() != Some(cursor) {
+            return;
+        }
+        listing.next_cursor = page.next_cursor;
+        for row in page.rows {
+            let id = row.commit.id.clone();
+            if !listing.ids.contains(&id) {
+                listing.ids.push(id.clone());
+            }
+            self.rows.insert(id, row);
         }
     }
 

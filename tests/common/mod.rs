@@ -65,7 +65,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, FixedOffset};
 use devnull::api::{Account, Call, Reply};
 use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{Log, LogPage};
+use devnull::model::{CommitId, Log, LogPage};
 use devnull::signin::{Attempt, REDIRECT_URI};
 use devnull::welcome::Wait;
 use ratatui::Terminal;
@@ -81,6 +81,40 @@ pub fn page(log: Log) -> LogPage {
     ))
     .unwrap();
     LogPage::parse(&json).unwrap()
+}
+
+/// A page of rows older than the fixture's, each with an id that starts with `prefix`.
+pub fn older(log: Log, prefix: &str, count: usize, next_cursor: Option<&str>) -> LogPage {
+    let first = page(log);
+    let rows = (0..count)
+        .map(|index| {
+            let mut row = first.rows[index % first.rows.len()].clone();
+            row.commit.id = CommitId(format!("{prefix}-{index}"));
+            row.commit.short_hash = format!("{prefix}{index:03}");
+            row
+        })
+        .collect();
+    LogPage {
+        rows,
+        next_cursor: next_cursor.map(str::to_owned),
+        ..first
+    }
+}
+
+pub fn cursor(log: Log) -> String {
+    page(log)
+        .next_cursor
+        .expect("the fixture has an older page")
+}
+
+pub fn runs(effects: &[Effect]) -> Vec<&Call> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Run(_, call) => Some(call),
+            Effect::StartSignIn | Effect::Quit | Effect::Abort(_) => None,
+        })
+        .collect()
 }
 
 pub fn account(unread: u32) -> Account {

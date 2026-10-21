@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::mem;
 use std::ops::Range;
+use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use ratatui::style::{Modifier, Style};
@@ -22,8 +23,31 @@ const TAB: &str = "    ";
 
 pub struct Feed {
     pub lines: Vec<Line<'static>>,
-    /// The lines each of the page's rows occupies, in page order.
+    /// The lines each of the page's rows occupies, in page order. The last row also owns what ends the feed, so
+    /// selecting it scrolls that into view.
     pub entries: Vec<Range<usize>>,
+}
+
+impl Feed {
+    /// Ends the feed with why the next page is missing.
+    pub fn stall(&mut self, retry: Duration) {
+        self.lines
+            .push(Line::from(Span::styled("│", Style::new().fg(theme::RAIL))));
+        self.lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "fatal: could not load older commits",
+                Style::new().fg(theme::DESTRUCTIVE),
+            ),
+            Span::styled(
+                format!(" · retrying in {}s", retry.as_secs()),
+                theme::muted(),
+            ),
+        ]));
+        if let Some(last) = self.entries.last_mut() {
+            last.end = self.lines.len();
+        }
+    }
 }
 
 pub fn layout<Tz: TimeZone>(
@@ -88,6 +112,9 @@ pub fn layout<Tz: TimeZone>(
                 theme::muted(),
             )],
         );
+    }
+    if let Some(last) = entries.last_mut() {
+        last.end = out.lines.len();
     }
 
     Feed {

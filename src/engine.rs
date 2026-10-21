@@ -16,15 +16,16 @@ use crate::keys::{
     self, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, SPLASH_SCOPES,
     Scope,
 };
-use crate::log::{LOGS, LogScreen};
+use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::Log;
 use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
-use crate::store::Store;
+use crate::store::{Slot, Store};
 use crate::theme;
 use crate::welcome::{self, Step, Wait};
 
 pub const WORKERS: usize = 2;
+pub const AHEAD: usize = 5;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub enum Event {
@@ -143,7 +144,7 @@ impl Engine {
                     match result {
                         Ok(reply) => {
                             self.health = None;
-                            self.arrived(reply, now);
+                            self.arrived(&call, reply, now);
                         }
                         Err(error) => self.failed(call, priority, error, now),
                     }
@@ -181,8 +182,10 @@ impl Engine {
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
+                Timer::Older(_) => {}
             }
         }
+        self.load_older();
         self.sched
             .release(now)
             .into_iter()
@@ -202,11 +205,31 @@ impl Engine {
         .min()
     }
 
+    /// Asks for the active log's next page once the cursor is within `AHEAD` commits of the end, unless the last
+    /// try failed and its retry is not due yet.
+    fn load_older(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        let log = session.log.active();
+        let Slot::Loaded(listing) = session.store.slot(log) else {
+            return;
+        };
+        let Some(cursor) = &listing.next_cursor else {
+            return;
+        };
+        let left = listing.ids.len().saturating_sub(session.log.selected() + 1);
+        if left <= AHEAD && !self.timers.is_set(Timer::Older(log)) {
+            let cursor = cursor.clone();
+            self.sched.send(Call::Older { log, cursor }, Priority::Now);
+        }
+    }
+
     fn counting_down(&self) -> bool {
         self.timers.is_set(Timer::Retry)
-            || LOGS
-                .iter()
-                .any(|log| self.timers.is_set(Timer::Reload(*log)))
+            || LOGS.iter().any(|log| {
+                self.timers.is_set(Timer::Reload(*log)) || self.timers.is_set(Timer::Older(*log))
+            })
     }
 
     fn scopes(&self) -> &'static [Scope] {
@@ -254,6 +277,7 @@ impl Engine {
                 let log = session.log.active();
                 session.asked_to_refresh.insert(log);
                 self.timers.clear(Timer::Reload(log));
+                self.timers.clear(Timer::Older(log));
                 self.sched.send(Call::Page(log), Priority::Now);
             }
             (Phase::Ready(session), Action::Help) => session.help = true,
@@ -264,18 +288,18 @@ impl Engine {
         Vec::new()
     }
 
-    fn arrived(&mut self, reply: Reply, now: Instant) {
+    fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) {
         let Phase::Ready(session) = &mut self.phase else {
             if let Reply::Account(account) = reply {
                 self.open(account, now);
             }
             return;
         };
-        let refreshed = match &reply {
-            Reply::Page(page) if session.asked_to_refresh.remove(&page.log) => Some(page.log),
-            Reply::Page(_) | Reply::Account(_) => None,
+        let refreshed = match call {
+            Call::Page(log) if session.asked_to_refresh.remove(log) => Some(*log),
+            _ => None,
         };
-        session.store.apply(reply);
+        session.store.apply(call, reply);
         if let Some(log) = refreshed {
             self.toast(format!("{} refreshed", log.slug()), now);
         }
@@ -326,10 +350,14 @@ impl Engine {
             }
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
-                if let Call::Page(log) = call {
-                    session.asked_to_refresh.remove(&log);
-                    session.store.fail(log, error.to_string());
-                    self.timers.set(Timer::Reload(log), now + RETRY);
+                match call {
+                    Call::Page(log) => {
+                        session.asked_to_refresh.remove(&log);
+                        session.store.fail(log, error.to_string());
+                        self.timers.set(Timer::Reload(log), now + RETRY);
+                    }
+                    Call::Older { log, .. } => self.timers.set(Timer::Older(log), now + RETRY),
+                    Call::Me | Call::Redeem { .. } => {}
                 }
                 self.health = Some(failure);
             }
@@ -409,7 +437,10 @@ impl Engine {
                     );
                 }
                 let active = session.log.active();
-                let retry = self.timers.remaining(Timer::Reload(active), now);
+                let retry = Retry {
+                    page: self.timers.remaining(Timer::Reload(active), now),
+                    older: self.timers.remaining(Timer::Older(active), now),
+                };
                 session
                     .log
                     .draw(frame, inset(body), &session.store, retry, wall);

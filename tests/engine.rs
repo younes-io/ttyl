@@ -4,7 +4,7 @@ use std::io;
 use std::time::Instant;
 
 use common::{
-    account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press,
+    account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press, runs,
     screen, secs, serve,
 };
 use devnull::api::{Call, Error, Reply};
@@ -32,16 +32,6 @@ fn refused(status: u16, code: &str) -> Error {
         message: format!("{code} from the server"),
         retry_after: None,
     }
-}
-
-fn runs(effects: &[Effect]) -> Vec<&Call> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Run(_, call) => Some(call),
-            Effect::StartSignIn | Effect::Quit | Effect::Abort(_) => None,
-        })
-        .collect()
 }
 
 #[test]

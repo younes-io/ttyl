@@ -16,6 +16,12 @@ use crate::theme;
 
 pub const LOGS: [Log; 3] = [Log::Following, Log::Latest, Log::Trending];
 
+/// How long until each failed load of the active log is tried again.
+pub struct Retry {
+    pub page: Option<Duration>,
+    pub older: Option<Duration>,
+}
+
 pub struct LogScreen {
     active: Log,
     places: [Place; 3],
@@ -124,7 +130,7 @@ impl LogScreen {
         frame: &mut Frame,
         area: Rect,
         store: &Store,
-        retry: Option<Duration>,
+        retry: Retry,
         now: &DateTime<Tz>,
     ) {
         match store.slot(self.active) {
@@ -134,7 +140,7 @@ impl LogScreen {
                     format!("fatal: {message}"),
                     Style::new().fg(theme::DESTRUCTIVE),
                 )];
-                if let Some(retry) = retry {
+                if let Some(retry) = retry.page {
                     lines.push(Line::styled(
                         format!("retrying in {}s · R retry now", retry.as_secs()),
                         theme::muted(),
@@ -147,7 +153,10 @@ impl LogScreen {
                 let place = &mut self.places[index(self.active)];
                 place.selected = place.selected.min(page.rows.len().saturating_sub(1));
                 let selected = (!page.rows.is_empty()).then_some(place.selected);
-                let feed = feed::layout(&page, area.width, selected, &self.expanded, now);
+                let mut feed = feed::layout(&page, area.width, selected, &self.expanded, now);
+                if let Some(wait) = retry.older {
+                    feed.stall(wait);
+                }
                 place.offset = scroll(
                     &feed,
                     place.selected,

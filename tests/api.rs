@@ -179,6 +179,38 @@ fn a_log_page_is_read_from_its_route() {
 }
 
 #[test]
+fn an_older_page_passes_its_cursor_back_in_the_signed_path() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/log-latest.json"
+    ))
+    .unwrap();
+    let (base, server) = serve("200 OK", &fixture);
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    client
+        .call(&Call::Older {
+            log: Log::Latest,
+            cursor: "eyJpZCI6MX0+/=".to_owned(),
+        })
+        .unwrap();
+    let seen = server.join().unwrap();
+
+    assert!(
+        seen.head
+            .starts_with("GET /api/v1/log/latest?cursor=eyJpZCI6MX0%2B%2F%3D HTTP/1.1\r\n"),
+        "{}",
+        seen.head
+    );
+    assert!(signature_holds(
+        client.key(),
+        &seen,
+        "GET",
+        "/api/v1/log/latest?cursor=eyJpZCI6MX0%2B%2F%3D",
+        "api-older"
+    ));
+}
+
+#[test]
 fn a_throttle_says_how_long_to_wait() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
