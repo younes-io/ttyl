@@ -125,7 +125,6 @@ pub fn serve(engine: &mut Engine, at: Instant) {
     }
 }
 
-/// What the test keeps of the attempt the engine holds, to forge the browser's redirect and check the redeem.
 pub struct Browser {
     pub state: String,
     pub verifier: String,
@@ -137,7 +136,6 @@ impl Browser {
     }
 }
 
-/// Presses Enter on the sign-in screen and answers with a browser wait that no socket feeds.
 pub fn open_browser(engine: &mut Engine, at: Instant) -> Browser {
     let effects = engine.update(
         Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -150,7 +148,7 @@ pub fn open_browser(engine: &mut Engine, at: Instant) -> Browser {
         verifier: attempt.verifier.clone(),
     };
     let url = attempt.authorize_url("https://dev-null.sh", "SHA256:test", "devnull-tui");
-    engine.update(Event::SignIn(Ok(Wait::new(attempt, url))), at);
+    engine.update(Event::SignIn(Ok(Wait::without_listener(attempt, url))), at);
     browser
 }
 

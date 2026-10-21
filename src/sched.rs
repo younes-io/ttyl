@@ -124,7 +124,6 @@ impl Scheduler {
         self.flying.remove(&ticket)
     }
 
-    /// Forgets every queued and in-flight call; replies to them then finish as unknown tickets.
     pub fn reset(&mut self) {
         self.now.clear();
         self.later.clear();

@@ -32,8 +32,7 @@ pub struct Wait {
 }
 
 impl Wait {
-    /// A wait with nothing listening for the redirect, so links reach it only through `Event::Link`.
-    pub fn new(attempt: Attempt, url: String) -> Self {
+    pub fn without_listener(attempt: Attempt, url: String) -> Self {
         Wait {
             attempt,
             url,
@@ -42,7 +41,6 @@ impl Wait {
     }
 }
 
-/// Holds the `devnull://` handler while the browser is out, and gives it back when dropped.
 struct Listener {
     _handler: Handler,
     stop: Arc<AtomicBool>,

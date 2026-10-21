@@ -358,7 +358,6 @@ fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
     );
 }
 
-/// Both workers are busy and a third refresh waits when the server revokes the device through one of them.
 fn revoked_mid_flight(at: Instant) -> (Engine, devnull::sched::Ticket) {
     let mut engine = boot(at);
     let effects = engine.pump(at + secs(30));
