@@ -10,6 +10,8 @@ pub const RETRY: Duration = Duration::from_secs(30);
 pub const MINUTE: Duration = Duration::from_secs(60);
 pub const TOAST: Duration = Duration::from_secs(4);
 pub const FRAME: Duration = Duration::from_millis(100);
+/// How often a countdown on screen is redrawn.
+pub const SECOND: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Timer {

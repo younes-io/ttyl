@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Reply};
-use crate::clock::{FRAME, MINUTE, POLL, RETRY, TOAST, Timer, Timers};
+use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::keys::{
     self, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, SPLASH_SCOPES,
     Scope,
@@ -196,10 +196,18 @@ impl Engine {
             self.timers.next(),
             self.sched.next_wake(now),
             self.sched.busy().then(|| now + FRAME),
+            self.counting_down().then(|| now + SECOND),
         ]
         .into_iter()
         .flatten()
         .min()
+    }
+
+    fn counting_down(&self) -> bool {
+        self.timers.is_set(Timer::Retry)
+            || LOGS
+                .iter()
+                .any(|log| self.timers.is_set(Timer::Reload(*log)))
     }
 
     fn scopes(&self) -> &'static [Scope] {
@@ -369,7 +377,10 @@ impl Engine {
         let hints = keys::hints(self.scopes(), self.keymap.pending(), &|action| {
             can(&self.phase, self.health.as_ref(), action)
         });
-        let bottom = self.toast.clone().unwrap_or(hints);
+        let bottom = match &self.toast {
+            Some(toast) if self.keymap.pending().is_empty() => toast.clone(),
+            _ => hints,
+        };
         match &mut self.phase {
             Phase::Splash => self.draw_splash(frame, now, &bottom),
             Phase::SignIn(step) => welcome::draw(frame, step, &self.device_name, &bottom),
@@ -390,7 +401,10 @@ impl Engine {
                 frame.render_widget(account_line(&session.store).right_aligned(), top);
                 if let Some(failure) = &self.health {
                     frame.render_widget(
-                        Line::styled(banner_text(failure), Style::new().fg(theme::DESTRUCTIVE)),
+                        Line::styled(
+                            format!(" {}", banner_text(failure)),
+                            Style::new().fg(theme::DESTRUCTIVE),
+                        ),
                         banner,
                     );
                 }

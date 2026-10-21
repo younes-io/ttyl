@@ -203,6 +203,11 @@ fn maintenance_before_the_first_load_fills_the_screen_and_retries() {
     assert!(contains(&rows, "R retry now  Q quit"), "{rows:#?}");
     assert!(!contains(&rows, "following"), "no tab bar: {rows:#?}");
 
+    assert_eq!(
+        engine.next_wake(at),
+        Some(at + secs(1)),
+        "the countdown redraws every second"
+    );
     assert!(engine.pump(at + secs(29)).is_empty());
     assert_eq!(runs(&engine.pump(at + secs(30))), [&Call::Me]);
 
@@ -229,7 +234,7 @@ fn maintenance_after_the_first_load_is_a_banner_over_a_working_screen() {
     let rows = screen(&mut engine, 80, 40, at + secs(30));
     assert_eq!(
         rows[1],
-        "fatal: the site is in maintenance · your log is still here"
+        " fatal: the site is in maintenance · your log is still here"
     );
     assert!(contains(&rows, "@ada · 18m"), "{rows:#?}");
     press(&mut engine, "j", at + secs(30));
@@ -344,9 +349,14 @@ fn refresh_toasts_then_the_hints_come_back() {
     let rows = screen(&mut engine, 80, 20, at + secs(1));
     assert_eq!(rows[19], " following refreshed");
 
+    press(&mut engine, "2g", at + secs(2));
+    let rows = screen(&mut engine, 80, 20, at + secs(2));
+    assert_eq!(rows[19], " g-  g top", "a pending chord outranks the toast");
+    press(&mut engine, "g", at + secs(2));
+
     engine.pump(at + secs(5));
     let rows = screen(&mut engine, 80, 20, at + secs(5));
-    assert!(rows[19].starts_with(" 1-3 log"), "{:?}", rows[19]);
+    assert_eq!(rows[19], " j/k move  1-3 log  R refresh  ? help  Q quit");
 }
 
 #[test]
