@@ -1,12 +1,17 @@
-use devnull::model::{Lane, Log, LogPage, Row, Segment, Shown, Status, Suggestion};
+use devnull::model::{
+    CommitPage, Lane, Log, LogPage, RepliesPage, Row, Segment, Shown, Status, Suggestion,
+};
 
 fn page(log: &str) -> LogPage {
-    let json = std::fs::read_to_string(format!(
-        "{}/fixtures/log-{log}.json",
+    LogPage::parse(&fixture(&format!("log-{log}"))).expect("fixture parses")
+}
+
+fn fixture(name: &str) -> String {
+    std::fs::read_to_string(format!(
+        "{}/fixtures/{name}.json",
         env!("CARGO_MANIFEST_DIR")
     ))
-    .unwrap();
-    LogPage::parse(&json).expect("fixture parses")
+    .unwrap()
 }
 
 fn row<'a>(page: &'a LogPage, short_hash: &str) -> &'a Row {
@@ -208,4 +213,82 @@ fn malformed_commit_reports_the_missing_field() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("missing field"), "{err}");
+}
+
+#[test]
+fn a_commit_page_carries_its_ancestors_root_first_with_tombstones() {
+    let page = CommitPage::parse(&fixture("commit-thread")).expect("fixture parses");
+    assert_eq!(page.commit.commit.author.username, "grace");
+    assert_eq!(page.replies_count, 0);
+    let [Shown::Live(root), Shown::Deleted(gone)] = page.ancestors.as_slice() else {
+        panic!("a root and a tombstone: {:?}", page.ancestors);
+    };
+    assert_eq!(root.commit.short_hash, "e4f5a61");
+    assert_eq!(root.commit.parent_id, None);
+    assert_eq!(gone.parent_id.as_ref(), Some(&root.commit.id));
+    assert_eq!(page.commit.commit.parent_id.as_ref(), Some(&gone.id));
+    assert!(page.earlier.is_none());
+}
+
+#[test]
+fn a_cut_chain_keeps_twenty_ancestors_and_the_parent_of_the_first() {
+    let page = CommitPage::parse(&fixture("commit-cut")).expect("fixture parses");
+    assert_eq!(page.ancestors.len(), 20);
+    let Some(Shown::Live(earlier)) = &page.earlier else {
+        panic!("the parent of the first ancestor: {:?}", page.earlier);
+    };
+    let Shown::Live(first) = &page.ancestors[0] else {
+        panic!("a live first ancestor");
+    };
+    assert_eq!(first.commit.parent_id.as_ref(), Some(&earlier.commit.id));
+    assert_eq!(earlier.commit.body, "step 4 of 25 down this chain.");
+}
+
+#[test]
+fn the_commit_page_embeds_the_commit_it_quotes() {
+    let page = CommitPage::parse(&fixture("commit-quote")).expect("fixture parses");
+    let Some(Shown::Live(quote)) = &page.commit.quoted_commit else {
+        panic!("a live quote: {:?}", page.commit.quoted_commit);
+    };
+    assert_eq!(quote.commit.short_hash, "e4f5a61");
+    assert_eq!(page.commit.commit.parent_id, None);
+    assert!(page.ancestors.is_empty());
+}
+
+#[test]
+fn a_replies_page_lists_replies_quotes_and_tombstones_oldest_first() {
+    let page = RepliesPage::parse(&fixture("replies-thread")).expect("fixture parses");
+    assert_eq!(page.replies.len(), 12);
+    assert_eq!(page.next_cursor, None);
+    let live: Vec<_> = page
+        .replies
+        .iter()
+        .filter_map(|reply| match reply {
+            Shown::Live(reply) => Some(reply),
+            Shown::Deleted(_) => None,
+        })
+        .collect();
+    assert!(
+        live.windows(2)
+            .all(|pair| pair[0].commit.created_at <= pair[1].commit.created_at)
+    );
+    let quote = live
+        .iter()
+        .find(|reply| reply.commit.parent_id.is_none())
+        .expect("a quote");
+    assert_eq!(
+        quote.commit.quoted_commit_id.as_ref(),
+        live[0].commit.parent_id.as_ref()
+    );
+    assert!(page.replies.iter().any(
+        |reply| matches!(reply, Shown::Deleted(tombstone) if tombstone.replies_count == Some(1))
+    ));
+    assert_eq!(live[0].replies_count, 1);
+}
+
+#[test]
+fn a_replies_page_with_more_carries_the_cursor_from_meta() {
+    let page = RepliesPage::parse(&fixture("replies-paged")).expect("fixture parses");
+    assert_eq!(page.replies.len(), 3);
+    assert!(page.next_cursor.is_some_and(|cursor| !cursor.is_empty()));
 }

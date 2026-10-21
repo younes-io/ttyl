@@ -1,0 +1,102 @@
+{
+  "data": {
+    "id": "7a000000-0000-4000-8000-00000000000c",
+    "short_hash": "000000c",
+    "body": "what did linus say here? it is gone now.",
+    "parent_id": "7a000000-0000-4000-8000-00000000000b",
+    "html_url": "https://dev-null.sh/@grace/commits/7a000000-0000-4000-8000-00000000000c",
+    "created_at": "2026-10-21T10:55:00Z",
+    "stars_count": 0,
+    "link_preview": null,
+    "images": [],
+    "author": {
+      "id": "0b000000-0000-4000-8000-00000000000b",
+      "username": "grace",
+      "name": "Grace",
+      "avatar_url": null,
+      "bio": null,
+      "company": null,
+      "location": null,
+      "website": null,
+      "github_url": "https://github.com/grace",
+      "html_url": "https://dev-null.sh/@grace",
+      "feed_url": "https://dev-null.sh/@grace/feed.atom",
+      "created_at": "2026-09-02T10:00:00Z",
+      "lane": "#7048e8"
+    },
+    "body_segments": [
+      {
+        "type": "text",
+        "text": "what did linus say here? it is gone now."
+      }
+    ],
+    "preview_segments": null,
+    "mentions": [],
+    "status": "approved",
+    "is_pinned": false,
+    "starred": false,
+    "pasteis_count": 0,
+    "deleted_at": null,
+    "quoted_commit_id": null,
+    "quoted_commit": null,
+    "poll": null,
+    "replies_count": 0
+  },
+  "ancestors": [
+    {
+      "id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "short_hash": "e4f5a61",
+      "body": "switched the feed to `cursorPaginate(20)`. offsets fall over once the table grows.",
+      "parent_id": null,
+      "html_url": "https://dev-null.sh/@ada/commits/9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "created_at": "2026-10-21T09:42:00Z",
+      "stars_count": 12,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0a000000-0000-4000-8000-00000000000a",
+        "username": "ada",
+        "name": "Ada",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
+        "bio": "compilers, mostly",
+        "company": null,
+        "location": "London",
+        "website": null,
+        "github_url": "https://github.com/ada",
+        "html_url": "https://dev-null.sh/@ada",
+        "feed_url": "https://dev-null.sh/@ada/feed.atom",
+        "created_at": "2026-09-01T10:00:00Z",
+        "lane": 0
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "switched the feed to "
+        },
+        {
+          "type": "code",
+          "code": "cursorPaginate(20)"
+        },
+        {
+          "type": "text",
+          "text": ". offsets fall over once the table grows."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": true,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "quoted_commit": null,
+      "poll": null
+    },
+    {
+      "id": "7a000000-0000-4000-8000-00000000000b",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "deleted_at": "2026-10-21T10:16:00Z"
+    }
+  ]
+}

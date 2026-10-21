@@ -1,0 +1,484 @@
+{
+  "data": [
+    {
+      "id": "7a000000-0000-4000-8000-000000000001",
+      "short_hash": "0000001",
+      "body": "did you keep an index on created_at? without it the cursor query scans.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@grace/commits/7a000000-0000-4000-8000-000000000001",
+      "created_at": "2026-10-21T09:47:00Z",
+      "stars_count": 1,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0b000000-0000-4000-8000-00000000000b",
+        "username": "grace",
+        "name": "Grace",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/grace",
+        "html_url": "https://dev-null.sh/@grace",
+        "feed_url": "https://dev-null.sh/@grace/feed.atom",
+        "created_at": "2026-09-02T10:00:00Z",
+        "lane": "#7048e8"
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "did you keep an index on created_at? without it the cursor query scans."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 1
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000002",
+      "short_hash": "0000002",
+      "body": "offsets are fine until someone deletes a row on page one.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@linus/commits/7a000000-0000-4000-8000-000000000002",
+      "created_at": "2026-10-21T09:51:00Z",
+      "stars_count": 2,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0c000000-0000-4000-8000-00000000000c",
+        "username": "linus",
+        "name": "Linus",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/linus",
+        "html_url": "https://dev-null.sh/@linus",
+        "feed_url": "https://dev-null.sh/@linus/feed.atom",
+        "created_at": "2026-10-21T07:00:00Z",
+        "lane": 3
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "offsets are fine until someone deletes a row on page one."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000003",
+      "short_hash": "0000003",
+      "body": "we hit the same thing in the archive. cursor plus a tiebreaker on id fixed it.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@margaret/commits/7a000000-0000-4000-8000-000000000003",
+      "created_at": "2026-10-21T09:55:00Z",
+      "stars_count": 3,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0d000000-0000-4000-8000-00000000000d",
+        "username": "margaret",
+        "name": "Margaret",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/margaret",
+        "html_url": "https://dev-null.sh/@margaret",
+        "feed_url": "https://dev-null.sh/@margaret/feed.atom",
+        "created_at": "2026-09-03T10:00:00Z",
+        "lane": 5
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "we hit the same thing in the archive. cursor plus a tiebreaker on id fixed it."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000004",
+      "short_hash": "0000004",
+      "body": "how do you keep the order stable when two rows share a timestamp?",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@ken/commits/7a000000-0000-4000-8000-000000000004",
+      "created_at": "2026-10-21T09:59:00Z",
+      "stars_count": 0,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0e000000-0000-4000-8000-00000000000e",
+        "username": "ken",
+        "name": "Ken",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/ken",
+        "html_url": "https://dev-null.sh/@ken",
+        "feed_url": "https://dev-null.sh/@ken/feed.atom",
+        "created_at": "2026-09-04T10:00:00Z",
+        "lane": 1
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "how do you keep the order stable when two rows share a timestamp?"
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000005",
+      "short_hash": "0000005",
+      "body": "the id breaks the tie. both columns go in the cursor.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@ada/commits/7a000000-0000-4000-8000-000000000005",
+      "created_at": "2026-10-21T10:03:00Z",
+      "stars_count": 1,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0a000000-0000-4000-8000-00000000000a",
+        "username": "ada",
+        "name": "Ada",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
+        "bio": "compilers, mostly",
+        "company": null,
+        "location": "London",
+        "website": null,
+        "github_url": "https://github.com/ada",
+        "html_url": "https://dev-null.sh/@ada",
+        "feed_url": "https://dev-null.sh/@ada/feed.atom",
+        "created_at": "2026-09-01T10:00:00Z",
+        "lane": 0
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "the id breaks the tie. both columns go in the cursor."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000006",
+      "short_hash": "0000006",
+      "body": "nice. the old feed used to skip rows at page boundaries, that explains it.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@grace/commits/7a000000-0000-4000-8000-000000000006",
+      "created_at": "2026-10-21T10:07:00Z",
+      "stars_count": 2,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0b000000-0000-4000-8000-00000000000b",
+        "username": "grace",
+        "name": "Grace",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/grace",
+        "html_url": "https://dev-null.sh/@grace",
+        "feed_url": "https://dev-null.sh/@grace/feed.atom",
+        "created_at": "2026-09-02T10:00:00Z",
+        "lane": "#7048e8"
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "nice. the old feed used to skip rows at page boundaries, that explains it."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000007",
+      "short_hash": "0000007",
+      "body": "measure before and after, please. I want numbers in the commit.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@linus/commits/7a000000-0000-4000-8000-000000000007",
+      "created_at": "2026-10-21T10:11:00Z",
+      "stars_count": 3,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0c000000-0000-4000-8000-00000000000c",
+        "username": "linus",
+        "name": "Linus",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/linus",
+        "html_url": "https://dev-null.sh/@linus",
+        "feed_url": "https://dev-null.sh/@linus/feed.atom",
+        "created_at": "2026-10-21T07:00:00Z",
+        "lane": 3
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "measure before and after, please. I want numbers in the commit."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-00000000000a",
+      "short_hash": "000000a",
+      "body": "this is the clearest explanation of keyset paging I have read.",
+      "parent_id": null,
+      "html_url": "https://dev-null.sh/@ken/commits/7a000000-0000-4000-8000-00000000000a",
+      "created_at": "2026-10-21T10:12:00Z",
+      "stars_count": 2,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0e000000-0000-4000-8000-00000000000e",
+        "username": "ken",
+        "name": "Ken",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/ken",
+        "html_url": "https://dev-null.sh/@ken",
+        "feed_url": "https://dev-null.sh/@ken/feed.atom",
+        "created_at": "2026-09-04T10:00:00Z",
+        "lane": 1
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "this is the clearest explanation of keyset paging I have read."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000008",
+      "short_hash": "0000008",
+      "body": "the first page got 3x faster on the big table. the tenth page got 40x faster.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@margaret/commits/7a000000-0000-4000-8000-000000000008",
+      "created_at": "2026-10-21T10:15:00Z",
+      "stars_count": 0,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0d000000-0000-4000-8000-00000000000d",
+        "username": "margaret",
+        "name": "Margaret",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/margaret",
+        "html_url": "https://dev-null.sh/@margaret",
+        "feed_url": "https://dev-null.sh/@margaret/feed.atom",
+        "created_at": "2026-09-03T10:00:00Z",
+        "lane": 5
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "the first page got 3x faster on the big table. the tenth page got 40x faster."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-00000000000b",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "deleted_at": "2026-10-21T10:16:00Z",
+      "replies_count": 1
+    },
+    {
+      "id": "7a000000-0000-4000-8000-000000000009",
+      "short_hash": "0000009",
+      "body": "and the deep pages stop timing out, which was the real bug.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@ken/commits/7a000000-0000-4000-8000-000000000009",
+      "created_at": "2026-10-21T10:19:00Z",
+      "stars_count": 1,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0e000000-0000-4000-8000-00000000000e",
+        "username": "ken",
+        "name": "Ken",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/ken",
+        "html_url": "https://dev-null.sh/@ken",
+        "feed_url": "https://dev-null.sh/@ken/feed.atom",
+        "created_at": "2026-09-04T10:00:00Z",
+        "lane": 1
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "and the deep pages stop timing out, which was the real bug."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    },
+    {
+      "id": "7a000000-0000-4000-8000-00000000000d",
+      "short_hash": "000000d",
+      "body": "shipping this to the archive next week.",
+      "parent_id": "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61",
+      "html_url": "https://dev-null.sh/@margaret/commits/7a000000-0000-4000-8000-00000000000d",
+      "created_at": "2026-10-21T10:27:00Z",
+      "stars_count": 1,
+      "link_preview": null,
+      "images": [],
+      "author": {
+        "id": "0d000000-0000-4000-8000-00000000000d",
+        "username": "margaret",
+        "name": "Margaret",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/margaret",
+        "html_url": "https://dev-null.sh/@margaret",
+        "feed_url": "https://dev-null.sh/@margaret/feed.atom",
+        "created_at": "2026-09-03T10:00:00Z",
+        "lane": 5
+      },
+      "body_segments": [
+        {
+          "type": "text",
+          "text": "shipping this to the archive next week."
+        }
+      ],
+      "preview_segments": null,
+      "mentions": [],
+      "status": "approved",
+      "is_pinned": false,
+      "starred": false,
+      "pasteis_count": 0,
+      "deleted_at": null,
+      "quoted_commit_id": null,
+      "poll": null,
+      "replies_count": 0
+    }
+  ],
+  "links": {
+    "first": null,
+    "last": null,
+    "prev": null,
+    "next": null
+  },
+  "meta": {
+    "path": "https://dev-null.sh/api/v1/commits/9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61/replies",
+    "per_page": 50,
+    "next_cursor": null,
+    "prev_cursor": null
+  }
+}

@@ -187,6 +187,17 @@ pub struct Row {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Card {
+    #[serde(flatten)]
+    pub commit: Commit,
+    #[serde(flatten)]
+    pub media: Media,
+    pub stars_count: u32,
+    pub starred: bool,
+    pub quoted_commit: Option<Shown<Quote>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Quote {
     #[serde(flatten)]
     pub commit: Commit,
@@ -259,6 +270,11 @@ pub struct ReplyPreview {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct Meta {
+    next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LogPage {
     pub log: Log,
@@ -281,11 +297,6 @@ impl LogPage {
             suggestions: Vec<Suggestion>,
         }
 
-        #[derive(Deserialize)]
-        struct Meta {
-            next_cursor: Option<String>,
-        }
-
         let wire: Wire = serde_json::from_str(json)?;
         Ok(LogPage {
             log: wire.log,
@@ -294,6 +305,85 @@ impl LogPage {
             is_ranked: wire.is_ranked,
             new_commits_count: wire.new_commits_count,
             suggestions: wire.suggestions,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitPage {
+    pub commit: Card,
+    pub replies_count: u32,
+    pub ancestors: Vec<Shown<Card>>,
+    /// The parent of the first ancestor, there only when the server cut the chain.
+    pub earlier: Option<Shown<Card>>,
+}
+
+impl CommitPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Focus,
+            ancestors: Vec<Shown<Ancestor>>,
+        }
+
+        #[derive(Deserialize)]
+        struct Focus {
+            #[serde(flatten)]
+            card: Card,
+            replies_count: u32,
+        }
+
+        #[derive(Deserialize)]
+        struct Ancestor {
+            #[serde(flatten)]
+            card: Card,
+            parent: Option<Shown<Card>>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        let mut earlier = None;
+        let ancestors = wire
+            .ancestors
+            .into_iter()
+            .enumerate()
+            .map(|(at, ancestor)| match ancestor {
+                Shown::Live(ancestor) => {
+                    let Ancestor { card, parent } = *ancestor;
+                    if at == 0 {
+                        earlier = parent;
+                    }
+                    Shown::Live(Box::new(card))
+                }
+                Shown::Deleted(tombstone) => Shown::Deleted(tombstone),
+            })
+            .collect();
+        Ok(CommitPage {
+            commit: wire.data.card,
+            replies_count: wire.data.replies_count,
+            ancestors,
+            earlier,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RepliesPage {
+    pub replies: Vec<Shown<Reply>>,
+    pub next_cursor: Option<String>,
+}
+
+impl RepliesPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Shown<Reply>>,
+            meta: Meta,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(RepliesPage {
+            replies: wire.data,
+            next_cursor: wire.meta.next_cursor,
         })
     }
 }
