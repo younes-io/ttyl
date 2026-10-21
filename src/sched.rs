@@ -45,7 +45,7 @@ impl Call {
 pub struct Scheduler {
     now: VecDeque<Call>,
     later: VecDeque<Call>,
-    flying: HashMap<Ticket, Call>,
+    flying: HashMap<Ticket, (Call, Priority)>,
     sent: VecDeque<Instant>,
     hold: Option<Instant>,
     next_ticket: u64,
@@ -80,7 +80,7 @@ impl Scheduler {
     }
 
     pub fn in_flight(&self, key: CallKey) -> bool {
-        self.flying.values().any(|call| call.key() == key)
+        self.flying.values().any(|(call, _)| call.key() == key)
     }
 
     pub fn busy(&self) -> bool {
@@ -99,26 +99,26 @@ impl Scheduler {
         }
         let mut released = Vec::new();
         while self.flying.len() < self.workers && !self.held(now) {
-            let Some(call) = self.pop(self.sent.len()) else {
+            let Some((call, priority)) = self.pop(self.sent.len()) else {
                 break;
             };
             let ticket = Ticket(self.next_ticket);
             self.next_ticket += 1;
             self.sent.push_back(now);
-            self.flying.insert(ticket, call.clone());
+            self.flying.insert(ticket, (call.clone(), priority));
             released.push((ticket, call));
         }
         released
     }
 
-    fn pop(&mut self, spent: usize) -> Option<Call> {
+    fn pop(&mut self, spent: usize) -> Option<(Call, Priority)> {
         if spent < LIMIT
             && let Some(call) = self.now.pop_front()
         {
-            return Some(call);
+            return Some((call, Priority::Now));
         }
         if spent + RESERVE < LIMIT {
-            return self.later.pop_front();
+            return self.later.pop_front().map(|call| (call, Priority::Later));
         }
         None
     }
@@ -127,7 +127,8 @@ impl Scheduler {
         self.hold.is_some_and(|until| now < until)
     }
 
-    pub fn finish(&mut self, ticket: Ticket) -> Option<Call> {
+    /// Frees the worker and says what it ran, so a failed call can be queued again as it was asked for.
+    pub fn finish(&mut self, ticket: Ticket) -> Option<(Call, Priority)> {
         self.flying.remove(&ticket)
     }
 

@@ -132,12 +132,8 @@ impl Client {
     }
 
     pub fn page(&self, log: Log) -> Result<LogPage, Error> {
-        let slug = match log {
-            Log::Following => "following",
-            Log::Latest => "latest",
-            Log::Trending => "trending",
-        };
-        let (status, text) = self.send("GET", &format!("/api/v1/log/{slug}"), String::new())?;
+        let path = format!("/api/v1/log/{}", log.slug());
+        let (status, text) = self.send("GET", &path, String::new())?;
         LogPage::parse(&text).map_err(|_| Error::Unexpected(status))
     }
 

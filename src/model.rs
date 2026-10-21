@@ -18,6 +18,17 @@ pub enum Log {
     Trending,
 }
 
+impl Log {
+    /// The log's name in routes and on screen.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Log::Following => "following",
+            Log::Latest => "latest",
+            Log::Trending => "trending",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
