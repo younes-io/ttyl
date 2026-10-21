@@ -38,8 +38,9 @@ pub fn screen(failure: &Failure, retry: Option<Duration>) -> Vec<Line<'static>> 
 }
 
 /// The footer line for `failure`, shortened to `width` by dropping the reassurance first,
-/// then cutting the cause, and last dropping the countdown.
-pub fn hint(failure: &Failure, retry: Option<Duration>, width: usize) -> String {
+/// then cutting the cause, and last dropping the countdown. `None` when not even a cut
+/// cause fits.
+pub fn hint(failure: &Failure, retry: Option<Duration>, width: usize) -> Option<String> {
     let cause = match failure {
         Failure::Down => "the site is in maintenance",
         Failure::Offline(detail) | Failure::Refused(detail) => detail,
@@ -49,20 +50,18 @@ pub fn hint(failure: &Failure, retry: Option<Duration>, width: usize) -> String 
         .unwrap_or_default();
     let full = format!("fatal: {cause} · your log is still here{retry}");
     if full.width() <= width {
-        return full;
+        return Some(full);
     }
     let short = format!("fatal: {cause}{retry}");
     if short.width() <= width {
-        return short;
+        return Some(short);
     }
     let room = width.saturating_sub("fatal: ".width() + retry.width());
     if room >= 4 {
-        return format!("fatal: {}{retry}", cut(cause, room));
+        return Some(format!("fatal: {}{retry}", cut(cause, room)));
     }
-    format!(
-        "fatal: {}",
-        cut(cause, width.saturating_sub("fatal: ".width()))
-    )
+    let room = width.saturating_sub("fatal: ".width());
+    (room >= 4).then(|| format!("fatal: {}", cut(cause, room)))
 }
 
 fn cut(text: &str, width: usize) -> String {

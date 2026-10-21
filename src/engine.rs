@@ -228,10 +228,7 @@ impl Engine {
     fn next_call(&self, now: Instant) -> Option<Duration> {
         [Timer::Retry, Timer::Poll]
             .into_iter()
-            .chain(
-                LOGS.iter()
-                    .flat_map(|log| [Timer::Reload(*log), Timer::Older(*log)]),
-            )
+            .chain(LOGS.iter().map(|log| Timer::Reload(*log)))
             .filter_map(|timer| self.timers.remaining(timer, now))
             .min()
     }
@@ -376,7 +373,7 @@ impl Engine {
                     }
                     Call::Older { log, .. } => {
                         self.timers.set(Timer::Older(log), now + RETRY);
-                        offline
+                        false
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
                 };
@@ -433,6 +430,11 @@ impl Engine {
         if self.keymap.pending().is_empty() {
             hints = keys::fit(&hints, room);
         }
+        let help = hints
+            .split("  ")
+            .find(|hint| hint.starts_with("? "))
+            .map(|hint| format!("  {hint}"))
+            .unwrap_or_default();
         let bottom = match &self.toast {
             Some(toast) if self.keymap.pending().is_empty() => toast.clone(),
             _ => hints,
@@ -473,21 +475,20 @@ impl Engine {
                     Some(failure) => Some((failure, retry.page)),
                     None => self.health.as_ref().map(|failure| (failure, next_call)),
                 });
-                let hint = match failure {
-                    Some((failure, wait))
-                        if self.toast.is_none() && self.keymap.pending().is_empty() =>
-                    {
-                        let help = "  ? help";
-                        let error = fatal::hint(failure, wait, room.saturating_sub(help.len()));
-                        Line::from(vec![
-                            Span::styled(
-                                format!("{HINT_INDENT}{error}"),
-                                Style::new().fg(theme::DESTRUCTIVE),
-                            ),
-                            Span::styled(help, theme::muted()),
-                        ])
-                    }
-                    _ => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
+                let error = failure
+                    .filter(|_| self.toast.is_none() && self.keymap.pending().is_empty())
+                    .and_then(|(failure, wait)| {
+                        fatal::hint(failure, wait, room.saturating_sub(help.len()))
+                    });
+                let hint = match error {
+                    Some(error) => Line::from(vec![
+                        Span::styled(
+                            format!("{HINT_INDENT}{error}"),
+                            Style::new().fg(theme::DESTRUCTIVE),
+                        ),
+                        Span::styled(help, theme::muted()),
+                    ]),
+                    None => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
                 session
                     .log

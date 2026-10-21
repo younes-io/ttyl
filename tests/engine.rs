@@ -757,3 +757,117 @@ fn an_older_page_failure_speaks_only_at_the_end_of_the_feed() {
         rows[29]
     );
 }
+
+fn offline() -> Error {
+    Error::Http(ureq::Error::ConnectionFailed)
+}
+
+fn older_fails_with(error: Error, at: Instant) -> Engine {
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "2G", at + secs(5));
+    let Some(Effect::Run(ticket, Call::Older { .. })) = effects.first() else {
+        panic!("{effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Err(error)), at + secs(5));
+    engine
+}
+
+#[test]
+fn the_footer_countdown_ends_in_a_request() {
+    let at = Instant::now();
+    let mut engine = older_fails_with(maintenance(), at);
+    press(&mut engine, "gg", at + secs(6));
+    for effect in engine.pump(at + secs(30)) {
+        if let Effect::Run(ticket, Call::Me | Call::Since { .. }) = effect {
+            engine.update(Event::Reply(ticket, Err(offline())), at + secs(30));
+        }
+    }
+    let foot = screen(&mut engine, 120, 30, at + secs(31))[29].clone();
+    let wait: u64 = foot
+        .split("retrying in ")
+        .nth(1)
+        .and_then(|rest| rest.split('s').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{foot:?}"));
+    let effects = engine.pump(at + secs(31 + wait));
+    assert!(!runs(&effects).is_empty(), "{foot:?} then {effects:?}");
+}
+
+#[test]
+fn an_offline_older_page_speaks_only_at_the_end_of_the_feed() {
+    let at = Instant::now();
+    let mut engine = older_fails_with(offline(), at);
+    let rows = screen(&mut engine, 120, 30, at + secs(12));
+    assert!(rows[28].contains("retrying in 23s"), "{rows:#?}");
+    assert!(
+        !rows[29].contains("fatal") && rows[29].contains("? help"),
+        "{:?}",
+        rows[29]
+    );
+}
+
+#[test]
+fn the_help_overlay_footer_names_the_key_that_closes_it() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "R", at);
+    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    engine.update(Event::Reply(*ticket, Err(maintenance())), at);
+    press(&mut engine, "?", at);
+    let foot = screen(&mut engine, 120, 30, at + secs(1))[29].clone();
+    assert!(
+        foot.contains("fatal") && foot.contains("? close") && !foot.contains("? help"),
+        "{foot:?}"
+    );
+}
+
+#[test]
+fn a_failing_footer_keeps_help_wherever_a_working_one_does() {
+    let at = Instant::now();
+    let mut working = boot(at);
+    let mut failing = boot(at);
+    let effects = press(&mut failing, "R", at);
+    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    failing.update(Event::Reply(*ticket, Err(offline())), at);
+    for width in 1..=120 {
+        let foot = |engine: &mut Engine| screen(engine, width, 20, at + secs(1))[19].clone();
+        let (working, failing) = (foot(&mut working), foot(&mut failing));
+        assert!(
+            !working.contains("? help") || failing.contains("? help"),
+            "{width}: {failing:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cached_feed_matches_a_fresh_one_at_the_same_instant() {
+    fn seconds_page(log: Log) -> devnull::model::LogPage {
+        let mut page = page(log);
+        for row in &mut page.rows {
+            row.commit.created_at = "2026-10-21T09:58:30Z".parse().unwrap();
+        }
+        page
+    }
+    let at = Instant::now();
+    let draw = |engine: &mut Engine, wall: &str| {
+        let wall = chrono::DateTime::parse_from_rfc3339(wall).unwrap();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| engine.draw(frame, at, &wall))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    let mut cached = boot_serving(at, seconds_page);
+    draw(&mut cached, "2026-10-21T10:00:05+00:00");
+    let later = draw(&mut cached, "2026-10-21T10:00:55+00:00");
+    let fresh = draw(
+        &mut boot_serving(at, seconds_page),
+        "2026-10-21T10:00:55+00:00",
+    );
+    assert_eq!(later, fresh);
+}

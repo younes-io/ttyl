@@ -45,7 +45,7 @@ struct Inputs {
     width: u16,
     generation: u64,
     expanded: HashSet<CommitId>,
-    minute: i64,
+    second: i64,
 }
 
 struct Anchor {
@@ -229,7 +229,7 @@ impl LogScreen {
                     width: area.width,
                     generation: store.generation(),
                     expanded: self.expanded.clone(),
-                    minute: now.timestamp().div_euclid(60),
+                    second: now.timestamp(),
                 };
                 let place = &mut self.places[index(self.active)];
                 let laid_out = match place.laid_out.take() {
