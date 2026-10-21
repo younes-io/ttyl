@@ -126,6 +126,15 @@ pub enum Entry {
     Tombstone(Tombstone),
 }
 
+impl Entry {
+    pub fn id(&self) -> &CommitId {
+        match self {
+            Entry::Commit(commit) => &commit.id,
+            Entry::Tombstone(tombstone) => &tombstone.id,
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Entry {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;

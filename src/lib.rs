@@ -7,5 +7,6 @@ pub mod feed;
 pub mod model;
 pub mod sched;
 pub mod signin;
+pub mod store;
 pub mod theme;
 pub mod welcome;
