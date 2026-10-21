@@ -32,6 +32,20 @@ struct Place {
     selected: usize,
     offset: usize,
     anchor: Option<Anchor>,
+    laid_out: Option<LaidOut>,
+}
+
+struct LaidOut {
+    inputs: Inputs,
+    feed: feed::Feed,
+}
+
+#[derive(PartialEq)]
+struct Inputs {
+    width: u16,
+    generation: u64,
+    expanded: HashSet<CommitId>,
+    minute: i64,
 }
 
 struct Anchor {
@@ -158,54 +172,64 @@ impl LogScreen {
                 Paragraph::new(fatal::screen(failure, retry.page)).wrap(Wrap { trim: false }),
                 area,
             ),
-            Slot::Loaded(_) => {
-                let page = store.page(self.active).expect("a loaded slot has a page");
+            Slot::Loaded(listing) => {
+                let inputs = Inputs {
+                    width: area.width,
+                    generation: store.generation(),
+                    expanded: self.expanded.clone(),
+                    minute: now.timestamp().div_euclid(60),
+                };
                 let place = &mut self.places[index(self.active)];
-                place.selected = place.selected.min(page.rows.len().saturating_sub(1));
-                let selected = (!page.rows.is_empty()).then_some(place.selected);
-                let mut feed = feed::layout(&page, area.width, selected, &self.expanded, now);
-                if let Some(wait) = retry.older {
-                    feed.older_failed(wait);
+                if place
+                    .laid_out
+                    .as_ref()
+                    .is_none_or(|laid_out| laid_out.inputs != inputs)
+                {
+                    let page = store.page(self.active).expect("a loaded slot has a page");
+                    let feed = feed::layout(&page, area.width, &self.expanded, now);
+                    place.laid_out = Some(LaidOut { inputs, feed });
                 }
-                let id = selected.map(|at| page.rows[at].commit.id.clone());
+                let feed = &place.laid_out.as_ref().expect("laid out above").feed;
+                let tail = retry.older.map(feed::older_failed);
+                let total = feed.lines.len() + tail.as_ref().map_or(0, |tail| tail.len());
+                place.selected = place.selected.min(listing.ids.len().saturating_sub(1));
+                let selected = (!listing.ids.is_empty()).then_some(place.selected);
+                let id = selected.map(|at| listing.ids[at].clone());
                 let start = |at: usize| feed.entries.get(at).map_or(0, |entry| entry.header);
                 if let (Some(anchor), Some(id)) = (&place.anchor, &id)
                     && anchor.id == *id
                 {
                     place.offset = start(place.selected).saturating_sub(anchor.line);
                 }
-                place.offset = scroll(
-                    &feed,
-                    place.selected,
-                    place.offset,
-                    usize::from(area.height),
-                );
+                let height = usize::from(area.height);
+                place.offset = scroll(feed, total, place.selected, place.offset, height);
                 place.anchor = id.map(|id| Anchor {
                     id,
                     line: start(place.selected).saturating_sub(place.offset),
                 });
-                frame.render_widget(
-                    Paragraph::new(feed.lines)
-                        .scroll((u16::try_from(place.offset).unwrap_or(u16::MAX), 0)),
-                    area,
-                );
+                let end = (place.offset + height).min(total);
+                let shown = place.offset.min(feed.lines.len())..end.min(feed.lines.len());
+                let mut lines = feed.window(selected, shown);
+                if let Some(tail) = tail
+                    && end > feed.lines.len()
+                {
+                    let from = place.offset.saturating_sub(feed.lines.len());
+                    lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
+                }
+                frame.render_widget(Paragraph::new(lines), area);
             }
         }
     }
 }
 
-fn scroll(feed: &feed::Feed, selected: usize, offset: usize, height: usize) -> usize {
+fn scroll(feed: &feed::Feed, total: usize, selected: usize, offset: usize, height: usize) -> usize {
     let Some(entry) = feed.entries.get(selected) else {
         return 0;
     };
     let is_last = selected + 1 == feed.entries.len();
     let start = entry.lines.start;
-    let end = if is_last {
-        feed.lines.len()
-    } else {
-        entry.lines.end
-    };
-    let offset = offset.min(feed.lines.len().saturating_sub(height));
+    let end = if is_last { total } else { entry.lines.end };
+    let offset = offset.min(total.saturating_sub(height));
     let offset = if start < offset {
         start
     } else if end > offset + height {

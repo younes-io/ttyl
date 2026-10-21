@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::code;
 use crate::model::{
-    Commit, CommitId, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown, Status,
+    Commit, CommitId, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown, Status,
 };
 use crate::theme;
 
@@ -29,13 +29,27 @@ pub struct Feed {
 pub struct Entry {
     pub lines: Range<usize>,
     pub header: usize,
+    pub lane: Lane,
 }
 
 impl Feed {
-    pub fn older_failed(&mut self, retry: Duration) {
-        self.lines
-            .push(Line::from(Span::styled("│", Style::new().fg(theme::RAIL))));
-        self.lines.push(Line::from(vec![
+    /// The lines in `window`, with the selected commit's rail drawn in its lane color.
+    pub fn window(&self, selected: Option<usize>, window: Range<usize>) -> Vec<Line<'static>> {
+        let mut lines = self.lines[window.clone()].to_vec();
+        if let Some(entry) = selected.and_then(|at| self.entries.get(at)) {
+            let rail = Span::styled("┃ ", Style::new().fg(theme::lane(entry.lane)));
+            for at in (entry.header + 1..entry.lines.end).filter(|at| window.contains(at)) {
+                lines[at - window.start].spans[0] = rail.clone();
+            }
+        }
+        lines
+    }
+}
+
+pub fn older_failed(retry: Duration) -> [Line<'static>; 2] {
+    [
+        Line::from(Span::styled("│", Style::new().fg(theme::RAIL))),
+        Line::from(vec![
             Span::raw("  "),
             Span::styled(
                 "fatal: could not load older commits",
@@ -45,14 +59,13 @@ impl Feed {
                 format!(" · retrying in {}s", retry.as_secs()),
                 theme::muted(),
             ),
-        ]));
-    }
+        ]),
+    ]
 }
 
 pub fn layout<Tz: TimeZone>(
     page: &LogPage,
     width: u16,
-    selected: Option<usize>,
     expanded: &HashSet<CommitId>,
     now: &DateTime<Tz>,
 ) -> Feed {
@@ -91,16 +104,11 @@ pub fn layout<Tz: TimeZone>(
             }
         }
         let header = out.lines.len();
-        row_lines(
-            &mut out,
-            row,
-            selected == Some(index),
-            expanded.contains(&row.commit.id),
-            now,
-        );
+        row_lines(&mut out, row, expanded.contains(&row.commit.id), now);
         entries.push(Entry {
             lines: start..out.lines.len(),
             header,
+            lane: row.commit.author.lane,
         });
     }
 
@@ -168,20 +176,10 @@ impl Writer {
     }
 }
 
-fn row_lines<Tz: TimeZone>(
-    out: &mut Writer,
-    row: &Row,
-    selected: bool,
-    expanded: bool,
-    now: &DateTime<Tz>,
-) {
+fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &DateTime<Tz>) {
     let commit = &row.commit;
     let lane = Style::new().fg(theme::lane(commit.author.lane));
-    let rail = if selected {
-        Span::styled("┃ ", lane)
-    } else {
-        Span::styled("│ ", Style::new().fg(theme::RAIL))
-    };
+    let rail = Span::styled("│ ", Style::new().fg(theme::RAIL));
     let header = header(commit, out.content(), now);
     out.node(Span::styled("● ", lane), rail.clone(), header);
 

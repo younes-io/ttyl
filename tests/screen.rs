@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use common::{boot, boot_serving, contains, following_nobody, now, page};
-use devnull::engine::Engine;
+use devnull::engine::{Engine, Event};
 use devnull::feed;
 use devnull::model::{Log, LogPage};
 use devnull::theme;
@@ -378,10 +378,38 @@ fn every_line_fits_the_width_it_was_laid_out_for() {
         .map(|row| row.commit.id.clone())
         .collect::<HashSet<_>>();
     for width in [24, 40, 57, 80, 120] {
-        let feed = feed::layout(&page, width, Some(2), &expanded, &now());
+        let feed = feed::layout(&page, width, &expanded, &now());
         for line in &feed.lines {
             assert!(line.width() <= usize::from(width), "{width}: {line:?}");
         }
         assert_eq!(feed.entries.len(), page.rows.len());
+    }
+}
+
+#[test]
+fn the_selected_header_is_always_on_screen() {
+    for log_key in ["1", "2", "3"] {
+        for height in 4..=14u16 {
+            let at = Instant::now();
+            let mut engine = boot(at);
+            common::press(&mut engine, log_key, at);
+            let rows = page(engine.log().unwrap().active()).rows;
+            let mut path: Vec<char> = Vec::new();
+            path.extend(std::iter::repeat_n('j', rows.len() + 2));
+            path.extend(std::iter::repeat_n('k', rows.len() + 2));
+            path.extend(['G', ' ', 'k', ' ', 'j', 'g', 'g', ' ', 'j', ' ']);
+            for key in path {
+                engine.update(Event::Key(common::key(key)), at);
+                let screen = common::screen(&mut engine, 120, height, at);
+                let selected = engine.log().unwrap().selected();
+                let hash = &rows[selected.min(rows.len() - 1)].commit.short_hash;
+                assert!(
+                    screen
+                        .iter()
+                        .any(|row| row.contains(hash.as_str()) && row.contains('●')),
+                    "log {log_key} height {height} key {key} selected {selected}: {screen:#?}"
+                );
+            }
+        }
     }
 }

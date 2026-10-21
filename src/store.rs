@@ -8,6 +8,7 @@ pub struct Store {
     pub unread: u32,
     rows: HashMap<CommitId, Row>,
     logs: HashMap<Log, Slot>,
+    generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,7 @@ impl Store {
             unread: account.unread,
             rows: HashMap::new(),
             logs: HashMap::new(),
+            generation: 0,
         }
     }
 
@@ -80,6 +82,7 @@ impl Store {
             suggestions: page.suggestions,
         };
         self.logs.insert(page.log, Slot::Loaded(listing));
+        self.generation += 1;
     }
 
     fn append(&mut self, log: Log, cursor: &str, page: LogPage) {
@@ -90,6 +93,7 @@ impl Store {
             return;
         }
         listing.next_cursor = page.next_cursor;
+        self.generation += 1;
         for row in page.rows {
             let id = row.commit.id.clone();
             if !listing.ids.contains(&id) {
@@ -116,6 +120,11 @@ impl Store {
                 self.logs.insert(log, Slot::Failed(failure));
             }
         }
+    }
+
+    /// Changes whenever a page lands, so a layout built from the rows can tell it is stale.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn slot(&self, log: Log) -> &Slot {

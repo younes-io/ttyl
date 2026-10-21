@@ -190,7 +190,6 @@ proptest! {
     fn every_line_fits_the_width(
         page in any_page(),
         width in 10u16..160,
-        selected in prop::option::of(0usize..5),
         expand in any::<bool>(),
     ) {
         let expanded = page
@@ -199,7 +198,7 @@ proptest! {
             .filter(|_| expand)
             .map(|row| row.commit.id.clone())
             .collect();
-        let feed = feed::layout(&page, width, selected, &expanded, &now());
+        let feed = feed::layout(&page, width, &expanded, &now());
         for line in &feed.lines {
             prop_assert!(line.width() <= usize::from(width), "{width}: {:?}", text(line));
         }
@@ -214,7 +213,7 @@ proptest! {
         row.commit.body_segments = vec![Segment::Text { text: body.clone() }];
         row.commit.preview_segments = None;
         let page = row_page(row);
-        let feed = feed::layout(&page, width, Some(0), &HashSet::new(), &now());
+        let feed = feed::layout(&page, width, &HashSet::new(), &now());
         let rendered: String = feed
             .lines
             .iter()
@@ -237,7 +236,7 @@ proptest! {
         let author = row.commit.author.clone();
         following.rows.clear();
         following.suggestions = vec![suggestion(row)];
-        let feed = feed::layout(&following, width, None, &HashSet::new(), &now());
+        let feed = feed::layout(&following, width, &HashSet::new(), &now());
         let line = feed
             .lines
             .iter()
@@ -318,7 +317,7 @@ fn a_suggestion_cut_right_after_its_author_still_ends_in_an_ellipsis() {
     }];
     following.rows.clear();
     following.suggestions = vec![suggestion(row)];
-    let feed = feed::layout(&following, 12, None, &HashSet::new(), &now());
+    let feed = feed::layout(&following, 12, &HashSet::new(), &now());
     let line = feed
         .lines
         .iter()
