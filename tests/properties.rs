@@ -251,7 +251,7 @@ proptest! {
                 Entry::Tombstone(_) => "[deleted]".to_owned(),
             })
             .collect();
-        let mut app = App::new([page("log-following"), latest, page("log-trending")]);
+        let mut app = App::new("ada".to_owned(), [page("log-following"), latest, page("log-trending")]);
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut selected = 0usize;
         let last = hashes.len() - 1;

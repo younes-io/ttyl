@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::thread;
 
 use devnull::signin::{Attempt, Callback, Inbox, REDIRECT_URI};
 
@@ -117,17 +116,15 @@ fn the_redirect_handler_hands_the_link_to_the_waiting_app() {
     unsafe { std::env::set_var("XDG_RUNTIME_DIR", &runtime) };
     let inbox = Inbox::bind().unwrap();
     let link = format!("{REDIRECT_URI}?code=abc&state=0123456789abcdef0123456789abcdef");
-    let handler = {
-        let link = link.clone();
-        thread::spawn(move || {
-            Command::new(env!("CARGO_BIN_EXE_devnull"))
-                .args(["--redirect", &link])
-                .env("XDG_RUNTIME_DIR", &runtime)
-                .status()
-                .unwrap()
-        })
-    };
+    assert_eq!(inbox.poll().unwrap(), None);
 
-    assert_eq!(inbox.next().unwrap(), link);
-    assert!(handler.join().unwrap().success());
+    let handler = Command::new(env!("CARGO_BIN_EXE_devnull"))
+        .args(["--redirect", &link])
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .status()
+        .unwrap();
+
+    assert!(handler.success());
+    assert_eq!(inbox.poll().unwrap(), Some(link));
+    assert_eq!(inbox.poll().unwrap(), None);
 }

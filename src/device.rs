@@ -1,5 +1,9 @@
 use std::fmt;
-use std::path::Path;
+use std::fs::DirBuilder;
+use std::io;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 use ssh_key::rand_core::{OsRng, RngCore};
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey};
@@ -17,6 +21,19 @@ impl DeviceKey {
 
     pub fn load(path: &Path) -> ssh_key::Result<Self> {
         PrivateKey::read_openssh_file(path).map(DeviceKey)
+    }
+
+    /// Loads the key at `path`, or makes one there on the first run, in a directory only the owner can open.
+    pub fn open(path: &Path) -> ssh_key::Result<Self> {
+        if fs::exists(path)? {
+            return Self::load(path);
+        }
+        if let Some(dir) = path.parent() {
+            DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        }
+        let key = Self::generate()?;
+        key.save(path)?;
+        Ok(key)
     }
 
     /// Writes the key in OpenSSH format, readable only by the owner.
@@ -63,6 +80,15 @@ impl DeviceKey {
                 .collect(),
         }
     }
+}
+
+/// `$XDG_CONFIG_HOME/devnull-tui/device_ed25519`, falling back to `~/.config`.
+pub fn key_path() -> io::Result<PathBuf> {
+    env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .map(|config| config.join("devnull-tui/device_ed25519"))
+        .ok_or_else(|| io::Error::other("no home directory"))
 }
 
 /// 16 random bytes the server accepts once, sent as 32 lowercase hex characters.

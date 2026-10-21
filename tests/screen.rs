@@ -22,11 +22,14 @@ fn now() -> DateTime<FixedOffset> {
 }
 
 fn app() -> App {
-    App::new([
-        page("log-following"),
-        page("log-latest"),
-        page("log-trending"),
-    ])
+    App::new(
+        "ada".to_owned(),
+        [
+            page("log-following"),
+            page("log-latest"),
+            page("log-trending"),
+        ],
+    )
 }
 
 fn press(app: &mut App, keys: &str) {
@@ -86,8 +89,10 @@ fn latest_draws_headers_day_markers_and_badges() {
     let mut app = app();
     press(&mut app, "2");
     let rows = screen(&mut app, 70, 60);
+    assert!(rows[0].ends_with("@ada"), "signed-in user: {:?}", rows[0]);
     let first = rows
         .iter()
+        .skip(1)
         .find(|row| row.contains("@ada"))
         .expect("first commit header");
     assert!(first.starts_with(" ● Ada @ada · 18m"), "{first:?}");
@@ -151,6 +156,7 @@ fn trending_is_ranked_so_it_has_no_day_markers_and_ends_at_the_root() {
     ));
     let order: Vec<_> = rows
         .iter()
+        .skip(1)
         .filter_map(|row| row.find('@').map(|_| row.clone()))
         .collect();
     assert!(

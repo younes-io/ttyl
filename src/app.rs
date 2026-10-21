@@ -15,6 +15,7 @@ use crate::theme;
 const LOGS: [Log; 3] = [Log::Following, Log::Latest, Log::Trending];
 
 pub struct App {
+    username: String,
     tabs: [Tab; 3],
     active: usize,
     expanded: HashSet<CommitId>,
@@ -29,8 +30,9 @@ struct Tab {
 
 impl App {
     /// Takes the three log pages in tab order and opens on Following, the web's home log for a signed-in user.
-    pub fn new(pages: [LogPage; 3]) -> Self {
+    pub fn new(username: String, pages: [LogPage; 3]) -> Self {
         App {
+            username,
             tabs: pages.map(|page| Tab {
                 page,
                 selected: 0,
@@ -83,6 +85,10 @@ impl App {
         ])
         .areas(area);
         frame.render_widget(self.tab_bar(), top);
+        frame.render_widget(
+            Line::styled(format!("@{} ", self.username), theme::muted()).right_aligned(),
+            top,
+        );
         frame.render_widget(
             Line::styled(" j/k move  space expand  1-3 log  Q quit", theme::muted()),
             bottom,

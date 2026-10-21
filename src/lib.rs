@@ -6,3 +6,4 @@ pub mod feed;
 pub mod model;
 pub mod signin;
 pub mod theme;
+pub mod welcome;

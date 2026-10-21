@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ssh_key::rand_core::{OsRng, RngCore};
@@ -139,18 +140,23 @@ impl Inbox {
     pub fn bind() -> io::Result<Self> {
         let path = socket_path();
         let _ = fs::remove_file(&path);
-        Ok(Inbox {
-            listener: UnixListener::bind(&path)?,
-            path,
-        })
+        let listener = UnixListener::bind(&path)?;
+        listener.set_nonblocking(true)?;
+        Ok(Inbox { listener, path })
     }
 
-    /// Blocks until a handler forwards the next link.
-    pub fn next(&self) -> io::Result<String> {
-        let (stream, _) = self.listener.accept()?;
+    /// The next link a handler forwarded, if one is waiting. Returns at once so the screen keeps answering keys.
+    pub fn poll(&self) -> io::Result<Option<String>> {
+        let stream = match self.listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
         let mut url = String::new();
         stream.take(4096).read_to_string(&mut url)?;
-        Ok(url)
+        Ok(Some(url))
     }
 }
 

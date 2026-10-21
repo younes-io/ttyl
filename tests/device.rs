@@ -123,3 +123,26 @@ fn a_saved_key_is_private_and_loads_back() {
         key.fingerprint()
     );
 }
+
+#[test]
+fn the_first_run_makes_a_private_key_and_later_runs_reuse_it() {
+    let path = scratch("open").join("devnull-tui/device_ed25519");
+    let first = DeviceKey::open(&path).unwrap();
+
+    assert_eq!(
+        fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        DeviceKey::open(&path).unwrap().fingerprint(),
+        first.fingerprint()
+    );
+}
