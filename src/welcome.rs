@@ -44,7 +44,7 @@ pub fn run(terminal: &mut DefaultTerminal, client: &Client) -> io::Result<Option
         terminal.draw(|frame| draw(frame, &step, &device_name))?;
         step = match step {
             Step::Redeeming { code, verifier } => match client.redeem(&code, &verifier) {
-                Ok(me) => return Ok(Some(me)),
+                Ok(account) => return Ok(Some(account.me)),
                 Err(error) => Step::Ready(Some(error.to_string())),
             },
             Step::Browser(wait) => match wait.inbox.poll() {

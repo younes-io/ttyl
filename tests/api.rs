@@ -3,10 +3,12 @@ mod common;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use common::openssh_accepts;
-use devnull::api::{Client, Error};
+use devnull::api::{Call, Client, Error, Reply};
 use devnull::device::DeviceKey;
+use devnull::model::Log;
 
 struct Seen {
     head: String,
@@ -81,11 +83,12 @@ fn redeeming_posts_the_code_signed_and_reads_the_user() {
         r#"{"data":{"id":7,"username":"ada","name":"Ada","bio":null},"unread_notifications_count":2}"#,
     );
     let client = Client::new(base, DeviceKey::generate().unwrap());
-    let me = client.redeem("the-code", "the-verifier").unwrap();
+    let account = client.redeem("the-code", "the-verifier").unwrap();
     let seen = server.join().unwrap();
 
-    assert_eq!(me.username, "ada");
-    assert_eq!(me.name.as_deref(), Some("Ada"));
+    assert_eq!(account.me.username, "ada");
+    assert_eq!(account.me.name.as_deref(), Some("Ada"));
+    assert_eq!(account.unread, 2);
     assert!(seen.head.starts_with("POST /api/v1/devices HTTP/1.1\r\n"));
     assert_eq!(seen.header("Content-Type"), Some("application/json"));
     assert_eq!(seen.header("Accept"), Some("application/json"));
@@ -106,10 +109,11 @@ fn redeeming_posts_the_code_signed_and_reads_the_user() {
 fn me_is_a_signed_get_without_a_body() {
     let (base, server) = serve("200 OK", r#"{"data":{"username":"grace","name":null}}"#);
     let client = Client::new(base, DeviceKey::generate().unwrap());
-    let me = client.me().unwrap();
+    let account = client.me().unwrap();
     let seen = server.join().unwrap();
 
-    assert_eq!(me.username, "grace");
+    assert_eq!(account.me.username, "grace");
+    assert_eq!(account.unread, 0);
     assert!(seen.head.starts_with("GET /api/v1/me HTTP/1.1\r\n"));
     assert_eq!(seen.body, "");
     assert!(signature_holds(
@@ -149,6 +153,55 @@ fn a_spent_code_is_a_refusal_not_a_sign_in_prompt() {
     assert!(
         matches!(error, Error::Api { status: 400, code: Some(ref code), .. } if code == "invalid_grant")
     );
+}
+
+#[test]
+fn a_log_page_is_read_from_its_route() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/log-trending.json"
+    ))
+    .unwrap();
+    let (base, server) = serve("200 OK", &fixture);
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    let reply = client.call(&Call::Page(Log::Trending)).unwrap();
+    let seen = server.join().unwrap();
+
+    let Reply::Page(page) = reply else {
+        panic!("a page call answers with a page");
+    };
+    assert_eq!(page.log, Log::Trending);
+    assert!(page.is_ranked);
+    assert!(seen.head.starts_with("GET /api/v1/log/trending HTTP/1.1\r\n"));
+}
+
+#[test]
+fn a_throttle_says_how_long_to_wait() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 && line != "\r\n" {
+            line.clear();
+        }
+        let body = r#"{"message":"Too Many Attempts.","code":"rate_limited"}"#;
+        write!(
+            stream,
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: 7\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let error = Client::new(base, DeviceKey::generate().unwrap())
+        .me()
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::Api { status: 429, retry_after: Some(wait), .. } if wait == Duration::from_secs(7)
+    ));
 }
 
 #[test]

@@ -8,6 +8,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
+use crate::model::{Log, LogPage};
 
 pub const BASE: &str = "https://dev-null.sh";
 
@@ -18,10 +19,33 @@ pub struct Client {
     agent: Agent,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Me {
     pub username: String,
     pub name: Option<String>,
+}
+
+/// What `/me` and a redeemed device both answer: the user plus a count the server keeps beside the envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Account {
+    #[serde(rename = "data")]
+    pub me: Me,
+    #[serde(default, rename = "unread_notifications_count")]
+    pub unread: u32,
+}
+
+/// Every request the app makes, as data, so a worker can run one and the reply can be applied by identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Call {
+    Me,
+    Redeem { code: String, verifier: String },
+    Page(Log),
+}
+
+#[derive(Debug)]
+pub enum Reply {
+    Account(Account),
+    Page(LogPage),
 }
 
 #[derive(Debug)]
@@ -31,6 +55,7 @@ pub enum Error {
         status: u16,
         code: Option<String>,
         message: String,
+        retry_after: Option<Duration>,
     },
     Http(ureq::Error),
     /// The server answered with something other than the JSON it documents, such as a proxy's error page.
@@ -55,11 +80,6 @@ impl fmt::Display for Error {
             ),
         }
     }
-}
-
-#[derive(Deserialize)]
-struct Envelope<T> {
-    data: T,
 }
 
 #[derive(Deserialize)]
@@ -91,22 +111,38 @@ impl Client {
         &self.key
     }
 
+    pub fn call(&self, call: &Call) -> Result<Reply, Error> {
+        match call {
+            Call::Me => self.me().map(Reply::Account),
+            Call::Redeem { code, verifier } => self.redeem(code, verifier).map(Reply::Account),
+            Call::Page(log) => self.page(*log).map(Reply::Page),
+        }
+    }
+
     /// Trades the code from the browser for this device's approval.
-    pub fn redeem(&self, code: &str, verifier: &str) -> Result<Me, Error> {
+    pub fn redeem(&self, code: &str, verifier: &str) -> Result<Account, Error> {
         let body = serde_json::json!({ "code": code, "code_verifier": verifier }).to_string();
-        self.send("POST", "/api/v1/devices", body)
+        let (status, text) = self.send("POST", "/api/v1/devices", body)?;
+        parse(status, &text)
     }
 
-    pub fn me(&self) -> Result<Me, Error> {
-        self.send("GET", "/api/v1/me", String::new())
+    pub fn me(&self) -> Result<Account, Error> {
+        let (status, text) = self.send("GET", "/api/v1/me", String::new())?;
+        parse(status, &text)
     }
 
-    fn send<T: DeserializeOwned>(
-        &self,
-        method: &str,
-        path: &str,
-        body: String,
-    ) -> Result<T, Error> {
+    pub fn page(&self, log: Log) -> Result<LogPage, Error> {
+        let slug = match log {
+            Log::Following => "following",
+            Log::Latest => "latest",
+            Log::Trending => "trending",
+        };
+        let (status, text) = self.send("GET", &format!("/api/v1/log/{slug}"), String::new())?;
+        LogPage::parse(&text).map_err(|_| Error::Unexpected(status))
+    }
+
+    /// Sends one signed request and hands back a successful body for the caller to parse.
+    fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {
         let signed = self
             .key
             .sign(method, path, &body, Utc::now().timestamp(), Nonce::random());
@@ -125,16 +161,25 @@ impl Client {
         let status = response.status().as_u16();
         let text = response.body_mut().read_to_string().map_err(Error::Http)?;
         if response.status().is_success() {
-            return serde_json::from_str::<Envelope<T>>(&text)
-                .map(|envelope| envelope.data)
-                .map_err(|_| Error::Unexpected(status));
+            return Ok((status, text));
         }
         let refusal: Refusal =
             serde_json::from_str(&text).map_err(|_| Error::Unexpected(status))?;
+        let retry_after = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse().ok())
+            .map(Duration::from_secs);
         Err(Error::Api {
             status,
             code: refusal.code,
             message: refusal.message,
+            retry_after,
         })
     }
+}
+
+fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {
+    serde_json::from_str(text).map_err(|_| Error::Unexpected(status))
 }

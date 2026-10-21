@@ -39,7 +39,7 @@ fn start() -> Result<(), String> {
         key,
     );
     let me = match client.me() {
-        Ok(me) => Some(me),
+        Ok(account) => Some(account.me),
         Err(error) if error.needs_sign_in() => None,
         Err(error) => return Err(error.to_string()),
     };
