@@ -25,7 +25,6 @@ pub struct Me {
     pub name: Option<String>,
 }
 
-/// What `/me` and a redeemed device both answer: the user plus a count the server keeps beside the envelope.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Account {
     #[serde(rename = "data")]
@@ -34,7 +33,6 @@ pub struct Account {
     pub unread: u32,
 }
 
-/// Every request the app makes, as data, so a worker can run one and the reply can be applied by identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Me,
@@ -137,7 +135,6 @@ impl Client {
         LogPage::parse(&text).map_err(|_| Error::Unexpected(status))
     }
 
-    /// Sends one signed request and hands back a successful body for the caller to parse.
     fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {
         let signed = self
             .key

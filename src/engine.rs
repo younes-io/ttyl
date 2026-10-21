@@ -1,6 +1,3 @@
-//! The one state machine the UI thread runs. `update` turns an event into state and effects, `pump` releases
-//! what the clock and the scheduler allow. Neither touches a thread or a terminal, so every flow runs in a test.
-
 use std::io;
 use std::time::Instant;
 
@@ -33,11 +30,9 @@ pub enum Event {
     Reply(Ticket, Result<Reply, Error>),
     Tick,
     SignIn(io::Result<Wait>),
-    /// A link the browser handed back during sign-in.
     Link(io::Result<String>),
 }
 
-/// What the runtime does on the engine's behalf, because it needs a thread or the outside world.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
     Run(Ticket, Call),
@@ -45,10 +40,8 @@ pub enum Effect {
     Quit,
 }
 
-/// Why the server could not be read, as the screen tells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
-    /// The site answered with a page instead of data.
     Down,
     Offline(String),
     Refused(String),
@@ -77,8 +70,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// What the log screen allows, whether or not the help overlay covers it.
-    fn allows(&self, action: Action) -> bool {
+    fn log_allows(&self, action: Action) -> bool {
         matches!(action, Action::Quit | Action::Help) || self.log.can(action, &self.store)
     }
 
@@ -86,7 +78,7 @@ impl Session {
         if self.help {
             matches!(action, Action::Quit | Action::Close)
         } else {
-            self.allows(action)
+            self.log_allows(action)
         }
     }
 }
@@ -169,7 +161,6 @@ impl Engine {
         }
     }
 
-    /// Fires the timers that came due and hands out the calls the scheduler releases.
     pub fn pump(&mut self, now: Instant) -> Vec<Effect> {
         for timer in self.timers.due(now) {
             match timer {
@@ -178,7 +169,7 @@ impl Engine {
                     self.timers.set(Timer::Poll, now + POLL);
                 }
                 Timer::Retry => self.sched.send(Call::Me, Priority::Now),
-                Timer::Minute => self.timers.set(Timer::Minute, now + MINUTE),
+                Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
             }
@@ -190,7 +181,6 @@ impl Engine {
             .collect()
     }
 
-    /// When something changes without an event, or `None` to wait for one.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         [
             self.timers.next(),
@@ -294,7 +284,7 @@ impl Engine {
         }
         self.timers.clear(Timer::Retry);
         self.timers.set(Timer::Poll, now + POLL);
-        self.timers.set(Timer::Minute, now + MINUTE);
+        self.timers.set(Timer::RelativeTimes, now + MINUTE);
     }
 
     fn failed(&mut self, call: Call, priority: Priority, error: Error, now: Instant) {
@@ -316,7 +306,7 @@ impl Engine {
             return;
         }
         if error.needs_sign_in() && !matches!(self.phase, Phase::SignIn(_)) {
-            self.gate();
+            self.sign_out();
             return;
         }
         let failure = Failure::of(&error);
@@ -336,8 +326,7 @@ impl Engine {
         }
     }
 
-    /// The server no longer knows this device, so the session ends where a new one starts.
-    fn gate(&mut self) {
+    fn sign_out(&mut self) {
         self.phase = Phase::SignIn(Step::Ready(None));
         self.health = None;
         self.timers = Timers::default();
@@ -514,7 +503,7 @@ fn banner_text(failure: &Failure) -> String {
 }
 
 fn draw_help(frame: &mut Frame, session: &Session) {
-    let rows: Vec<String> = keys::help(LOG_SCOPES, &|action| session.allows(action))
+    let rows: Vec<String> = keys::help(LOG_SCOPES, &|action| session.log_allows(action))
         .into_iter()
         .map(|(key, help)| format!("{key:>8}  {help}"))
         .collect();
@@ -548,7 +537,6 @@ fn draw_help(frame: &mut Frame, session: &Session) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// A column of at most `width` cells with a one-cell gutter, centered in `area`.
 fn inset(area: Rect) -> Rect {
     Rect {
         x: area.x + 1,

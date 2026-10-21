@@ -1,6 +1,3 @@
-//! The phase a device without approval opens on. It sends the user to dev-null.sh to approve this terminal and
-//! waits for the browser to hand the approval back.
-
 use std::fs;
 use std::io;
 use std::process::{Command, Stdio};
@@ -46,7 +43,6 @@ impl Drop for Wait {
     }
 }
 
-/// Opens the browser and listens for its redirect on a thread, which sends every link it gets as an event.
 pub fn start(client: &Client, device_name: &str, events: Sender<Event>) -> io::Result<Wait> {
     let handler = Handler::install()?;
     let inbox = Inbox::bind()?;

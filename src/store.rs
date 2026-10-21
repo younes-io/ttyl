@@ -1,6 +1,3 @@
-//! Everything the server has told this session, kept once. A commit has one slot however many logs list it, so
-//! a change to it shows everywhere at once.
-
 use std::collections::HashMap;
 
 use crate::api::{Account, Me, Reply};
@@ -13,7 +10,6 @@ pub struct Store {
     logs: HashMap<Log, Slot>,
 }
 
-/// Where a log's first page stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Slot {
     Loading,
@@ -21,7 +17,6 @@ pub enum Slot {
     Loaded(Listing),
 }
 
-/// A log page as the list of commits it showed, with the ids resolved through the store on read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub ids: Vec<CommitId>,
@@ -69,7 +64,6 @@ impl Store {
             .collect()
     }
 
-    /// A page load failed. Loaded rows stay on screen; only a log with nothing yet shows the failure.
     pub fn fail(&mut self, log: Log, message: String) {
         if !matches!(self.slot(log), Slot::Loaded(_)) {
             self.logs.insert(log, Slot::Failed(message));
@@ -84,7 +78,6 @@ impl Store {
         self.entries.get(id)
     }
 
-    /// The page the renderer draws for a log, rebuilt from the ids so it reads the newest state of each commit.
     pub fn page(&self, log: Log) -> Option<LogPage> {
         let Slot::Loaded(listing) = self.slot(log) else {
             return None;

@@ -1,5 +1,3 @@
-//! The three-tab log screen. It holds cursors and ids; what they point at lives in the store.
-
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -24,7 +22,6 @@ pub struct LogScreen {
     expanded: HashSet<CommitId>,
 }
 
-/// Where the user was in a log, kept while another tab is showing.
 #[derive(Default, Clone, Copy)]
 struct Place {
     selected: usize,
@@ -171,8 +168,6 @@ impl LogScreen {
     }
 }
 
-/// Moves the viewport the least distance that shows the whole selected entry, or its top when it is taller than
-/// the viewport. The first entry measures from the top so its day marker stays visible whenever the entry fits.
 fn scroll(feed: &feed::Feed, selected: usize, offset: usize, height: usize) -> usize {
     let Some(range) = feed.entries.get(selected) else {
         return 0;

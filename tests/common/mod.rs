@@ -1,4 +1,3 @@
-//! Helpers shared by the integration tests. Each test file uses a few of them.
 #![allow(dead_code)]
 
 use std::fs;
@@ -93,7 +92,6 @@ pub fn now() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("2026-10-21T10:00:00+00:00").unwrap()
 }
 
-/// An engine past its first `/me`, with every page served. `at` is the moment the pages landed.
 pub fn boot(at: Instant) -> Engine {
     let mut engine = Engine::new("devnull-tui".to_owned(), at);
     let effects = engine.pump(at);
@@ -105,7 +103,6 @@ pub fn boot(at: Instant) -> Engine {
     engine
 }
 
-/// Answers every page the engine asks for from the fixtures until it asks for nothing more.
 pub fn serve(engine: &mut Engine, at: Instant) {
     loop {
         let effects = engine.pump(at);

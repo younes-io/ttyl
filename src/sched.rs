@@ -1,5 +1,3 @@
-//! Decides which call runs next and when, from the UI thread's clock. Workers only run what it releases.
-
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -9,7 +7,6 @@ use crate::model::Log;
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
 pub const WINDOW: Duration = Duration::from_secs(60);
-/// Requests the window keeps back for key presses, so a poll never causes a 429 under the user's hands.
 pub const RESERVE: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,14 +14,10 @@ pub struct Ticket(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priority {
-    /// The user asked for it.
     Now,
-    /// A poll or a retry.
     Later,
 }
 
-/// The identity a call is coalesced on: a second call with the same key replaces a queued one and is dropped
-/// while one is in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CallKey {
     Me,
@@ -65,7 +58,6 @@ impl Scheduler {
         }
     }
 
-    /// Queues a call unless the same one is already in flight.
     pub fn send(&mut self, call: Call, priority: Priority) {
         let key = call.key();
         if self.in_flight(key) {
@@ -87,12 +79,10 @@ impl Scheduler {
         !self.flying.is_empty()
     }
 
-    /// Stops releasing anything until the server's `Retry-After` has passed.
     pub fn hold(&mut self, until: Instant) {
         self.hold = Some(until);
     }
 
-    /// Hands out the calls the window, the hold and the free workers allow right now.
     pub fn release(&mut self, now: Instant) -> Vec<(Ticket, Call)> {
         while self.sent.front().is_some_and(|at| now >= *at + WINDOW) {
             self.sent.pop_front();
@@ -127,12 +117,10 @@ impl Scheduler {
         self.hold.is_some_and(|until| now < until)
     }
 
-    /// Frees the worker and says what it ran, so a failed call can be queued again as it was asked for.
     pub fn finish(&mut self, ticket: Ticket) -> Option<(Call, Priority)> {
         self.flying.remove(&ticket)
     }
 
-    /// When something queued could be released next without another event.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         if self.now.is_empty() && self.later.is_empty() {
             return None;

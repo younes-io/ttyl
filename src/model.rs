@@ -19,7 +19,6 @@ pub enum Log {
 }
 
 impl Log {
-    /// The log's name in routes and on screen.
     pub fn slug(self) -> &'static str {
         match self {
             Log::Following => "following",

@@ -1,5 +1,6 @@
 use std::env;
 use std::io;
+use std::ops::ControlFlow;
 use std::process::ExitCode;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -48,7 +49,6 @@ fn start() -> Result<(), String> {
     result.map_err(|error| error.to_string())
 }
 
-/// The threads around the engine: input, the workers, and the channel they all answer on.
 struct Runtime {
     engine: Engine,
     client: Arc<Client>,
@@ -72,7 +72,7 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
     loop {
         let now = Instant::now();
         let effects = runtime.engine.pump(now);
-        if runtime.perform(effects) {
+        if runtime.perform(effects).is_break() {
             return Ok(());
         }
         terminal.draw(|frame| runtime.engine.draw(frame, now, &Local::now()))?;
@@ -92,7 +92,7 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
         pending.extend(inbox.try_iter());
         for event in pending {
             let effects = runtime.engine.update(event, Instant::now());
-            if runtime.perform(effects) {
+            if runtime.perform(effects).is_break() {
                 return Ok(());
             }
         }
@@ -100,8 +100,7 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
 }
 
 impl Runtime {
-    /// Carries out effects, and says whether the engine asked to quit.
-    fn perform(&mut self, effects: Vec<Effect>) -> bool {
+    fn perform(&mut self, effects: Vec<Effect>) -> ControlFlow<()> {
         for effect in effects {
             match effect {
                 Effect::Run(ticket, call) => {
@@ -111,14 +110,12 @@ impl Runtime {
                     let started =
                         welcome::start(&self.client, &self.device_name, self.events.clone());
                     let effects = self.engine.update(Event::SignIn(started), Instant::now());
-                    if self.perform(effects) {
-                        return true;
-                    }
+                    self.perform(effects)?;
                 }
-                Effect::Quit => return true,
+                Effect::Quit => return ControlFlow::Break(()),
             }
         }
-        false
+        ControlFlow::Continue(())
     }
 }
 

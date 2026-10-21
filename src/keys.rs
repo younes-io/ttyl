@@ -1,5 +1,3 @@
-//! One table of key bindings drives dispatch, the hint line and the `?` overlay, so the three never drift apart.
-
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::model::Log;
@@ -32,7 +30,6 @@ pub enum Scope {
     Global,
 }
 
-/// The scope sets that are active together. A chord may clash with another only across different sets.
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
 pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
@@ -104,7 +101,6 @@ pub struct Binding {
     pub scope: Scope,
     pub chords: &'static [&'static [Key]],
     pub action: Action,
-    /// What the hint line shows for this binding, in the table's order.
     pub hint: Option<&'static str>,
     pub help: &'static str,
 }
@@ -236,9 +232,7 @@ pub fn bindings<'a>(
 #[derive(Debug, PartialEq, Eq)]
 pub enum Resolve {
     Act(Action),
-    /// The key starts a longer chord.
     Pending,
-    /// The key is a character for the text field that has focus.
     Text(KeyEvent),
     Ignored,
 }
@@ -289,7 +283,6 @@ pub fn label(chord: &[Key]) -> String {
     chord.iter().map(|key| key.label()).collect()
 }
 
-/// The hint line: what the pending chord can finish as, or the hints of every key that works now.
 pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) -> String {
     if !pending.is_empty() {
         let rest: Vec<String> = bindings(scopes, can)
@@ -309,7 +302,6 @@ pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) ->
         .join("  ")
 }
 
-/// Every key that works now, as the `?` overlay lists it.
 pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str)> {
     bindings(scopes, can)
         .map(|binding| {

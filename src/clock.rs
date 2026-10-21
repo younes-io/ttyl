@@ -1,5 +1,3 @@
-//! Named deadlines the engine waits on. `set` replaces, so re-arming a timer is idempotent.
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -10,19 +8,14 @@ pub const RETRY: Duration = Duration::from_secs(30);
 pub const MINUTE: Duration = Duration::from_secs(60);
 pub const TOAST: Duration = Duration::from_secs(4);
 pub const FRAME: Duration = Duration::from_millis(100);
-/// How often a countdown on screen is redrawn.
 pub const SECOND: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Timer {
-    /// The next `/me` poll for the unread count.
     Poll,
-    /// The next attempt to reach the server before anything loaded.
     Retry,
-    /// Relative times on screen move on.
-    Minute,
+    RelativeTimes,
     Toast,
-    /// A log whose page failed loads again.
     Reload(Log),
 }
 
@@ -48,7 +41,6 @@ impl Timers {
             .map(|at| at.saturating_duration_since(now))
     }
 
-    /// Takes every timer that has come due.
     pub fn due(&mut self, now: Instant) -> Vec<Timer> {
         let mut due: Vec<Timer> = self
             .0
