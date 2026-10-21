@@ -124,14 +124,18 @@ impl App {
 }
 
 /// Moves the viewport the least distance that shows the whole selected entry, or its top when it is taller than
-/// the viewport. The first entry scrolls to the top so its day marker stays visible.
+/// the viewport. The first entry measures from the top so its day marker stays visible whenever the entry fits.
 fn scroll(feed: &feed::Feed, selected: usize, offset: usize, height: usize) -> usize {
-    let offset = offset.min(feed.lines.len().saturating_sub(height));
     let Some(range) = feed.entries.get(selected) else {
         return 0;
     };
-    if selected == 0 || range.start < offset {
-        return if selected == 0 { 0 } else { range.start };
+    let offset = if selected == 0 {
+        0
+    } else {
+        offset.min(feed.lines.len().saturating_sub(height))
+    };
+    if range.start < offset {
+        return range.start;
     }
     if range.end > offset + height {
         return (range.end - height).min(range.start);

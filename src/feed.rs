@@ -8,7 +8,8 @@ use std::ops::Range;
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::code;
 use crate::model::{Commit, CommitId, Entry, Log, LogPage, Segment, Status};
@@ -71,8 +72,9 @@ pub fn layout<Tz: TimeZone>(
                 expanded.contains(&commit.id),
                 now,
             ),
-            Entry::Tombstone(_) => out.push(
+            Entry::Tombstone(_) => out.node(
                 Span::styled("○ ", Style::new().fg(theme::RAIL)),
+                Span::styled("│ ", Style::new().fg(theme::RAIL)),
                 vec![Span::styled(
                     "[deleted] This commit was deleted.",
                     theme::muted(),
@@ -88,8 +90,9 @@ pub fn layout<Tz: TimeZone>(
     });
     if let (None, Some(lane)) = (&page.next_cursor, last_lane) {
         out.gap();
-        out.push(
+        out.node(
             Span::styled("○ ", Style::new().fg(theme::lane(lane))),
+            Span::raw("  "),
             vec![Span::styled(
                 "That's the root commit. There's nothing before it.",
                 theme::muted(),
@@ -113,9 +116,29 @@ impl Writer {
         self.width - RAIL_WIDTH
     }
 
-    fn push(&mut self, rail: Span<'static>, mut spans: Vec<Span<'static>>) {
-        spans.insert(0, rail);
-        self.lines.push(Line::from(spans));
+    fn push(&mut self, rail: Span<'static>, spans: Vec<Span<'static>>) {
+        self.node(rail.clone(), rail, spans);
+    }
+
+    /// Wraps `spans` to the content width, with `node` on the first line and `rail` on the rest.
+    fn node(&mut self, node: Span<'static>, rail: Span<'static>, spans: Vec<Span<'static>>) {
+        let pieces: Vec<_> = spans
+            .into_iter()
+            .map(|span| (span.content.into_owned(), span.style))
+            .collect();
+        let mut lines = Vec::new();
+        wrap(&pieces, self.content(), &mut lines);
+        for (index, mut line) in lines.into_iter().enumerate() {
+            line.insert(
+                0,
+                if index == 0 {
+                    node.clone()
+                } else {
+                    rail.clone()
+                },
+            );
+            self.lines.push(Line::from(line));
+        }
     }
 
     fn gap(&mut self) {
@@ -137,7 +160,7 @@ fn commit_lines<Tz: TimeZone>(
         Span::styled("│ ", Style::new().fg(theme::RAIL))
     };
     let header = header(commit, out.content(), now);
-    out.push(Span::styled("● ", lane), header);
+    out.node(Span::styled("● ", lane), rail.clone(), header);
 
     let folded = commit.preview_segments.as_ref().filter(|_| !expanded);
     for line in body(folded.unwrap_or(&commit.body_segments), out.content()) {
@@ -202,6 +225,10 @@ fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Ve
         spans.push(Span::styled(commit.short_hash.clone(), theme::muted()));
         return spans;
     }
+    fit(spans, width)
+}
+
+fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
     let mut fitted = Vec::new();
     let mut room = width;
     for span in spans {
@@ -269,14 +296,14 @@ fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Vec<Span<'sta
                 used += run_width;
                 continue;
             }
-            for ch in run.chars() {
-                let ch_width = ch.width().unwrap_or(0);
-                if used + ch_width > width {
+            for grapheme in run.graphemes(true) {
+                let grapheme_width = grapheme.width();
+                if used + grapheme_width > width {
                     out.push(mem::take(&mut line));
                     used = 0;
                 }
-                append(&mut line, ch.encode_utf8(&mut [0; 4]), *style);
-                used += ch_width;
+                append(&mut line, grapheme, *style);
+                used += grapheme_width;
             }
         }
     }
@@ -321,14 +348,14 @@ fn block(html: &str, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
         let mut used = 0;
         for span in &line {
             let style = theme::hl(span.hl);
-            for ch in span.text.replace('\t', TAB).chars() {
-                let ch_width = ch.width().unwrap_or(0);
-                if used + ch_width > inner {
+            for grapheme in span.text.replace('\t', TAB).graphemes(true) {
+                let grapheme_width = grapheme.width();
+                if used + grapheme_width > inner {
                     out.push(row(mem::take(&mut spans), used));
                     used = 0;
                 }
-                append(&mut spans, ch.encode_utf8(&mut [0; 4]), style);
-                used += ch_width;
+                append(&mut spans, grapheme, style);
+                used += grapheme_width;
             }
         }
         out.push(row(spans, used));
@@ -352,7 +379,11 @@ fn empty(out: &mut Writer, page: &LogPage) {
             "Nobody has committed anything. Be the first. It's just plain text; you'll be fine.",
         ),
     };
-    lines.push(vec![Span::styled(command, theme::muted())]);
+    wrap(
+        &[(command.to_owned(), theme::muted())],
+        out.width,
+        &mut lines,
+    );
     lines.push(Vec::new());
     wrap(
         &[(message.to_owned(), Style::new().fg(theme::FOREGROUND))],
@@ -366,19 +397,22 @@ fn empty(out: &mut Writer, page: &LogPage) {
         };
         let author = &commit.author;
         lines.push(Vec::new());
-        lines.push(vec![
-            Span::styled("● ", Style::new().fg(theme::lane(author.lane))),
-            Span::styled(
-                author
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| author.username.clone()),
-                Style::new()
-                    .fg(theme::FOREGROUND)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!(" @{}", author.username), theme::muted()),
-        ]);
+        lines.push(fit(
+            vec![
+                Span::styled("● ", Style::new().fg(theme::lane(author.lane))),
+                Span::styled(
+                    author
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| author.username.clone()),
+                    Style::new()
+                        .fg(theme::FOREGROUND)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" @{}", author.username), theme::muted()),
+            ],
+            out.width,
+        ));
         // The web shows the body in one `truncate` line, where nowrap collapses newlines and runs of spaces.
         let body = commit.body.split_whitespace().collect::<Vec<_>>().join(" ");
         lines.push(vec![
@@ -393,15 +427,18 @@ fn truncate(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
     }
+    if width == 0 {
+        return String::new();
+    }
     let mut out = String::new();
     let mut used = 0;
-    for ch in text.chars() {
-        let ch_width = ch.width().unwrap_or(0);
-        if used + ch_width + 1 > width {
+    for grapheme in text.graphemes(true) {
+        let grapheme_width = grapheme.width();
+        if used + grapheme_width + 1 > width {
             break;
         }
-        out.push(ch);
-        used += ch_width;
+        out.push_str(grapheme);
+        used += grapheme_width;
     }
     out.push('…');
     out
