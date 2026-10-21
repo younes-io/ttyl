@@ -235,25 +235,25 @@ proptest! {
     ) {
         let mut following = page("log-following");
         let mut row = fixture_row();
-        row.commit.body = body.clone();
+        row.commit.body_segments = vec![Segment::Text { text: body.clone() }];
+        let author = row.commit.author.clone();
         following.rows.clear();
         following.suggestions = vec![suggestion(row)];
         let feed = feed::layout(&following, width, None, &HashSet::new(), &now());
-        let at = feed
+        let line = feed
             .lines
             .iter()
-            .position(|line| text(line).starts_with("● "))
-            .expect("the suggestion header");
-        let line = &feed.lines[at + 1];
+            .find(|line| text(line).starts_with("● "))
+            .expect("the suggestion row");
         prop_assert!(line.width() <= usize::from(width), "{width}: {:?}", text(line));
         let shown = text(line);
-        let shown = shown.strip_prefix("  ").expect("indented under the node");
         let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
-        let fits = shown == collapsed;
+        let full = format!("● {} @{}  {collapsed}", author.name, author.username);
+        let fits = shown == full;
         let cut = shown
             .strip_suffix('…')
-            .is_some_and(|prefix| collapsed.starts_with(prefix) && prefix != collapsed);
-        prop_assert!(fits || cut, "{shown:?} from {collapsed:?}");
+            .is_some_and(|prefix| full.starts_with(prefix) && prefix != full);
+        prop_assert!(fits || cut, "{shown:?} from {full:?}");
     }
 
     #[test]
@@ -309,4 +309,22 @@ proptest! {
             hashes[selected]
         );
     }
+}
+
+#[test]
+fn a_suggestion_cut_right_after_its_author_still_ends_in_an_ellipsis() {
+    let mut following = page("log-following");
+    let mut row = fixture_row();
+    row.commit.body_segments = vec![Segment::Text {
+        text: "hello".to_owned(),
+    }];
+    following.rows.clear();
+    following.suggestions = vec![suggestion(row)];
+    let feed = feed::layout(&following, 12, None, &HashSet::new(), &now());
+    let line = feed
+        .lines
+        .iter()
+        .find(|line| text(line).starts_with("● "))
+        .expect("the suggestion row");
+    assert_eq!(text(line), "● Ada @ada …");
 }

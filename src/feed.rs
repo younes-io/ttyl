@@ -329,28 +329,37 @@ fn reply_line<Tz: TimeZone>(
         }
     };
     let commit = &reply.commit;
+    let meta = format!(" · {}", relative_time(commit.created_at, now));
+    one_liner(
+        "  ● ",
+        commit,
+        &meta,
+        Style::new().fg(theme::FOREGROUND),
+        width,
+    )
+}
+
+/// A commit on one line after its author, as the web lists replies under a commit and suggestions on an empty
+/// log.
+fn one_liner(
+    node: &'static str,
+    commit: &Commit,
+    meta: &str,
+    text: Style,
+    width: usize,
+) -> Vec<Span<'static>> {
     let author = &commit.author;
     let mut spans = vec![
-        Span::styled("  ● ", Style::new().fg(theme::lane(author.lane))),
+        Span::styled(node, Style::new().fg(theme::lane(author.lane))),
         Span::styled(
             author.name.clone(),
             Style::new()
                 .fg(theme::FOREGROUND)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(
-                " @{} · {}  ",
-                author.username,
-                relative_time(commit.created_at, now)
-            ),
-            theme::muted(),
-        ),
+        Span::styled(format!(" @{}{meta}  ", author.username), theme::muted()),
     ];
-    spans.extend(one_line(
-        &commit.body_segments,
-        Style::new().fg(theme::FOREGROUND),
-    ));
+    spans.extend(one_line(&commit.body_segments, text));
     fit(spans, width)
 }
 
@@ -426,8 +435,14 @@ fn header<Tz: TimeZone>(commit: &Commit, width: usize, now: &DateTime<Tz>) -> Ve
 }
 
 fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+    if spans.iter().map(Span::width).sum::<usize>() <= width {
+        return spans;
+    }
+    if width == 0 {
+        return Vec::new();
+    }
     let mut fitted = Vec::new();
-    let mut room = width;
+    let mut room = width - 1;
     for span in spans {
         let span_width = span.width();
         if span_width <= room {
@@ -435,7 +450,17 @@ fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
             fitted.push(span);
             continue;
         }
-        fitted.push(Span::styled(truncate(&span.content, room), span.style));
+        let mut kept = String::new();
+        for grapheme in span.content.graphemes(true) {
+            let grapheme_width = grapheme.width();
+            if grapheme_width > room {
+                break;
+            }
+            room -= grapheme_width;
+            kept.push_str(grapheme);
+        }
+        kept.push('…');
+        fitted.push(Span::styled(kept, span.style));
         break;
     }
     fitted
@@ -588,52 +613,19 @@ fn empty(out: &mut Writer, page: &LogPage) {
         &mut lines,
     );
 
-    for suggestion in &page.suggestions {
-        let commit = &suggestion.commit;
-        let author = &commit.author;
+    if !page.suggestions.is_empty() {
         lines.push(Vec::new());
-        lines.push(fit(
-            vec![
-                Span::styled("● ", Style::new().fg(theme::lane(author.lane))),
-                Span::styled(
-                    author.name.clone(),
-                    Style::new()
-                        .fg(theme::FOREGROUND)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" @{}", author.username), theme::muted()),
-            ],
+    }
+    for suggestion in &page.suggestions {
+        lines.push(one_liner(
+            "● ",
+            &suggestion.commit,
+            "",
+            theme::muted(),
             out.width,
         ));
-        // The web shows the body in one `truncate` line, where nowrap collapses newlines and runs of spaces.
-        let body = commit.body.split_whitespace().collect::<Vec<_>>().join(" ");
-        lines.push(vec![
-            Span::raw("  "),
-            Span::styled(truncate(&body, out.width - RAIL_WIDTH), theme::muted()),
-        ]);
     }
     out.lines.extend(lines.into_iter().map(Line::from));
-}
-
-fn truncate(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_owned();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for grapheme in text.graphemes(true) {
-        let grapheme_width = grapheme.width();
-        if used + grapheme_width + 1 > width {
-            break;
-        }
-        out.push_str(grapheme);
-        used += grapheme_width;
-    }
-    out.push('…');
-    out
 }
 
 /// Mirrors the web's `formatRelativeTime`.

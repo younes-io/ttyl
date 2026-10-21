@@ -70,6 +70,7 @@ use devnull::signin::{Attempt, REDIRECT_URI};
 use devnull::welcome::Wait;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn page(log: Log) -> LogPage {
@@ -181,12 +182,16 @@ pub fn press(engine: &mut Engine, keys: &str, at: Instant) -> Vec<Effect> {
     effects
 }
 
-pub fn screen(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Vec<String> {
+pub fn buffer(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| engine.draw(frame, at, &now()))
         .unwrap();
-    let buffer = terminal.backend().buffer();
+    terminal.backend().buffer().clone()
+}
+
+pub fn screen(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Vec<String> {
+    let buffer = buffer(engine, width, height, at);
     (0..height)
         .map(|y| {
             (0..width)

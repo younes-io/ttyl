@@ -7,6 +7,7 @@ use common::{boot, boot_serving, contains, following_nobody, now, page};
 use devnull::engine::Engine;
 use devnull::feed;
 use devnull::model::Log;
+use devnull::theme;
 
 fn app() -> (Engine, Instant) {
     let at = Instant::now();
@@ -40,21 +41,49 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
         &rows,
         "Here is what a few developers committed lately:"
     ));
-    let authors: Vec<_> = rows
+    let suggestions: Vec<_> = rows
         .iter()
         .skip(1)
-        .filter(|row| row.contains(" ● "))
-        .map(|row| row.rsplit('@').next().unwrap())
+        .filter(|row| row.starts_with(" ● "))
+        .map(String::as_str)
         .collect();
     assert_eq!(
-        authors,
-        ["grace", "linus", "margaret"],
-        "one suggestion per author, newest first"
+        suggestions,
+        [
+            " ● Grace @grace  today's footgun: $name = 'devnull'; escape your output.",
+            " ● Linus @linus  first commit here. hello /dev/null.",
+            " ● Margaret @margaret  notes from rewriting our scheduler. 1. the queue was never the \
+             bottleneck. 2. the lock around t…",
+        ],
+        "one line per suggestion, the code block cut to its first line: {rows:#?}"
     );
-    assert!(
-        contains(&rows, "today's footgun: ```php $name = 'devnull';"),
-        "a suggestion body reads as one collapsed line: {rows:#?}"
+}
+
+#[test]
+fn a_suggestion_shows_its_code_in_code_style() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, |log| match log {
+        Log::Following => following_nobody(),
+        other => page(other),
+    });
+    let buffer = common::buffer(&mut engine, 120, 30, at);
+    let styled = |text: &str| {
+        let (y, row) = (0..30)
+            .map(|y| {
+                let row: String = (0..120).map(|x| buffer[(x, y)].symbol()).collect();
+                (y, row)
+            })
+            .find(|(_, row)| row.contains(text))
+            .unwrap_or_else(|| panic!("{text} is on screen"));
+        let x = row[..row.find(text).unwrap()].chars().count();
+        buffer[(u16::try_from(x).unwrap(), y)].bg
+    };
+    assert_eq!(
+        styled("$name"),
+        theme::MUTED,
+        "code sits on the code background"
     );
+    assert_ne!(styled("escape"), theme::MUTED, "prose does not");
 }
 
 #[test]
