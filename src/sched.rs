@@ -63,7 +63,10 @@ impl Scheduler {
         if self.in_flight(key) {
             return;
         }
-        self.now.retain(|queued| queued.key() != key);
+        if let Some(queued) = self.now.iter_mut().find(|queued| queued.key() == key) {
+            *queued = call;
+            return;
+        }
         self.later.retain(|queued| queued.key() != key);
         match priority {
             Priority::Now => self.now.push_back(call),

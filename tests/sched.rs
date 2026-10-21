@@ -68,6 +68,30 @@ fn a_queued_call_is_replaced_not_doubled() {
 }
 
 #[test]
+fn a_replaced_call_keeps_the_higher_priority() {
+    let now = Instant::now();
+    let mut sched = Scheduler::new(1);
+    sched.send(Call::Page(Log::Latest), Priority::Later);
+    sched.send(Call::Me, Priority::Now);
+    sched.send(Call::Me, Priority::Later);
+    assert_eq!(
+        calls(&sched.release(now)),
+        [&Call::Me],
+        "a poll cannot demote the user's call"
+    );
+
+    let mut sched = Scheduler::new(1);
+    sched.send(Call::Page(Log::Latest), Priority::Now);
+    sched.send(Call::Me, Priority::Later);
+    sched.send(Call::Me, Priority::Now);
+    assert_eq!(
+        calls(&sched.release(now)),
+        [&Call::Page(Log::Latest)],
+        "the promoted call joins the end of the queue"
+    );
+}
+
+#[test]
 fn a_hold_keeps_everything_until_it_passes() {
     let now = Instant::now();
     let mut sched = Scheduler::new(2);
