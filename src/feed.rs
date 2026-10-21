@@ -379,10 +379,11 @@ fn empty(out: &mut Writer, page: &LogPage) {
             ),
             Span::styled(format!(" @{}", author.username), theme::muted()),
         ]);
-        let first = commit.body.lines().next().unwrap_or_default();
+        // The web shows the body in one `truncate` line, where nowrap collapses newlines and runs of spaces.
+        let body = commit.body.split_whitespace().collect::<Vec<_>>().join(" ");
         lines.push(vec![
             Span::raw("  "),
-            Span::styled(truncate(first, out.width - RAIL_WIDTH), theme::muted()),
+            Span::styled(truncate(&body, out.width - RAIL_WIDTH), theme::muted()),
         ]);
     }
     out.lines.extend(lines.into_iter().map(Line::from));

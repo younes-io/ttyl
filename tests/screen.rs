@@ -65,9 +65,19 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
         &rows,
         "Here is what a few developers committed lately:"
     ));
+    let authors: Vec<_> = rows
+        .iter()
+        .filter(|row| row.contains(" ● "))
+        .map(|row| row.rsplit('@').next().unwrap())
+        .collect();
+    assert_eq!(
+        authors,
+        ["ada", "grace", "linus"],
+        "one suggestion per author, newest first"
+    );
     assert!(
-        contains(&rows, "@grace"),
-        "suggestions list their authors: {rows:#?}"
+        contains(&rows, "today's footgun: ```php $name = 'devnull';"),
+        "a suggestion body reads as one collapsed line: {rows:#?}"
     );
 }
 
