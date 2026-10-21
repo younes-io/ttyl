@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+base64ct = { version = "1.8.3", features = ["alloc"] }
 chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -3,10 +3,16 @@ use std::io;
 use chrono::Local;
 use devnull::app::App;
 use devnull::model::LogPage;
+use devnull::signin;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
 
 fn main() -> io::Result<()> {
+    if let [_, flag, url] = std::env::args().collect::<Vec<_>>().as_slice()
+        && flag == "--redirect"
+    {
+        return signin::forward(url);
+    }
     let page = |json: &str| LogPage::parse(json).expect("fixture parses");
     let mut app = App::new([
         page(include_str!("../fixtures/log-following.json")),
