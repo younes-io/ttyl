@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::time::Instant;
 
@@ -16,9 +17,10 @@ use crate::keys::{
     Scope,
 };
 use crate::log::{LOGS, LogScreen};
+use crate::model::Log;
 use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
-use crate::store::{Slot, Store};
+use crate::store::Store;
 use crate::theme;
 use crate::welcome::{self, Step, Wait};
 
@@ -67,6 +69,8 @@ pub struct Session {
     pub store: Store,
     pub log: LogScreen,
     help: bool,
+    /// Logs the user asked to refresh and has not heard back about, so a refresh folded into a call already in flight still gets its toast.
+    refreshing: HashSet<Log>,
 }
 
 impl Session {
@@ -243,6 +247,7 @@ impl Engine {
             (Phase::SignIn(step), Action::StartOver) => *step = Step::Ready(None),
             (Phase::Ready(session), Action::Refresh) => {
                 let log = session.log.active();
+                session.refreshing.insert(log);
                 self.timers.clear(Timer::Reload(log));
                 self.sched.send(Call::Page(log), Priority::Now);
             }
@@ -262,9 +267,7 @@ impl Engine {
             return;
         };
         let refreshed = match &reply {
-            Reply::Page(page) if matches!(session.store.slot(page.log), Slot::Loaded(_)) => {
-                Some(page.log)
-            }
+            Reply::Page(page) if session.refreshing.remove(&page.log) => Some(page.log),
             Reply::Page(_) | Reply::Account(_) => None,
         };
         session.store.apply(reply);
@@ -278,6 +281,7 @@ impl Engine {
             store: Store::new(account),
             log: LogScreen::default(),
             help: false,
+            refreshing: HashSet::new(),
         });
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
@@ -318,6 +322,7 @@ impl Engine {
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
                 if let Call::Page(log) = call {
+                    session.refreshing.remove(&log);
                     session.store.fail(log, error.to_string());
                     self.timers.set(Timer::Reload(log), now + RETRY);
                 }

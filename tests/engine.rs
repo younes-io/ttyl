@@ -499,6 +499,65 @@ fn refresh_toasts_then_the_hints_come_back() {
 }
 
 #[test]
+fn a_refresh_folded_into_a_call_in_flight_still_answers_the_user() {
+    let at = Instant::now();
+    let (mut engine, me) = fresh(at);
+    engine.update(Event::Reply(me, Ok(Reply::Account(account(3)))), at);
+    let effects = engine.pump(at);
+    let [
+        Effect::Run(following, Call::Page(Log::Following)),
+        Effect::Run(latest, Call::Page(Log::Latest)),
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    assert!(
+        press(&mut engine, "R", at).is_empty(),
+        "the page is already on its way"
+    );
+    engine.update(
+        Event::Reply(*following, Ok(Reply::Page(page(Log::Following)))),
+        at + secs(1),
+    );
+    let rows = screen(&mut engine, 80, 20, at + secs(1));
+    assert!(
+        rows[19].starts_with(" following refreshed"),
+        "{:?}",
+        rows[19]
+    );
+
+    engine.update(
+        Event::Reply(*latest, Ok(Reply::Page(page(Log::Latest)))),
+        at + secs(2),
+    );
+    let rows = screen(&mut engine, 80, 20, at + secs(2));
+    assert!(
+        rows[19].starts_with(" following refreshed"),
+        "a page nobody asked to refresh lands quietly: {:?}",
+        rows[19]
+    );
+
+    let (mut engine, me) = fresh(at);
+    engine.update(Event::Reply(me, Ok(Reply::Account(account(3)))), at);
+    let effects = engine.pump(at);
+    let [
+        Effect::Run(following, Call::Page(Log::Following)),
+        Effect::Run(_, _),
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    press(&mut engine, "R", at);
+    engine.update(Event::Reply(*following, Err(maintenance())), at + secs(1));
+    let rows = screen(&mut engine, 80, 20, at + secs(1));
+    assert!(
+        contains(&rows, "fatal: the site is in maintenance"),
+        "{rows:#?}"
+    );
+    assert!(!contains(&rows, "refreshed"), "{rows:#?}");
+}
+
+#[test]
 fn quit_works_in_every_phase() {
     let at = Instant::now();
     let (mut engine, _) = fresh(at);
