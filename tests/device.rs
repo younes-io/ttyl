@@ -1,0 +1,177 @@
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+use devnull::device::{DeviceKey, Nonce};
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Runs `ssh-keygen -Y verify` the way an SSHSIG verifier independent of this crate would check the request.
+fn openssh_accepts(
+    key: &DeviceKey,
+    signature: &str,
+    message: &str,
+    namespace: &str,
+    dir: &str,
+) -> bool {
+    let dir = scratch(dir);
+    fs::write(
+        dir.join("allowed"),
+        format!("devnull {}\n", key.public_key()),
+    )
+    .unwrap();
+    let body: Vec<&str> = signature
+        .as_bytes()
+        .chunks(70)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap())
+        .collect();
+    fs::write(
+        dir.join("sig"),
+        format!(
+            "-----BEGIN SSH SIGNATURE-----\n{}\n-----END SSH SIGNATURE-----\n",
+            body.join("\n")
+        ),
+    )
+    .unwrap();
+    let mut child = Command::new("ssh-keygen")
+        .args(["-Y", "verify", "-I", "devnull", "-n", namespace, "-f"])
+        .arg(dir.join("allowed"))
+        .arg("-s")
+        .arg(dir.join("sig"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("ssh-keygen is installed");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(message.as_bytes())
+        .unwrap();
+    child.wait().unwrap().success()
+}
+
+#[test]
+fn openssh_verifies_the_request_the_server_rebuilds() {
+    let key = DeviceKey::generate().unwrap();
+    let body = r#"{"code":"abc","code_verifier":"xyz"}"#;
+    let signed = key.sign(
+        "POST",
+        "/api/v1/devices?x=1",
+        body,
+        1_790_000_000,
+        Nonce::random(),
+    );
+    let message = format!(
+        "1790000000\n{}\nPOST\n/api/v1/devices?x=1\n{body}",
+        signed.nonce
+    );
+
+    assert!(openssh_accepts(
+        &key,
+        &signed.signature,
+        &message,
+        "devnull-api",
+        "verify-ok"
+    ));
+    assert!(!openssh_accepts(
+        &key,
+        &signed.signature,
+        &message.replace("abc", "abd"),
+        "devnull-api",
+        "verify-tampered"
+    ));
+    assert!(!openssh_accepts(
+        &key,
+        &signed.signature,
+        &message,
+        "file",
+        "verify-namespace"
+    ));
+}
+
+#[test]
+fn a_get_signs_an_empty_body() {
+    let key = DeviceKey::generate().unwrap();
+    let signed = key.sign("GET", "/api/v1/me", "", 1_790_000_000, Nonce::random());
+    let message = format!("1790000000\n{}\nGET\n/api/v1/me\n", signed.nonce);
+
+    assert!(openssh_accepts(
+        &key,
+        &signed.signature,
+        &message,
+        "devnull-api",
+        "verify-get"
+    ));
+}
+
+#[test]
+fn headers_are_single_line_values_the_server_accepts() {
+    let key = DeviceKey::generate().unwrap();
+    let signed = key.sign("GET", "/api/v1/me", "", 1_790_000_000, Nonce::random());
+    let headers = signed.headers();
+
+    assert_eq!(headers[0], ("X-Devnull-Timestamp", "1790000000"));
+    assert_eq!(headers[1].0, "X-Devnull-Nonce");
+    assert_eq!(headers[1].1.len(), 32);
+    assert!(
+        headers[1]
+            .1
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    assert_eq!(headers[2].0, "X-SSH-Signature");
+    assert!(!headers[2].1.contains(char::is_whitespace));
+}
+
+#[test]
+fn nonces_differ() {
+    assert_ne!(Nonce::random().to_string(), Nonce::random().to_string());
+}
+
+#[test]
+fn the_fingerprint_matches_openssh() {
+    let key = DeviceKey::generate().unwrap();
+    let dir = scratch("fingerprint");
+    fs::write(dir.join("key.pub"), key.public_key()).unwrap();
+    let output = Command::new("ssh-keygen")
+        .args(["-l", "-E", "sha256", "-f"])
+        .arg(dir.join("key.pub"))
+        .output()
+        .unwrap();
+    let listed = String::from_utf8(output.stdout).unwrap();
+    let fingerprint = key.fingerprint();
+
+    assert_eq!(listed.split_whitespace().nth(1), Some(fingerprint.as_str()));
+    let digest = fingerprint.strip_prefix("SHA256:").unwrap();
+    assert_eq!(digest.len(), 43);
+    assert!(
+        digest
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+    );
+}
+
+#[test]
+fn a_saved_key_is_private_and_loads_back() {
+    let key = DeviceKey::generate().unwrap();
+    let path = scratch("save").join("device_ed25519");
+    key.save(&path).unwrap();
+
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        DeviceKey::load(&path).unwrap().fingerprint(),
+        key.fingerprint()
+    );
+}
