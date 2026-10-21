@@ -53,12 +53,16 @@ struct Anchor {
     line: usize,
 }
 
-struct TopBar {
-    brand: bool,
-    handle: bool,
-    number: bool,
-    slugs: bool,
+/// What the top bar gives up, in order, when the row is too short.
+#[derive(Clone, Copy, PartialEq)]
+enum Cut {
+    Brand,
+    Handle,
+    Number,
+    Slugs,
 }
+
+const CUTS: [Cut; 4] = [Cut::Brand, Cut::Handle, Cut::Number, Cut::Slugs];
 
 impl Default for LogScreen {
     fn default() -> Self {
@@ -146,51 +150,14 @@ impl LogScreen {
         }
     }
 
-    /// One row: the brand and the tabs on the left, unread and the handle on the right.
-    /// When the row is short it drops the brand, then the handle, then the unread
-    /// number, and last shortens the tabs to their digits.
+    /// One row: the brand and the tabs on the left, unread and the handle on the right,
+    /// giving up `CUTS` in order until it fits.
     pub fn top_bar(&self, store: &Store, width: u16) -> Line<'static> {
-        let fits = [
-            TopBar {
-                brand: true,
-                handle: true,
-                number: true,
-                slugs: true,
-            },
-            TopBar {
-                brand: false,
-                handle: true,
-                number: true,
-                slugs: true,
-            },
-            TopBar {
-                brand: false,
-                handle: false,
-                number: true,
-                slugs: true,
-            },
-            TopBar {
-                brand: false,
-                handle: false,
-                number: false,
-                slugs: true,
-            },
-            TopBar {
-                brand: false,
-                handle: false,
-                number: false,
-                slugs: false,
-            },
-        ];
         let width = usize::from(width);
-        let mut lines = fits.iter().map(|fit| self.top_bar_as(fit, store));
-        let last = lines.len() - 1;
-        let (left, right) = lines
-            .by_ref()
-            .enumerate()
-            .find(|(at, (left, right))| *at == last || left.width() + 2 + right.width() <= width)
-            .map(|(_, line)| line)
-            .expect("the last fit is always taken");
+        let (left, right) = (0..CUTS.len())
+            .map(|cut| self.top_bar_as(&CUTS[..cut], store))
+            .find(|(left, right)| left.width() + 2 + right.width() <= width)
+            .unwrap_or_else(|| self.top_bar_as(&CUTS, store));
         let pad = width.saturating_sub(left.width() + right.width());
         let mut spans = left.spans;
         spans.push(Span::raw(" ".repeat(pad)));
@@ -198,17 +165,22 @@ impl LogScreen {
         Line::from(spans)
     }
 
-    fn top_bar_as(&self, fit: &TopBar, store: &Store) -> (Line<'static>, Line<'static>) {
+    fn top_bar_as(&self, cuts: &[Cut], store: &Store) -> (Line<'static>, Line<'static>) {
+        let kept = |cut| !cuts.contains(&cut);
         let mut left = Vec::new();
-        if fit.brand {
+        if kept(Cut::Brand) {
             left.push(Span::styled(
                 " /dev/null ",
                 Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
             ));
         }
         for (index, log) in LOGS.iter().enumerate() {
-            let gap = if index == 0 && !fit.brand { " " } else { "  " };
-            let label = if fit.slugs {
+            let gap = if index == 0 && !kept(Cut::Brand) {
+                " "
+            } else {
+                "  "
+            };
+            let label = if kept(Cut::Slugs) {
                 format!("{gap}{} {}", index + 1, log.slug())
             } else {
                 format!("{gap}{}", index + 1)
@@ -225,11 +197,11 @@ impl LogScreen {
         let mut right = Vec::new();
         if store.unread > 0 {
             right.push(Span::styled("● ", Style::new().fg(theme::PRIMARY)));
-            if fit.number {
+            if kept(Cut::Number) {
                 right.push(Span::styled(format!("{}  ", store.unread), theme::muted()));
             }
         }
-        if fit.handle {
+        if kept(Cut::Handle) {
             right.push(Span::styled(
                 format!("@{} ", store.me.username),
                 theme::muted(),
@@ -260,16 +232,15 @@ impl LogScreen {
                     minute: now.timestamp().div_euclid(60),
                 };
                 let place = &mut self.places[index(self.active)];
-                if place
-                    .laid_out
-                    .as_ref()
-                    .is_none_or(|laid_out| laid_out.inputs != inputs)
-                {
-                    let page = store.page(self.active).expect("a loaded slot has a page");
-                    let feed = feed::layout(&page, area.width, &self.expanded, now);
-                    place.laid_out = Some(LaidOut { inputs, feed });
-                }
-                let feed = &place.laid_out.as_ref().expect("laid out above").feed;
+                let laid_out = match place.laid_out.take() {
+                    Some(laid_out) if laid_out.inputs == inputs => laid_out,
+                    _ => {
+                        let page = store.page(self.active).expect("a loaded slot has a page");
+                        let feed = feed::layout(&page, area.width, &self.expanded, now);
+                        LaidOut { inputs, feed }
+                    }
+                };
+                let feed = &place.laid_out.insert(laid_out).feed;
                 let tail = retry.older.map(feed::older_failed);
                 let total = feed.lines.len() + tail.as_ref().map_or(0, |tail| tail.len());
                 place.selected = place.selected.min(listing.ids.len().saturating_sub(1));

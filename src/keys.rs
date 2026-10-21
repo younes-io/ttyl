@@ -304,20 +304,18 @@ pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) ->
 }
 
 /// Drops hints from the end until they fit `width`. `? help` is how a user finds every
-/// other key, so it goes last; `Q quit` goes just before it.
+/// other key, so it never goes; `Q quit` goes only when nothing else is left.
 pub fn fit(hints: &str, width: usize) -> String {
-    let rank = |hint: &&str| match *hint {
-        hint if hint.starts_with("? ") => 2,
-        "Q quit" => 1,
-        _ => 0,
-    };
     let mut hints: Vec<&str> = hints.split("  ").collect();
-    while hints.len() > 1 && hints.join("  ").width() > width {
-        let lowest = hints.iter().map(rank).min().expect("at least two hints");
-        let at = hints
+    while hints.join("  ").width() > width {
+        let ordinary = |hint: &&str| !hint.starts_with("? ") && *hint != "Q quit";
+        let Some(at) = hints
             .iter()
-            .rposition(|hint| rank(hint) == lowest)
-            .expect("the lowest rank is held by a hint");
+            .rposition(ordinary)
+            .or_else(|| hints.iter().rposition(|hint| *hint == "Q quit"))
+        else {
+            break;
+        };
         hints.remove(at);
     }
     hints.join("  ")
