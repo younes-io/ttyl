@@ -20,6 +20,14 @@ pub enum Action {
     Close,
     SignIn,
     StartOver,
+    Commit(Act),
+}
+
+/// What the user does to the selected commit, the same on the log and in a thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    Star,
+    Follow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,14 +39,27 @@ pub enum Scope {
     Log,
     Thread,
     List,
+    Commit,
     Global,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
 pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
-pub const LOG_SCOPES: &[Scope] = &[Scope::List, Scope::Log, Scope::Global, Scope::Always];
-pub const THREAD_SCOPES: &[Scope] = &[Scope::List, Scope::Thread, Scope::Global, Scope::Always];
+pub const LOG_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Log,
+    Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
+pub const THREAD_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Thread,
+    Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -156,21 +177,21 @@ pub const TABLE: &[Binding] = &[
         scope: Scope::Log,
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
-        hint: Some("enter/o open"),
+        hint: Some("enter open"),
         help: "open the thread",
     },
     Binding {
         scope: Scope::Log,
         chords: &[&[Key::ch(' ')]],
         action: Action::Expand,
-        hint: Some("space expand"),
+        hint: None,
         help: "expand the selected commit",
     },
     Binding {
         scope: Scope::Log,
         chords: &[&[Key::ch('1')]],
         action: Action::Show(Log::Following),
-        hint: Some("1-3 log"),
+        hint: None,
         help: "following",
     },
     Binding {
@@ -198,7 +219,7 @@ pub const TABLE: &[Binding] = &[
         scope: Scope::Log,
         chords: &[&[Key::ch('R')]],
         action: Action::Refresh,
-        hint: Some("R refresh"),
+        hint: None,
         help: "refresh this log",
     },
     Binding {
@@ -249,6 +270,20 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: None,
         help: "reload this thread",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('s')]],
+        action: Action::Commit(Act::Star),
+        hint: Some("s star"),
+        help: "star or unstar",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('f')]],
+        action: Action::Commit(Act::Follow),
+        hint: None,
+        help: "follow or unfollow the author",
     },
     Binding {
         scope: Scope::Global,

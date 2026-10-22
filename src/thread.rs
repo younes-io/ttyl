@@ -199,9 +199,12 @@ impl ThreadScreen {
                         .row(&self.selected)
                         .is_some_and(|row| row.commit.preview_segments.is_some())
             }
-            Action::Quit | Action::Help | Action::Close | Action::SignIn | Action::StartOver => {
-                false
-            }
+            Action::Quit
+            | Action::Help
+            | Action::Close
+            | Action::SignIn
+            | Action::StartOver
+            | Action::Commit(_) => false,
         }
     }
 

@@ -1,6 +1,6 @@
 use devnull::keys::{
-    Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, Scope, TABLE, UNIONS,
-    help, hints,
+    Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, Scope, TABLE,
+    UNIONS, help, hints,
 };
 use devnull::model::Log;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -94,25 +94,25 @@ fn g_then_g_goes_to_the_top_and_g_then_another_key_cancels() {
 
 #[test]
 fn a_binding_the_screen_cannot_do_is_not_dispatched_listed_or_hinted() {
-    let no_refresh = |action: Action| action != Action::Refresh;
+    let no_star = |action: Action| action != Action::Commit(Act::Star);
     let mut keymap = Keymap::default();
     assert_eq!(
         keymap.resolve(
-            key(KeyCode::Char('R')),
+            key(KeyCode::Char('s')),
             InputMode::Commands,
             LOG_SCOPES,
-            &no_refresh
+            &no_star
         ),
         Resolve::Ignored
     );
-    assert!(!hints(LOG_SCOPES, &[], &no_refresh).contains("R refresh"));
-    assert!(hints(LOG_SCOPES, &[], &all).contains("R refresh"));
-    let listed: Vec<&str> = help(LOG_SCOPES, &no_refresh)
+    assert!(!hints(LOG_SCOPES, &[], &no_star).contains("s star"));
+    assert!(hints(LOG_SCOPES, &[], &all).contains("s star"));
+    let listed: Vec<&str> = help(LOG_SCOPES, &no_star)
         .into_iter()
         .map(|(_, what)| what)
         .collect();
-    assert!(!listed.contains(&"refresh this log"));
-    assert!(listed.contains(&"following"));
+    assert!(!listed.contains(&"star or unstar"));
+    assert!(listed.contains(&"follow or unfollow the author"));
 }
 
 #[test]

@@ -129,7 +129,8 @@ fn enter_open_is_offered_only_on_a_commit_it_would_open() {
     press(&mut engine, "j", at);
     assert_eq!(
         hint(&mut engine),
-        " esc back  j/k move  enter open  ? help  Q quit"
+        " esc back  j/k move  enter open  s star  ? help  Q quit",
+        "a reply by someone else can be starred, the focused own commit cannot"
     );
 }
 

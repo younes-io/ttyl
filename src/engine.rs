@@ -14,14 +14,14 @@ use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::fatal;
 use crate::keys::{
-    self, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, SPLASH_SCOPES,
-    Scope, THREAD_SCOPES,
+    self, Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve,
+    SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log};
 use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
-use crate::store::{Slot, Store};
+use crate::store::{Node, Slot, Store};
 use crate::theme;
 use crate::thread::ThreadScreen;
 use crate::welcome::{self, Step, Wait};
@@ -73,10 +73,31 @@ impl Session {
     }
 
     fn screen_allows(&self, action: Action) -> bool {
+        if let Action::Commit(act) = action {
+            return self.allows(act);
+        }
         matches!(action, Action::Quit | Action::Help)
             || match self.threads.last() {
                 Some(thread) => thread.can(action, &self.store),
                 None => self.log.can(action, &self.store),
+            }
+    }
+
+    fn selected(&self) -> Option<&CommitId> {
+        match self.threads.last() {
+            Some(thread) => Some(thread.selected()),
+            None => self.log.selected_id(self.log.active(), &self.store),
+        }
+    }
+
+    fn allows(&self, act: Act) -> bool {
+        let Some(Node::Live(row)) = self.selected().and_then(|id| self.store.node(id)) else {
+            return false;
+        };
+        let own = row.commit.author.username == self.store.me.username;
+        row.deletion.is_none()
+            && match act {
+                Act::Star | Act::Follow => !own,
             }
     }
 
@@ -123,6 +144,11 @@ fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
     timers.clear(&Timer::More(id.clone()));
     sched.send(Call::Commit(id.clone()), Priority::Now);
     sched.send(Call::Replies { id, cursor: None }, Priority::Now);
+}
+
+fn followed(username: &str, on: bool) -> String {
+    let done = if on { "following" } else { "unfollowed" };
+    format!("{done} @{username} · f to undo")
 }
 
 fn can(phase: &Phase, health: Option<&Failure>, action: Action) -> bool {
@@ -400,6 +426,7 @@ impl Engine {
                     self.sched.send(call, priority);
                 }
             }
+            (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
             (Phase::Ready(session), action) if !session.threads.is_empty() => {
                 if let Some(id) = session.on_thread(action, now) {
                     fetch_thread(&mut self.sched, &mut self.timers, id);
@@ -428,6 +455,33 @@ impl Engine {
         Vec::new()
     }
 
+    fn on_commit(&mut self, act: Act, now: Instant) -> Vec<Effect> {
+        let Phase::Ready(session) = &mut self.phase else {
+            return Vec::new();
+        };
+        let Some(id) = session.selected().cloned() else {
+            return Vec::new();
+        };
+        let Some(Node::Live(row)) = session.store.node(&id) else {
+            return Vec::new();
+        };
+        let author = row.commit.author.username.clone();
+        let toast = match act {
+            Act::Star => {
+                session.store.star(&id);
+                None
+            }
+            Act::Follow => session
+                .store
+                .follow(&author)
+                .map(|on| followed(&author, on)),
+        };
+        if let Some(text) = toast {
+            self.toast(text, now);
+        }
+        Vec::new()
+    }
+
     fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) {
         let Phase::Ready(session) = &mut self.phase else {
             if let Reply::Account(account) = reply {
@@ -445,7 +499,19 @@ impl Engine {
             _ => {}
         }
         let Call::Page(log) = call else {
+            let answered = match (call, &reply) {
+                (Call::User(username), Reply::User { is_following }) => {
+                    Some((username, *is_following))
+                }
+                _ => None,
+            };
             session.store.apply(call, reply);
+            if let Some((username, server)) = answered
+                && let Some(want) = session.store.following(username)
+                && want != server
+            {
+                self.toast(followed(username, want), now);
+            }
             return;
         };
         let refreshed = session.asked_to_refresh.remove(log);

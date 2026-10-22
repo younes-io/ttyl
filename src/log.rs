@@ -129,7 +129,8 @@ impl LogScreen {
             | Action::Help
             | Action::Close
             | Action::SignIn
-            | Action::StartOver => false,
+            | Action::StartOver
+            | Action::Commit(_) => false,
         }
     }
 

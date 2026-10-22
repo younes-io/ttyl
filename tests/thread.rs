@@ -47,7 +47,7 @@ fn the_thread_hint_keeps_back_and_help_when_narrow() {
     let effects = tap(&mut engine, KeyCode::Enter, at);
     answer(&mut engine, effects, at);
     let rows = screen(&mut engine, 100, 24, at);
-    assert_eq!(rows[23], " esc back  j/k move  ? help  Q quit");
+    assert_eq!(rows[23], " esc back  j/k move  s star  ? help  Q quit");
     let rows = screen(&mut engine, 30, 24, at);
     assert_eq!(rows[23], " esc back  ? help  Q quit", "{rows:#?}");
     let rows = screen(&mut engine, 12, 24, at);

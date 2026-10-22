@@ -452,15 +452,12 @@ fn the_top_bar_never_overlaps_and_drops_the_brand_then_the_handle_then_the_count
 #[test]
 fn a_narrow_hint_line_keeps_help_and_drops_the_other_hints_from_the_end() {
     let mut app = app();
-    press(&mut app, "2");
-    let wide = screen(&mut app, 120, 20)[19].clone();
-    assert_eq!(
-        wide,
-        " j/k move  enter/o open  1-3 log  R refresh  ? help  Q quit"
-    );
+    press(&mut app, "2jj");
+    let wide = screen(&mut app, 100, 20)[19].clone();
+    assert_eq!(wide, " j/k move  enter open  s star  ? help  Q quit");
     let rows = screen(&mut app, 44, 20);
     assert_eq!(
-        rows[19], " j/k move  enter/o open  ? help  Q quit",
+        rows[19], " j/k move  enter open  ? help  Q quit",
         "{rows:#?}"
     );
     let rows = screen(&mut app, 30, 20);

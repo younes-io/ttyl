@@ -586,7 +586,10 @@ impl Store {
     pub fn node(&self, id: &CommitId) -> Option<Node<'_>> {
         match self.gone.get(id) {
             Some(tombstone) => Some(Node::Gone(tombstone)),
-            None => self.rows.get(id).map(|row| Node::Live(Box::new(self.shown(row)))),
+            None => self
+                .rows
+                .get(id)
+                .map(|row| Node::Live(Box::new(self.shown(row)))),
         }
     }
 
