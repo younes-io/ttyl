@@ -255,12 +255,17 @@ impl Session {
         call
     }
 
-    fn prompt(&self) -> Option<String> {
+    fn prompt(&self, room: usize) -> Option<String> {
         match &self.overlay {
-            Some(Overlay::Delete(id)) => Some(format!(
-                "delete {}? this can't be undone [y/N]",
-                id.short_hash()
-            )),
+            Some(Overlay::Delete(id)) => {
+                let short = id.short_hash();
+                let warned = format!("delete {short}? this can't be undone [y/N]");
+                Some(if warned.len() <= room {
+                    warned
+                } else {
+                    format!("delete {short}? [y/N]")
+                })
+            }
             Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Details { .. }) | None => None,
         }
     }
@@ -926,7 +931,7 @@ impl Engine {
                     .and_then(|(failure, wait)| {
                         fatal::hint(failure, wait, room.saturating_sub(help.len()))
                     });
-                let hint = match (session.prompt(), error) {
+                let hint = match (session.prompt(room), error) {
                     (Some(prompt), _) => Line::styled(
                         format!("{HINT_INDENT}{prompt}"),
                         Style::new().fg(theme::DESTRUCTIVE),

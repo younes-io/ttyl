@@ -561,12 +561,12 @@ fn a_refused_delete_puts_the_row_back_and_says_why() {
 }
 
 #[test]
-fn the_delete_prompt_fits_a_narrow_terminal() {
+fn the_delete_prompt_leaves_the_spinner_room_on_a_narrow_terminal() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "D", at);
     let rows = screen(&mut engine, 44, 30, at);
-    assert_eq!(rows[29].trim_end(), PROMPT, "{rows:#?}");
+    assert_eq!(rows[29].trim_end(), " delete e4f5a61? [y/N]", "{rows:#?}");
     let buffer = buffer(&mut engine, 44, 30, at);
     assert_eq!(buffer[(1, 29)].fg, theme::DESTRUCTIVE);
 }
