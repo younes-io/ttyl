@@ -23,7 +23,7 @@ use crate::keys::{
     HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, REPORT_SCOPES,
     RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
-use crate::log::{LOGS, LogScreen, Retry};
+use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
     self, Commit, CommitId, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
 };
@@ -1457,7 +1457,26 @@ impl Engine {
                     ]),
                     (None, None) => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
+                let beside_feed = session
+                    .stack
+                    .iter()
+                    .all(|screen| matches!(screen, Screen::Thread(_)))
+                    && session.log.has_pane(inset(body).width, &session.store);
                 match session.stack.last_mut() {
+                    Some(Screen::Thread(thread)) if beside_feed => {
+                        let pane = session.log.draw(
+                            frame,
+                            inset(body),
+                            &session.store,
+                            &self.timers,
+                            now,
+                            wall,
+                        );
+                        if let Some(pane) = pane {
+                            let inner = log::draw_pane(frame, pane, true);
+                            thread.draw(frame, inner, &session.store, &self.timers, now, wall);
+                        }
+                    }
                     Some(Screen::Thread(thread)) => {
                         thread.draw(frame, inset(body), &session.store, &self.timers, now, wall)
                     }
@@ -1469,14 +1488,26 @@ impl Engine {
                         session.inbox.draw(frame, inset(body), retry, now, wall);
                     }
                     Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
-                    None => session.log.draw(
-                        frame,
-                        inset(body),
-                        &session.store,
-                        &self.timers,
-                        now,
-                        wall,
-                    ),
+                    None => {
+                        let pane = session.log.draw(
+                            frame,
+                            inset(body),
+                            &session.store,
+                            &self.timers,
+                            now,
+                            wall,
+                        );
+                        if let Some(pane) = pane {
+                            session.log.draw_peek(
+                                frame,
+                                pane,
+                                &session.store,
+                                &self.timers,
+                                now,
+                                wall,
+                            );
+                        }
+                    }
                 }
                 if let Some(composer) = &mut session.composer {
                     composer.draw(frame, panel, sending);

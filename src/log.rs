@@ -281,6 +281,12 @@ impl LogScreen {
         (Line::from(left), Line::from(right))
     }
 
+    /// Whether a feed this wide shows the selected commit's thread beside it.
+    pub fn has_pane(&self, width: u16, store: &Store) -> bool {
+        width >= WIDE && !self.ids(store).is_empty()
+    }
+
+    /// Returns the area beside the feed left for a thread, on a wide terminal.
     pub fn draw<Tz: TimeZone>(
         &mut self,
         frame: &mut Frame,
@@ -289,19 +295,25 @@ impl LogScreen {
         timers: &Timers,
         at: Instant,
         now: &DateTime<Tz>,
-    ) {
+    ) -> Option<Rect> {
         let retry = Retry {
             page: timers.remaining(&Timer::Reload(self.active), at),
             older: timers.remaining(&Timer::Older(self.active), at),
         };
         match store.slot(self.active) {
-            Slot::Loading => frame.render_widget(Line::styled("Loading…", theme::muted()), area),
-            Slot::Failed(failure) => frame.render_widget(
-                Paragraph::new(fatal::screen(failure, retry.page)).wrap(Wrap { trim: false }),
-                area,
-            ),
+            Slot::Loading => {
+                frame.render_widget(Line::styled("Loading…", theme::muted()), area);
+                None
+            }
+            Slot::Failed(failure) => {
+                frame.render_widget(
+                    Paragraph::new(fatal::screen(failure, retry.page)).wrap(Wrap { trim: false }),
+                    area,
+                );
+                None
+            }
             Slot::Loaded(listing) => {
-                let wide = area.width >= WIDE && !listing.ids.is_empty();
+                let wide = self.has_pane(area.width, store);
                 let (area, pane) = if wide {
                     let feed = area.width * 3 / 5;
                     let [feed, pane] =
@@ -362,24 +374,45 @@ impl LogScreen {
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
                 frame.render_widget(Paragraph::new(lines), area);
-                let (Some(pane), Some(id)) = (pane, id) else {
+                if pane.is_none() {
                     self.peek = None;
-                    return;
-                };
-                let block = Block::new()
-                    .borders(Borders::LEFT)
-                    .border_style(Style::new().fg(theme::RAIL))
-                    .padding(Padding::horizontal(1));
-                let inner = block.inner(pane);
-                frame.render_widget(block, pane);
-                let peek = match self.peek.take() {
-                    Some(peek) if *peek.focus() == id => peek,
-                    _ => ThreadScreen::new(id, at),
-                };
-                self.peek
-                    .insert(peek)
-                    .draw(frame, inner, store, timers, at, now);
+                }
+                pane
             }
         }
     }
+
+    pub fn draw_peek<Tz: TimeZone>(
+        &mut self,
+        frame: &mut Frame,
+        pane: Rect,
+        store: &Store,
+        timers: &Timers,
+        at: Instant,
+        now: &DateTime<Tz>,
+    ) {
+        let Some(id) = self.selected_id(self.active, store).cloned() else {
+            return;
+        };
+        let inner = draw_pane(frame, pane, false);
+        let peek = match self.peek.take() {
+            Some(peek) if *peek.focus() == id => peek,
+            _ => ThreadScreen::new(id, at),
+        };
+        self.peek
+            .insert(peek)
+            .draw(frame, inner, store, timers, at, now);
+    }
+}
+
+/// The pane's rail lights up while the keys go to its thread.
+pub fn draw_pane(frame: &mut Frame, pane: Rect, focused: bool) -> Rect {
+    let rail = if focused { theme::PRIMARY } else { theme::RAIL };
+    let block = Block::new()
+        .borders(Borders::LEFT)
+        .border_style(Style::new().fg(rail))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(pane);
+    frame.render_widget(block, pane);
+    inner
 }
