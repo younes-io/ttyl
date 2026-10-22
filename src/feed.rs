@@ -41,6 +41,10 @@ impl Feed {
         let Some(entry) = selected.and_then(|at| self.entries.get(at)) else {
             return lines;
         };
+        for at in entry.lines.clone().filter(|at| window.contains(at)) {
+            let line = &mut lines[at - window.start];
+            line.style = line.style.bg(theme::SELECTED);
+        }
         if entry.header + 1 == entry.lines.end {
             if window.contains(&entry.header) {
                 for span in &mut lines[entry.header - window.start].spans {
@@ -257,7 +261,7 @@ fn row_lines<Tz: TimeZone>(
         lines.push(fit(
             vec![
                 Span::styled("⇗ ", theme::muted()),
-                Span::styled(title.clone(), Style::new().fg(theme::FOREGROUND)),
+                Span::styled(title.clone(), Style::new().fg(theme::PRIMARY)),
                 Span::styled(format!(" · {}", domain(&preview.url)), theme::muted()),
             ],
             width,
@@ -279,14 +283,15 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
     }
     let mut spans = Vec::new();
     if row.replies_count > 0 {
+        spans.push(Span::styled(" · ", theme::muted()));
         spans.push(Span::styled(
-            format!(" · ↩ {}", row.replies_count),
-            theme::muted(),
+            format!("↩ {}", row.replies_count),
+            Style::new().fg(theme::PRIMARY),
         ));
     }
     if row.stars_count > 0 || row.starred {
         let star = if row.starred {
-            Style::new().fg(theme::AMBER)
+            Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD)
         } else {
             theme::muted()
         };
@@ -596,7 +601,7 @@ fn one_liner(
         Span::styled(
             author.name.clone(),
             Style::new()
-                .fg(theme::FOREGROUND)
+                .fg(theme::lane(author.lane))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!(" @{}{meta}  ", author.username), theme::muted()),
@@ -663,7 +668,7 @@ fn header_with<Tz: TimeZone>(
 ) -> Vec<Span<'static>> {
     let author = &commit.author;
     let bold = Style::new()
-        .fg(theme::FOREGROUND)
+        .fg(theme::lane(author.lane))
         .add_modifier(Modifier::BOLD);
     let mut spans = vec![
         Span::styled(author.name.clone(), bold),
@@ -687,7 +692,10 @@ fn header_with<Tz: TimeZone>(
     let hash = commit.short_hash.width();
     if used + 1 + hash <= width {
         spans.push(Span::raw(" ".repeat(width - used - hash)));
-        spans.push(Span::styled(commit.short_hash.clone(), theme::muted()));
+        spans.push(Span::styled(
+            commit.short_hash.clone(),
+            Style::new().fg(theme::FAINT),
+        ));
         return spans;
     }
     fit(spans, width)
@@ -738,8 +746,13 @@ pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>
                     if index > 0 {
                         wrap(&mem::take(&mut paragraph), width, &mut lines);
                     }
-                    if !piece.is_empty() {
-                        paragraph.push((piece.replace('\t', TAB), text));
+                    for run in runs(&piece.replace('\t', TAB)) {
+                        let style = if is_reference(run) {
+                            Style::new().fg(theme::PRIMARY)
+                        } else {
+                            text
+                        };
+                        paragraph.push((run.to_owned(), style));
                     }
                 }
             }
@@ -789,6 +802,14 @@ pub(crate) fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Ve
         }
     }
     out.push(line);
+}
+
+/// A mention or a link, which the web draws as a link.
+fn is_reference(run: &str) -> bool {
+    let mention = run
+        .strip_prefix('@')
+        .is_some_and(|name| name.starts_with(|ch: char| ch.is_alphanumeric()));
+    mention || run.starts_with("https://") || run.starts_with("http://")
 }
 
 fn runs(text: &str) -> impl Iterator<Item = &str> {
