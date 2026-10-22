@@ -28,6 +28,8 @@ pub enum Action {
 pub enum Act {
     Star,
     Follow,
+    Copy,
+    Browse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +286,20 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Follow),
         hint: None,
         help: "follow or unfollow the author",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('y')]],
+        action: Action::Commit(Act::Copy),
+        hint: None,
+        help: "copy the link",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('O')]],
+        action: Action::Commit(Act::Browse),
+        hint: None,
+        help: "open in the browser",
     },
     Binding {
         scope: Scope::Global,

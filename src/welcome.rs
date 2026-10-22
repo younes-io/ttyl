@@ -1,6 +1,5 @@
 use std::fs;
 use std::io;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -14,6 +13,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::api::Client;
+use crate::desktop;
 use crate::engine::Event;
 use crate::signin::{Attempt, Handler, Inbox};
 use crate::theme;
@@ -62,15 +62,7 @@ pub fn start(client: &Client, device_name: &str, events: Sender<Event>) -> io::R
     let attempt = Attempt::random();
     let url = attempt.authorize_url(client.base(), &client.key().fingerprint(), device_name);
     // The link stays on screen, so a desktop without a browser to open still lets the user finish by hand.
-    if let Ok(mut browser) = Command::new("xdg-open")
-        .arg(&url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        thread::spawn(move || browser.wait());
-    }
+    desktop::open(&url);
     let stop = Arc::new(AtomicBool::new(false));
     let thread = {
         let stop = Arc::clone(&stop);

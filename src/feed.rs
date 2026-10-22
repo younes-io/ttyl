@@ -276,7 +276,7 @@ fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
         parts.push("a poll".to_owned());
     }
     if !parts.is_empty() {
-        let note = format!("[{} on the web]", parts.join(" and "));
+        let note = format!("[{} · O to open in the browser]", parts.join(" and "));
         wrap(&[(note, theme::muted())], width, out);
     }
 }

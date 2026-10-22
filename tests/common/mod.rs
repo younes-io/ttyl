@@ -215,7 +215,11 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
         .iter()
         .filter_map(|effect| match effect {
             Effect::Run(_, call) => Some(call),
-            Effect::StartSignIn | Effect::Quit | Effect::Abort(_) => None,
+            Effect::StartSignIn
+            | Effect::Quit
+            | Effect::Abort(_)
+            | Effect::Copy(_)
+            | Effect::Open(_) => None,
         })
         .collect()
 }

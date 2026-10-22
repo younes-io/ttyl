@@ -12,7 +12,7 @@ use devnull::api::{self, Call, Client};
 use devnull::device::{self, DeviceKey};
 use devnull::engine::{Effect, Engine, Event, WORKERS};
 use devnull::sched::Ticket;
-use devnull::{signin, welcome};
+use devnull::{desktop, signin, welcome};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self as input, Event as Input};
 
@@ -116,6 +116,8 @@ impl Runtime {
                 Effect::Abort(message) => {
                     return ControlFlow::Break(Err(io::Error::other(message)));
                 }
+                Effect::Copy(text) => desktop::copy(&text),
+                Effect::Open(url) => desktop::open(&url),
             }
         }
         ControlFlow::Continue(())

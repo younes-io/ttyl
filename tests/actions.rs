@@ -314,3 +314,34 @@ fn a_star_in_a_thread_is_the_same_star_on_the_log() {
         ("28".to_owned(), true)
     );
 }
+
+const GRACE_URL: &str = "https://dev-null.sh/@grace/commits/2c3d4e5f-0000-4000-8000-000000000201";
+
+#[test]
+fn y_copies_the_link_and_o_opens_it_on_any_commit() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    let effects = press(&mut engine, "y", at);
+    assert_eq!(effects, [Effect::Copy(GRACE_URL.to_owned())]);
+    assert_eq!(footer(&mut engine, at), format!(" copied {GRACE_URL}"));
+    let effects = press(&mut engine, "O", at);
+    assert_eq!(effects, [Effect::Open(GRACE_URL.to_owned())]);
+    assert_eq!(footer(&mut engine, at), " opened in the browser");
+
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, effects, at);
+    assert_eq!(
+        press(&mut engine, "y", at),
+        [Effect::Copy(GRACE_URL.to_owned())]
+    );
+
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "y", at);
+    let [Effect::Copy(own)] = effects.as_slice() else {
+        panic!("your own commit's link can be copied too");
+    };
+    assert!(
+        own.starts_with("https://dev-null.sh/@ada/commits/"),
+        "{own}"
+    );
+}

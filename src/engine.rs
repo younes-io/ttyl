@@ -47,6 +47,8 @@ pub enum Effect {
     StartSignIn,
     Quit,
     Abort(String),
+    Copy(String),
+    Open(String),
 }
 
 pub enum Phase {
@@ -98,6 +100,7 @@ impl Session {
         row.deletion.is_none()
             && match act {
                 Act::Star | Act::Follow => !own,
+                Act::Copy | Act::Browse => true,
             }
     }
 
@@ -466,20 +469,29 @@ impl Engine {
             return Vec::new();
         };
         let author = row.commit.author.username.clone();
-        let toast = match act {
+        let url = row.commit.html_url.clone();
+        let (toast, effects) = match act {
             Act::Star => {
                 session.store.star(&id);
-                None
+                (None, Vec::new())
             }
-            Act::Follow => session
-                .store
-                .follow(&author)
-                .map(|on| followed(&author, on)),
+            Act::Follow => (
+                session
+                    .store
+                    .follow(&author)
+                    .map(|on| followed(&author, on)),
+                Vec::new(),
+            ),
+            Act::Copy => (Some(format!("copied {url}")), vec![Effect::Copy(url)]),
+            Act::Browse => (
+                Some("opened in the browser".to_owned()),
+                vec![Effect::Open(url)],
+            ),
         };
         if let Some(text) = toast {
             self.toast(text, now);
         }
-        Vec::new()
+        effects
     }
 
     fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) {

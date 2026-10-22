@@ -311,14 +311,20 @@ fn link_previews_images_and_polls_each_take_one_line() {
         ),
         "{rows:#?}"
     );
-    assert!(contains(
-        &commit_rows(&rows, "0000701"),
-        "│ [2 images on the web]"
-    ));
-    assert!(contains(
-        &commit_rows(&rows, "0000801"),
-        "│ [a poll on the web]"
-    ));
+    for width in [100, 44] {
+        let rows = screen(&mut app, width, 120);
+        assert!(
+            contains(
+                &commit_rows(&rows, "0000701"),
+                "│ [2 images · O to open in the browser]"
+            ),
+            "{rows:#?}"
+        );
+        assert!(contains(
+            &commit_rows(&rows, "0000801"),
+            "│ [a poll · O to open in the browser]"
+        ));
+    }
 }
 
 #[test]
