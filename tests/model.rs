@@ -1,5 +1,6 @@
 use devnull::model::{
-    CommitPage, Lane, Log, LogPage, RepliesPage, Row, Segment, Shown, Status, Suggestion,
+    CommitPage, Filter, GroupPage, Kind, Lane, Log, LogPage, NotificationPage, RepliesPage, Row,
+    Segment, Shown, Status, Suggestion,
 };
 
 fn page(log: &str) -> LogPage {
@@ -291,4 +292,53 @@ fn a_replies_page_with_more_carries_the_cursor_from_meta() {
     let page = RepliesPage::parse(&fixture("replies-paged")).expect("fixture parses");
     assert_eq!(page.replies.len(), 3);
     assert!(page.next_cursor.is_some_and(|cursor| !cursor.is_empty()));
+}
+
+#[test]
+fn a_notifications_page_reads_each_group_and_the_moment_it_marked_them_read() {
+    let page = NotificationPage::parse(&fixture("notifications"), Filter::All).expect("parses");
+    assert_eq!(page.filter, Filter::All);
+    assert_eq!(page.read_at.to_rfc3339(), "2026-10-21T09:00:00+00:00");
+    assert_eq!(page.next_cursor.as_deref(), Some("bm90aWZpY2F0aW9ucy0y"));
+    let kinds: Vec<Kind> = page.groups.iter().map(|group| group.event.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            Kind::Replied,
+            Kind::Starred,
+            Kind::Followed,
+            Kind::Quoted,
+            Kind::Mentioned,
+            Kind::Starred,
+            Kind::Approved,
+            Kind::Rejected,
+            Kind::LeveledUp,
+        ]
+    );
+
+    let stars = &page.groups[1];
+    assert_eq!((stars.event_count, stars.actors_count), (5, 5));
+    assert_eq!(stars.event.actor.name, "Grace");
+    assert!(
+        matches!(&stars.event.commit, Some(Shown::Live(commit)) if commit.short_hash == "e4f5a61")
+    );
+    assert_eq!(stars.event.read_at, Some(page.read_at));
+    assert_eq!(page.groups[0].event.read_at, None);
+
+    let rejected = &page.groups[7].event;
+    assert_eq!(rejected.reason.as_deref(), Some("Links to a paid course."));
+    assert!(page.groups[8].event.commit.is_none());
+}
+
+#[test]
+fn a_group_page_lists_its_events_without_counts() {
+    let page = GroupPage::parse(&fixture("notifications-group")).expect("parses");
+    let names: Vec<&str> = page
+        .events
+        .iter()
+        .map(|event| event.actor.name.as_str())
+        .collect();
+    assert_eq!(names, ["Grace", "Ken", "Linus", "Margaret", "Ada"]);
+    assert!(page.events.iter().all(|event| event.kind == Kind::Starred));
+    assert_eq!(page.next_cursor, None);
 }

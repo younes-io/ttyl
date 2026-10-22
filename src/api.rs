@@ -11,7 +11,10 @@ use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
 use crate::draft::Target;
-use crate::model::{CommitId, CommitPage, Focus, Log, LogPage, Reason, RepliesPage};
+use crate::model::{
+    CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId, NotificationPage,
+    Reason, RepliesPage,
+};
 
 pub const BASE: &str = "https://dev-null.sh";
 
@@ -81,6 +84,15 @@ pub enum Call {
         target: Target,
         body: String,
     },
+    Notifications {
+        filter: Filter,
+        cursor: Option<String>,
+    },
+    Group {
+        id: NotificationId,
+        filter: Filter,
+        cursor: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -92,6 +104,8 @@ pub enum Reply {
     Commit(Box<Focus>),
     Pastel { commit: Box<Focus>, remaining: u32 },
     User { is_following: bool },
+    Notifications(NotificationPage),
+    Group(GroupPage),
     Done,
 }
 
@@ -257,6 +271,12 @@ impl Client {
             Call::Post { target, body } => self
                 .post(target, body)
                 .map(|focus| Reply::Commit(Box::new(focus))),
+            Call::Notifications { filter, cursor } => self
+                .notifications(*filter, cursor.as_deref())
+                .map(Reply::Notifications),
+            Call::Group { id, filter, cursor } => {
+                self.group(id, *filter, cursor.as_deref()).map(Reply::Group)
+            }
         }
     }
 
@@ -351,6 +371,37 @@ impl Client {
         }
         let (status, text) = self.send("GET", &path, String::new())?;
         RepliesPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn notifications(
+        &self,
+        filter: Filter,
+        cursor: Option<&str>,
+    ) -> Result<NotificationPage, Error> {
+        let mut path = format!("/api/v1/notifications?type={}", filter.slug());
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("&cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        NotificationPage::parse(&text, filter).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn group(
+        &self,
+        id: &NotificationId,
+        filter: Filter,
+        cursor: Option<&str>,
+    ) -> Result<GroupPage, Error> {
+        let mut path = format!(
+            "/api/v1/notifications/{}/group?type={}",
+            escape(&id.0),
+            filter.slug()
+        );
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("&cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        GroupPage::parse(&text).map_err(|error| unreadable(status, error))
     }
 
     fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {

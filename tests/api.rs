@@ -9,7 +9,7 @@ use common::openssh_accepts;
 use devnull::api::{Call, Client, Error, Reply};
 use devnull::device::DeviceKey;
 use devnull::draft::Target;
-use devnull::model::{CommitId, Log};
+use devnull::model::{CommitId, Filter, Log, NotificationId};
 
 struct Seen {
     head: String,
@@ -350,4 +350,68 @@ fn a_dropped_connection_may_have_landed_and_a_refused_one_did_not() {
         .call(&post)
         .unwrap_err();
     assert!(!refused.may_have_landed(), "{refused:?}");
+}
+
+#[test]
+fn notifications_always_name_their_filter_and_pass_the_cursor_in_the_signed_path() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/notifications.json"
+    ))
+    .unwrap();
+    let (base, server) = serve("200 OK", &fixture);
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    let reply = client
+        .call(&Call::Notifications {
+            filter: Filter::Stars,
+            cursor: Some("eyJpZCI6MX0+/=".to_owned()),
+        })
+        .unwrap();
+    let seen = server.join().unwrap();
+
+    let Reply::Notifications(page) = reply else {
+        panic!("a notifications call answers with a notifications page");
+    };
+    assert_eq!(page.filter, Filter::Stars);
+    let path = "/api/v1/notifications?type=stars&cursor=eyJpZCI6MX0%2B%2F%3D";
+    assert!(
+        seen.head.starts_with(&format!("GET {path} HTTP/1.1\r\n")),
+        "{}",
+        seen.head
+    );
+    assert!(signature_holds(
+        client.key(),
+        &seen,
+        "GET",
+        path,
+        "api-notifications"
+    ));
+}
+
+#[test]
+fn a_group_is_read_from_the_route_of_its_notification() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/notifications-group.json"
+    ))
+    .unwrap();
+    let (base, server) = serve("200 OK", &fixture);
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    let reply = client
+        .call(&Call::Group {
+            id: NotificationId("9e000000-0000-4000-8000-000000000002".to_owned()),
+            filter: Filter::All,
+            cursor: None,
+        })
+        .unwrap();
+    let seen = server.join().unwrap();
+
+    assert!(matches!(reply, Reply::Group(page) if page.events.len() == 5));
+    assert!(
+        seen.head.starts_with(
+            "GET /api/v1/notifications/9e000000-0000-4000-8000-000000000002/group?type=all HTTP/1.1\r\n"
+        ),
+        "{}",
+        seen.head
+    );
 }

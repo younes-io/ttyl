@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::api::Call;
 use crate::draft::Target;
-use crate::model::{CommitId, Log};
+use crate::model::{CommitId, Filter, Log, NotificationId};
 
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
@@ -35,6 +35,8 @@ pub enum CallKey {
     Pastel(CommitId),
     Report(CommitId),
     Post(Target),
+    Notifications(Filter),
+    Group(NotificationId),
 }
 
 impl Call {
@@ -54,6 +56,8 @@ impl Call {
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
             Call::Post { target, .. } => CallKey::Post(target.clone()),
+            Call::Notifications { filter, .. } => CallKey::Notifications(*filter),
+            Call::Group { id, .. } => CallKey::Group(id.clone()),
         }
     }
 }

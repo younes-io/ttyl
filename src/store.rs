@@ -234,7 +234,9 @@ impl Store {
             | Call::Commit(_)
             | Call::Replies { .. }
             | Call::Report { .. }
-            | Call::Post { .. } => return,
+            | Call::Post { .. }
+            | Call::Notifications { .. }
+            | Call::Group { .. } => return,
         }
         self.generation += 1;
     }
@@ -310,6 +312,8 @@ impl Store {
                 | Reply::Commit(_)
                 | Reply::Pastel { .. }
                 | Reply::User { .. }
+                | Reply::Notifications(_)
+                | Reply::Group(_)
                 | Reply::Done,
             ) => {}
         }

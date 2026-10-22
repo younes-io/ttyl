@@ -987,6 +987,7 @@ impl Engine {
                         }
                         false
                     }
+                    Call::Notifications { .. } | Call::Group { .. } => false,
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {

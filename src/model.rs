@@ -435,3 +435,121 @@ impl RepliesPage {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct NotificationId(pub String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Followed,
+    Replied,
+    Mentioned,
+    Approved,
+    Rejected,
+    Quoted,
+    Starred,
+    LeveledUp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Filter {
+    All,
+    Replies,
+    Quotes,
+    Stars,
+    Mentions,
+    Follows,
+}
+
+impl Filter {
+    pub const ALL: [Filter; 6] = [
+        Filter::All,
+        Filter::Replies,
+        Filter::Quotes,
+        Filter::Stars,
+        Filter::Mentions,
+        Filter::Follows,
+    ];
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Filter::All => "all",
+            Filter::Replies => "replies",
+            Filter::Quotes => "quotes",
+            Filter::Stars => "stars",
+            Filter::Mentions => "mentions",
+            Filter::Follows => "follows",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Event {
+    pub id: NotificationId,
+    #[serde(rename = "type")]
+    pub kind: Kind,
+    pub reason: Option<String>,
+    pub read_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub actor: User,
+    pub commit: Option<Shown<Commit>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Group {
+    #[serde(flatten)]
+    pub event: Event,
+    pub event_count: u32,
+    pub actors_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotificationPage {
+    pub filter: Filter,
+    pub groups: Vec<Group>,
+    pub read_at: DateTime<Utc>,
+    pub next_cursor: Option<String>,
+}
+
+impl NotificationPage {
+    pub fn parse(json: &str, filter: Filter) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Group>,
+            meta: Meta,
+            read_at: DateTime<Utc>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(NotificationPage {
+            filter,
+            groups: wire.data,
+            read_at: wire.read_at,
+            next_cursor: wire.meta.next_cursor,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupPage {
+    pub events: Vec<Event>,
+    pub next_cursor: Option<String>,
+}
+
+impl GroupPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Event>,
+            meta: Meta,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(GroupPage {
+            events: wire.data,
+            next_cursor: wire.meta.next_cursor,
+        })
+    }
+}
