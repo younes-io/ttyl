@@ -220,7 +220,8 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
             | Effect::Abort(_)
             | Effect::Copy(_)
             | Effect::Open(_)
-            | Effect::Draft(_) => None,
+            | Effect::Draft(_)
+            | Effect::Edit(_) => None,
         })
         .collect()
 }

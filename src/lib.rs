@@ -6,6 +6,7 @@ pub mod compose;
 pub mod desktop;
 pub mod device;
 pub mod draft;
+pub mod editor;
 pub mod engine;
 pub mod fatal;
 pub mod feed;

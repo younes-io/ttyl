@@ -208,7 +208,8 @@ impl ThreadScreen {
             | Action::Pick(_)
             | Action::Commit(_)
             | Action::Compose
-            | Action::Send => false,
+            | Action::Send
+            | Action::Editor => false,
         }
     }
 

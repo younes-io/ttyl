@@ -23,12 +23,19 @@ const COUNT_FROM: isize = 200;
 const ASK: &str = "possible secret detected. commit anyway? [y/N]";
 const ASK_SHORT: &str = "possible secret. commit anyway? [y/N]";
 
+/// A status line message, with a shorter wording for a narrow panel.
+struct Note {
+    wide: String,
+    narrow: Option<&'static str>,
+    style: Style,
+}
+
 pub struct Composer {
     target: Target,
     title: String,
     text: Buffer,
     restored: bool,
-    note: Option<(String, Style)>,
+    note: Option<Note>,
     asking: bool,
     width: usize,
     scroll: usize,
@@ -94,9 +101,29 @@ impl Composer {
         self.edited(before)
     }
 
+    /// Takes the text back from an editor, which ends a file with a newline the body never wants.
+    pub fn replace(&mut self, edited: &str) -> bool {
+        let before = self.text.text().to_owned();
+        self.text = Buffer::new(edited.trim_end_matches(['\n', '\r']));
+        self.edited(before)
+    }
+
     /// Shows `text` on the status line until the next edit.
     pub fn note(&mut self, text: impl Into<String>, style: Style) {
-        self.note = Some((text.into(), style));
+        self.note = Some(Note {
+            wide: text.into(),
+            narrow: None,
+            style,
+        });
+    }
+
+    /// Like `note`, with `narrow` in place of `wide` when the panel has no room for it.
+    pub fn note_or(&mut self, wide: &str, narrow: &'static str, style: Style) {
+        self.note = Some(Note {
+            wide: wide.to_owned(),
+            narrow: Some(narrow),
+            style,
+        });
     }
 
     /// Puts the secret question on the status line; the next key answers it.
@@ -217,11 +244,11 @@ impl Composer {
         };
         let room = width.saturating_sub(count.width() + usize::from(!count.is_empty()));
         let (note, style) = match &self.note {
-            _ if self.asking => (
-                if ASK.width() <= room { ASK } else { ASK_SHORT },
-                Style::new().fg(theme::AMBER),
+            _ if self.asking => (fit(ASK, ASK_SHORT, room), Style::new().fg(theme::AMBER)),
+            Some(note) => (
+                fit(&note.wide, note.narrow.unwrap_or(&note.wide), room),
+                note.style,
             ),
-            Some((text, style)) => (text.as_str(), *style),
             None if self.restored => (RESTORED, theme::muted()),
             None => ("", theme::muted()),
         };
@@ -233,6 +260,10 @@ impl Composer {
             Span::styled(count, count_style),
         ])
     }
+}
+
+fn fit<'a>(wide: &'a str, narrow: &'a str, room: usize) -> &'a str {
+    if wide.width() <= room { wide } else { narrow }
 }
 
 /// The panel's inner width less one cell, so the cursor after a full row still has a cell.

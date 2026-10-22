@@ -91,7 +91,10 @@ fn any_other_key_goes_back_to_editing_with_nothing_sent_or_typed() {
             contains(&rows, " commit ─"),
             "the panel stays open: {rows:#?}"
         );
-        assert_eq!(rows[usize::from(HEIGHT) - 1], " ctrl-s commit  esc close");
+        assert_eq!(
+            rows[usize::from(HEIGHT) - 1],
+            " ctrl-s commit  ctrl-e editor  esc close"
+        );
         press(&mut engine, "!", at);
         assert_eq!(
             engine.draft(&Target::New),

@@ -80,7 +80,7 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
             );
             assert_eq!(
                 rows[usize::from(HEIGHT) - 1],
-                " ctrl-s commit  esc close",
+                " ctrl-s commit  ctrl-e editor  esc close",
                 "{rows:#?}"
             );
         }

@@ -25,6 +25,7 @@ pub enum Action {
     Pick(Reason),
     Compose,
     Send,
+    Editor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -462,6 +463,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Send,
         hint: Some("ctrl-s commit"),
         help: "commit",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[&[Key::ctrl('e')]],
+        action: Action::Editor,
+        hint: Some("ctrl-e editor"),
+        help: "write it in $VISUAL or $EDITOR",
     },
     Binding {
         scope: Scope::Composer,

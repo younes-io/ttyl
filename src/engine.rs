@@ -37,6 +37,8 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 const SPINNER_CELLS: usize = 2;
 const HINT_INDENT: &str = " ";
 const PENDING: &str = "Your commit is pending review. Everyone will see it once it is approved.";
+const EDITOR_FAILED: &str = "editor exited with an error. draft unchanged.";
+const EDITOR_FAILED_SHORT: &str = "editor failed. draft unchanged.";
 
 pub enum Event {
     Key(KeyEvent),
@@ -47,6 +49,8 @@ pub enum Event {
     Link(io::Result<String>),
     InputLost(io::Error),
     DraftFailed(io::Error),
+    /// The editor's text, or `None` when it exited with an error.
+    Edited(Option<String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -58,6 +62,7 @@ pub enum Effect {
     Copy(String),
     Open(String),
     Draft(draft::Write),
+    Edit(String),
 }
 
 pub enum Phase {
@@ -314,7 +319,7 @@ fn followed(username: &str, on: bool) -> String {
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
-        (_, Action::Send) if sending => false,
+        (_, Action::Send | Action::Editor) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -418,6 +423,19 @@ impl Engine {
             }
             Event::DraftFailed(error) => {
                 self.toast(format!("fatal: could not save your draft: {error}"), now);
+                Vec::new()
+            }
+            Event::Edited(Some(text)) => self.edit(|composer| composer.replace(&text)),
+            Event::Edited(None) => {
+                if let Phase::Ready(session) = &mut self.phase
+                    && let Some(composer) = &mut session.composer
+                {
+                    composer.note_or(
+                        EDITOR_FAILED,
+                        EDITOR_FAILED_SHORT,
+                        Style::new().fg(theme::DESTRUCTIVE),
+                    );
+                }
                 Vec::new()
             }
         }
@@ -642,6 +660,11 @@ impl Engine {
                         None if secret::detected(composer.text()) => composer.ask(),
                         None => post(&mut self.sched, composer),
                     }
+                }
+            }
+            (Phase::Ready(session), Action::Editor) => {
+                if let Some(composer) = &session.composer {
+                    return vec![Effect::Edit(composer.text().to_owned())];
                 }
             }
             (Phase::Ready(session), Action::Confirm) => {
