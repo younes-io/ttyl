@@ -25,6 +25,8 @@ const DRIFT: Duration = Duration::from_secs(3);
 const LINGER: Duration = Duration::from_secs(2);
 /// Gliders can circle a wrapping board for a very long time before it repeats.
 const GENERATIONS: u64 = 1500;
+/// Pixels of empty space kept around the drifting wordmark, so life never runs into its letters.
+const MARGIN: u16 = 2;
 
 #[rustfmt::skip]
 fn glyph(ch: char) -> [&'static str; HEIGHT] {
@@ -163,11 +165,17 @@ impl Saver {
             };
         }
         let at = corner(self.drift.along(now));
+        let (artw, arth) = (art[0].len() as u16, HEIGHT as u16);
+        let clear = |x: u16, y: u16| {
+            (at.0.saturating_sub(MARGIN)..at.0 + artw + MARGIN).contains(&x)
+                && (at.1.saturating_sub(MARGIN)..at.1 + arth + MARGIN).contains(&y)
+        };
         paint(frame, |x, y| {
-            logo(at, x, y).or_else(|| {
-                let life = self.life.as_ref()?;
-                life.cells[usize::from(y) * usize::from(width) + usize::from(x)]
-            })
+            if clear(x, y) {
+                return logo(at, x, y);
+            }
+            let life = self.life.as_ref()?;
+            life.cells[usize::from(y) * usize::from(width) + usize::from(x)]
         });
     }
 }
