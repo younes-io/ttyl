@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use common::{account, boot, contains, press, runs, screen, secs, tap};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{Filter, NotificationId, NotificationPage};
+use devnull::model::{Filter, GroupPage, Kind, NotificationId, NotificationPage};
 use devnull::sched::Ticket;
 use ratatui::crossterm::event::KeyCode;
 
@@ -398,4 +398,116 @@ fn older_groups_load_five_rows_from_the_end_one_page_at_a_time() {
         runs(&engine.pump(at)).is_empty(),
         "a page of rows already listed ends the list"
     );
+}
+
+fn group_page() -> GroupPage {
+    let json = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/notifications-group.json"
+    ))
+    .unwrap();
+    GroupPage::parse(&json).unwrap()
+}
+
+/// The one group call in `effects`, with its ticket.
+fn group_call(effects: &[Effect]) -> (Ticket, NotificationId, Option<String>) {
+    let groups: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Run(ticket, Call::Group { id, cursor, .. }) => {
+                Some((*ticket, id.clone(), cursor.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let [group] = groups.as_slice() else {
+        panic!("one group call: {effects:?}");
+    };
+    group.clone()
+}
+
+#[test]
+fn enter_on_a_single_event_opens_its_thread_and_esc_returns() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let before = screen(&mut engine, 100, 30, at);
+
+    let effects = press(&mut engine, "o", at);
+    assert!(
+        runs(&effects)
+            .iter()
+            .any(|call| matches!(call, Call::Commit(_))),
+        "{effects:?}"
+    );
+    assert!(engine.thread().is_some());
+    tap(&mut engine, KeyCode::Esc, at);
+    assert_eq!(screen(&mut engine, 100, 30, at)[..29], before[..29]);
+}
+
+#[test]
+fn enter_on_a_group_lists_its_events_and_enter_there_opens_one() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let (ticket, id, cursor) = group_call(&press(&mut engine, "jo", at));
+    assert_eq!(id.0, "9e000000-0000-4000-8000-000000000002");
+    assert_eq!(cursor, None);
+    engine.update(Event::Reply(ticket, Ok(Reply::Group(group_page()))), at);
+
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[0].contains("notifications"), "{rows:#?}");
+    assert!(rows[1].contains("starred"), "{rows:#?}");
+    assert!(contains(&rows[2..], "@grace"), "{rows:#?}");
+    assert!(contains(&rows[2..], "@ada"), "{rows:#?}");
+    assert!(rows[29].contains("enter open"), "{rows:#?}");
+
+    press(&mut engine, "jo", at);
+    assert!(engine.thread().is_some());
+    tap(&mut engine, KeyCode::Esc, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    assert!(screen(&mut engine, 100, 30, at)[1].starts_with(" all"));
+}
+
+#[test]
+fn a_level_up_offers_no_enter() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    assert!(runs(&press(&mut engine, "Go", at)).is_empty());
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!rows[29].contains("enter open"), "{rows:#?}");
+}
+
+#[test]
+fn the_people_in_a_follow_group_open_nothing_yet() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let (ticket, _, _) = group_call(&press(&mut engine, "jjo", at));
+    let mut page = group_page();
+    for event in &mut page.events {
+        event.kind = Kind::Followed;
+        event.commit = None;
+    }
+    engine.update(Event::Reply(ticket, Ok(Reply::Group(page))), at);
+    assert!(runs(&press(&mut engine, "o", at)).is_empty());
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!rows[29].contains("enter open"), "{rows:#?}");
+}
+
+#[test]
+fn a_loaded_group_never_clears_the_count() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let (ticket, _, _) = group_call(&press(&mut engine, "jo", at));
+    for effect in engine.pump(at + secs(30)) {
+        if let Effect::Run(me, Call::Me) = effect {
+            engine.update(Event::Reply(me, Ok(Reply::Account(account(3)))), at);
+        }
+    }
+    let reply = Ok(Reply::Group(group_page()));
+    engine.update(Event::Reply(ticket, reply), at + secs(30));
+    assert!(count_shown(&mut engine, at + secs(30)));
 }

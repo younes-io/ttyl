@@ -16,14 +16,14 @@ use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
-use crate::inbox::{self, Inbox};
+use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
-    self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES,
-    INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
+    self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
     SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
-use crate::model::{CommitId, Log, Reason, Status};
+use crate::model::{CommitId, Log, NotificationId, Reason, Status};
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
 use crate::signin::Callback;
@@ -88,6 +88,7 @@ pub struct Session {
 enum Screen {
     Thread(Box<ThreadScreen>),
     Inbox,
+    Group(Box<GroupList>),
 }
 
 enum Overlay {
@@ -110,8 +111,23 @@ impl Session {
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox) | None => None,
+            Some(Screen::Inbox | Screen::Group(_)) | None => None,
         }
+    }
+
+    fn group(&self) -> Option<&GroupList> {
+        match self.stack.last() {
+            Some(Screen::Group(group)) => Some(group),
+            _ => None,
+        }
+    }
+
+    /// The open group list a reply belongs to, wherever it sits in the stack.
+    fn group_mut(&mut self, id: &NotificationId) -> Option<&mut GroupList> {
+        self.stack.iter_mut().rev().find_map(|screen| match screen {
+            Screen::Group(group) if group.id() == id => Some(group.as_mut()),
+            _ => None,
+        })
     }
 
     fn on_inbox(&self) -> bool {
@@ -123,6 +139,7 @@ impl Session {
             None => LOG_SCOPES,
             Some(Screen::Thread(_)) => THREAD_SCOPES,
             Some(Screen::Inbox) => INBOX_SCOPES,
+            Some(Screen::Group(_)) => GROUP_SCOPES,
         }
     }
 
@@ -135,6 +152,7 @@ impl Session {
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
+                Some(Screen::Group(group)) => group.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -142,7 +160,7 @@ impl Session {
     fn selected(&self) -> Option<&CommitId> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread.selected()),
-            Some(Screen::Inbox) => None,
+            Some(Screen::Inbox | Screen::Group(_)) => None,
             None => self.log.selected_id(self.log.active(), &self.store),
         }
     }
@@ -179,8 +197,16 @@ impl Session {
                     return Some(id);
                 }
             }
+            (Some(Screen::Group(group)), Action::Open) => {
+                if let Some(id) = group.opens().cloned() {
+                    self.stack
+                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
+                    return Some(id);
+                }
+            }
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
+            (Some(Screen::Group(group)), action) => group.act(action),
             (None, _) => {}
         }
         None
@@ -352,6 +378,15 @@ fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, no
     );
 }
 
+fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
+    let call = Call::Group {
+        id: group.id().clone(),
+        filter: group.filter(),
+        cursor: None,
+    };
+    sched.send(call, Priority::Now);
+}
+
 fn followed(username: &str, on: bool) -> String {
     let done = if on { "following" } else { "unfollowed" };
     format!("{done} @{username} · f to undo")
@@ -511,6 +546,7 @@ impl Engine {
         }
         self.load_older();
         self.load_older_inbox();
+        self.load_older_group();
         for (call, priority) in self.thread_wants() {
             self.sched.send(call, priority);
         }
@@ -577,6 +613,22 @@ impl Engine {
         }
     }
 
+    fn load_older_group(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        if let Some(group) = session.group()
+            && let Some(cursor) = group.wants_older()
+        {
+            let call = Call::Group {
+                id: group.id().clone(),
+                filter: group.filter(),
+                cursor: Some(cursor),
+            };
+            self.sched.send(call, Priority::Now);
+        }
+    }
+
     fn thread_wants(&self) -> Vec<(Call, Priority)> {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
@@ -601,6 +653,7 @@ impl Engine {
         match session.stack.last()? {
             Screen::Thread(thread) => thread.placeholder_at(&session.store),
             Screen::Inbox => session.inbox.placeholder_at(),
+            Screen::Group(group) => group.placeholder_at(),
         }
     }
 
@@ -784,6 +837,25 @@ impl Engine {
                 session.inbox.act(action, &session.store);
                 fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
             }
+            (Phase::Ready(session), Action::Open) if session.on_inbox() => {
+                match session.inbox.opens() {
+                    Some(Opens::Thread(id)) => {
+                        session
+                            .stack
+                            .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
+                        fetch_thread(&mut self.sched, &mut self.timers, id);
+                    }
+                    Some(Opens::Group(head)) => {
+                        let group = GroupList::new(*head, session.inbox.filter(), now);
+                        fetch_group(&mut self.sched, &group);
+                        session.stack.push(Screen::Group(Box::new(group)));
+                    }
+                    None => {}
+                }
+            }
+            (Phase::Ready(session), Action::Refresh) if session.group().is_some() => {
+                fetch_group(&mut self.sched, session.group().expect("a group is open"));
+            }
             (Phase::Ready(session), Action::Refresh) if session.thread().is_some() => {
                 let thread = session.thread().expect("a thread is open");
                 let focus = thread.focus().clone();
@@ -955,6 +1027,14 @@ impl Engine {
                 }
                 return Vec::new();
             }
+            Call::Group { id, cursor, .. } => {
+                if let Reply::Group(page) = reply
+                    && let Some(group) = session.group_mut(id)
+                {
+                    group.land(cursor.as_deref(), page);
+                }
+                return Vec::new();
+            }
             _ => {}
         }
         let Call::Page(log) = call else {
@@ -1100,7 +1180,12 @@ impl Engine {
                         self.timers.set(Timer::OlderInbox(filter), now + RETRY);
                         false
                     }
-                    Call::Group { .. } => false,
+                    Call::Group { id, .. } => {
+                        if let Some(group) = session.group_mut(&id) {
+                            group.fail(failure.clone());
+                        }
+                        offline
+                    }
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
@@ -1239,7 +1324,8 @@ impl Engine {
                     Constraint::Length(1),
                 ])
                 .areas(area);
-                let title = session.on_inbox().then_some(inbox::TITLE);
+                let title =
+                    (session.on_inbox() || session.group().is_some()).then_some(inbox::TITLE);
                 frame.render_widget(session.log.top_bar(&session.store, title, top.width), top);
                 let active = session.log.active();
                 let loaded = match session.store.slot(active) {
@@ -1249,6 +1335,9 @@ impl Engine {
                 let on_log = session.stack.is_empty();
                 if session.on_inbox() {
                     frame.render_widget(session.inbox.filter_bar(banner.width), banner);
+                }
+                if let Some(group) = session.group() {
+                    frame.render_widget(group.banner(), banner);
                 }
                 if let Some(listing) = loaded
                     && listing.new_commits > 0
@@ -1268,6 +1357,8 @@ impl Engine {
                         .failure()
                         .map(|failure| (failure, self.timers.remaining(&Timer::Inbox(filter), now)))
                         .or(health)
+                } else if let Some(group) = session.group() {
+                    group.failure().map(|failure| (failure, None)).or(health)
                 } else if on_log {
                     loaded.and_then(|listing| match &listing.failure {
                         Some(failure) => Some((failure, retry.page)),
@@ -1318,6 +1409,7 @@ impl Engine {
                         };
                         session.inbox.draw(frame, inset(body), retry, now, wall);
                     }
+                    Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
                     None => session
                         .log
                         .draw(frame, inset(body), &session.store, retry, wall),

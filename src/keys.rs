@@ -54,6 +54,7 @@ pub enum Scope {
     Log,
     Thread,
     Inbox,
+    Group,
     List,
     Commit,
     Global,
@@ -95,6 +96,13 @@ pub const INBOX_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
+pub const GROUP_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Group,
+    Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -108,6 +116,7 @@ pub const UNIONS: &[&[Scope]] = &[
     LOG_SCOPES,
     THREAD_SCOPES,
     INBOX_SCOPES,
+    GROUP_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +357,27 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: None,
         help: "reload notifications",
+    },
+    Binding {
+        scope: Scope::Group,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter open"),
+        help: "open this commit's thread",
+    },
+    Binding {
+        scope: Scope::Group,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
+        scope: Scope::Group,
+        chords: &[&[Key::ch('R')]],
+        action: Action::Refresh,
+        hint: None,
+        help: "reload this group",
     },
     Binding {
         scope: Scope::Commit,

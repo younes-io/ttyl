@@ -498,12 +498,32 @@ pub struct Event {
     pub commit: Option<Shown<Commit>>,
 }
 
+impl Event {
+    pub fn commit_id(&self) -> Option<&CommitId> {
+        match self.commit.as_ref()? {
+            Shown::Live(commit) => Some(&commit.id),
+            Shown::Deleted(tombstone) => Some(&tombstone.id),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Group {
     #[serde(flatten)]
     pub event: Event,
     pub event_count: u32,
     pub actors_count: u32,
+}
+
+impl Group {
+    /// One event on its own, as the group list shows each.
+    pub fn single(event: Event) -> Self {
+        Group {
+            event,
+            event_count: 1,
+            actors_count: 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
