@@ -30,8 +30,69 @@ pub const AMBER: Color = LANES[5];
 pub fn lane(lane: Lane) -> Color {
     match lane {
         Lane::Palette(index) => LANES[usize::from(index)],
-        Lane::Custom { r, g, b } => Color::Rgb(r, g, b),
+        Lane::Custom { r, g, b } => readable(r, g, b),
     }
+}
+
+/// People pick any color on the web, so a dark one is lifted, keeping its hue and saturation,
+/// until it reads against the background as clearly as body text must (WCAG's 4.5:1).
+fn readable(r: u8, g: u8, b: u8) -> Color {
+    let [r, g, b] = [r, g, b].map(|channel| f64::from(channel) / 255.0);
+    let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+    let lightness = f64::midpoint(high, low);
+    let chroma = high - low;
+    let saturation = if chroma == 0.0 {
+        0.0
+    } else {
+        chroma / (1.0 - (2.0 * lightness - 1.0).abs())
+    };
+    let hue = if chroma == 0.0 {
+        0.0
+    } else if high == r {
+        ((g - b) / chroma).rem_euclid(6.0)
+    } else if high == g {
+        (b - r) / chroma + 2.0
+    } else {
+        (r - g) / chroma + 4.0
+    };
+    (0..=100)
+        .map(|step| lightness + (1.0 - lightness) * f64::from(step) / 100.0)
+        .map(|lightness| {
+            let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+            let x = chroma * (1.0 - (hue.rem_euclid(2.0) - 1.0).abs());
+            let (r, g, b) = match hue as u8 {
+                0 => (chroma, x, 0.0),
+                1 => (x, chroma, 0.0),
+                2 => (0.0, chroma, x),
+                3 => (0.0, x, chroma),
+                4 => (x, 0.0, chroma),
+                _ => (chroma, 0.0, x),
+            };
+            let low = lightness - chroma / 2.0;
+            let byte = |channel: f64| ((channel + low) * 255.0).round().clamp(0.0, 255.0) as u8;
+            (byte(r), byte(g), byte(b))
+        })
+        .find(|&(r, g, b)| contrast(Color::Rgb(r, g, b)) >= 4.5)
+        .map_or(FOREGROUND, |(r, g, b)| Color::Rgb(r, g, b))
+}
+
+/// WCAG's contrast ratio of `color` over the background.
+pub fn contrast(color: Color) -> f64 {
+    let luminance = |color: Color| {
+        let Color::Rgb(r, g, b) = color else {
+            unreachable!("theme colors are RGB");
+        };
+        let linear = |channel: u8| {
+            let channel = f64::from(channel) / 255.0;
+            if channel <= 0.040_45 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    };
+    (luminance(color) + 0.05) / (luminance(BACKGROUND) + 0.05)
 }
 
 /// `lane` washed faintly over the background, for the selected card.

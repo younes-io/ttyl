@@ -342,3 +342,31 @@ fn a_group_page_lists_its_events_without_counts() {
     assert!(page.events.iter().all(|event| event.kind == Kind::Starred));
     assert_eq!(page.next_cursor, None);
 }
+
+#[test]
+fn a_dark_custom_lane_is_lifted_until_it_reads_and_a_bright_one_is_kept() {
+    use devnull::model::Lane;
+    use devnull::theme;
+    use ratatui::style::Color;
+    for (r, g, b) in [
+        (0, 0, 0),
+        (0x0b, 0x2a, 0x5c),
+        (0x1e, 0x5b, 0x1e),
+        (0, 0, 0xff),
+        (0x30, 0x30, 0x30),
+    ] {
+        let lifted = theme::lane(Lane::Custom { r, g, b });
+        assert!(
+            theme::contrast(lifted) >= 4.5,
+            "#{r:02x}{g:02x}{b:02x} became {lifted:?}"
+        );
+    }
+    assert_eq!(
+        theme::lane(Lane::Custom {
+            r: 0x3b,
+            g: 0xc9,
+            b: 0xdb
+        }),
+        Color::Rgb(0x3b, 0xc9, 0xdb)
+    );
+}
