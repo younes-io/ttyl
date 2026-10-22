@@ -257,7 +257,7 @@ impl LogScreen {
                     place.offset = start(place.selected).saturating_sub(anchor.line);
                 }
                 let height = usize::from(area.height);
-                place.offset = scroll(feed, total, place.selected, place.offset, height);
+                place.offset = feed::scroll(feed, total, place.selected, place.offset, height);
                 place.anchor = id.map(|id| Anchor {
                     id,
                     line: start(place.selected).saturating_sub(place.offset),
@@ -275,22 +275,4 @@ impl LogScreen {
             }
         }
     }
-}
-
-fn scroll(feed: &feed::Feed, total: usize, selected: usize, offset: usize, height: usize) -> usize {
-    let Some(entry) = feed.entries.get(selected) else {
-        return 0;
-    };
-    let is_last = selected + 1 == feed.entries.len();
-    let start = entry.lines.start;
-    let end = if is_last { total } else { entry.lines.end };
-    let offset = offset.min(total.saturating_sub(height));
-    let offset = if start < offset {
-        start
-    } else if end > offset + height {
-        (end - height).min(start)
-    } else {
-        offset
-    };
-    offset.max((entry.header + 1).saturating_sub(height))
 }

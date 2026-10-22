@@ -18,7 +18,7 @@ use crate::keys::{
     Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
-use crate::model::Log;
+use crate::model::{CommitId, Log};
 use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
 use crate::store::{Slot, Store};
@@ -80,7 +80,8 @@ impl Session {
             }
     }
 
-    fn on_thread(&mut self, action: Action, now: Instant) {
+    /// Acts on the top thread, and gives the id of a thread it opened.
+    fn on_thread(&mut self, action: Action, now: Instant) -> Option<CommitId> {
         match action {
             Action::Back => {
                 self.threads.pop();
@@ -95,7 +96,8 @@ impl Session {
                     .last()
                     .and_then(|thread| thread.opens(&self.store))
                 {
-                    self.threads.push(ThreadScreen::new(id, now));
+                    self.threads.push(ThreadScreen::new(id.clone(), now));
+                    return Some(id);
                 }
             }
             action => {
@@ -104,6 +106,7 @@ impl Session {
                 }
             }
         }
+        None
     }
 
     fn can(&self, action: Action) -> bool {
@@ -113,6 +116,15 @@ impl Session {
             self.screen_allows(action)
         }
     }
+}
+
+/// Asks for a thread the moment it opens, ahead of any retry timer left from an earlier visit.
+fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
+    timers.clear(&Timer::Commit(id.clone()));
+    timers.clear(&Timer::Replies(id.clone()));
+    timers.clear(&Timer::More(id.clone()));
+    sched.send(Call::Commit(id.clone()), Priority::Now);
+    sched.send(Call::Replies { id, cursor: None }, Priority::Now);
 }
 
 fn can(phase: &Phase, health: Option<&Failure>, action: Action) -> bool {
@@ -215,10 +227,13 @@ impl Engine {
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
-                Timer::Older(_) => {}
+                Timer::Older(_) | Timer::Commit(_) | Timer::Replies(_) | Timer::More(_) => {}
             }
         }
         self.load_older();
+        for (call, priority) in self.thread_wants() {
+            self.sched.send(call, priority);
+        }
         self.sched
             .release(now)
             .into_iter()
@@ -232,6 +247,8 @@ impl Engine {
             self.sched.next_wake(now),
             self.sched.busy().then(|| now + FRAME),
             self.counting_down().then(|| now + SECOND),
+            (!self.thread_wants().is_empty()).then_some(now),
+            self.placeholder_at().filter(|at| *at > now),
         ]
         .into_iter()
         .flatten()
@@ -250,10 +267,35 @@ impl Engine {
             return;
         };
         let left = listing.ids.len().saturating_sub(session.log.selected() + 1);
-        if left <= AHEAD && !self.timers.is_set(Timer::Older(log)) {
+        if left <= AHEAD && !self.timers.is_set(&Timer::Older(log)) {
             let cursor = cursor.clone();
             self.sched.send(Call::Older { log, cursor }, Priority::Now);
         }
+    }
+
+    /// What the top thread wants loaded that no call or retry timer covers yet.
+    fn thread_wants(&self) -> Vec<(Call, Priority)> {
+        let Phase::Ready(session) = &self.phase else {
+            return Vec::new();
+        };
+        let Some(thread) = session.threads.last() else {
+            return Vec::new();
+        };
+        thread
+            .wants(&session.store)
+            .into_iter()
+            .filter(|(call, _, timer)| {
+                !self.timers.is_set(timer) && !self.sched.pending(&call.key())
+            })
+            .map(|(call, priority, _)| (call, priority))
+            .collect()
+    }
+
+    fn placeholder_at(&self) -> Option<Instant> {
+        let Phase::Ready(session) = &self.phase else {
+            return None;
+        };
+        session.threads.last()?.placeholder_at(&session.store)
     }
 
     fn poll_new(&mut self) {
@@ -276,15 +318,18 @@ impl Engine {
         [Timer::Retry, Timer::Poll]
             .into_iter()
             .chain(LOGS.iter().map(|log| Timer::Reload(*log)))
-            .filter_map(|timer| self.timers.remaining(timer, now))
+            .filter_map(|timer| self.timers.remaining(&timer, now))
             .min()
     }
 
     fn counting_down(&self) -> bool {
-        self.timers.is_set(Timer::Retry)
+        self.timers.is_set(&Timer::Retry)
             || LOGS.iter().any(|log| {
-                self.timers.is_set(Timer::Reload(*log)) || self.timers.is_set(Timer::Older(*log))
+                self.timers.is_set(&Timer::Reload(*log)) || self.timers.is_set(&Timer::Older(*log))
             })
+            || self
+                .timers
+                .any(|timer| matches!(timer, Timer::Commit(_) | Timer::Replies(_) | Timer::More(_)))
     }
 
     fn scopes(&self) -> &'static [Scope] {
@@ -325,27 +370,51 @@ impl Engine {
             (Phase::Ready(session), Action::Help) => session.help = true,
             (Phase::Ready(session), Action::Close) => session.help = false,
             (Phase::Splash, Action::Refresh) => {
-                self.timers.clear(Timer::Retry);
+                self.timers.clear(&Timer::Retry);
                 self.sched.send(Call::Me, Priority::Now);
             }
             (Phase::SignIn(_), Action::SignIn) => return vec![Effect::StartSignIn],
             (Phase::SignIn(step), Action::StartOver) => *step = Step::Ready(None),
+            (Phase::Ready(session), Action::Refresh) if !session.threads.is_empty() => {
+                let thread = session.threads.last().expect("a thread is open");
+                let focus = thread.focus().clone();
+                self.timers.clear(&Timer::Commit(focus.clone()));
+                self.sched.send(Call::Commit(focus.clone()), Priority::Now);
+                for owner in thread.lists(&session.store) {
+                    self.timers.clear(&Timer::Replies(owner.clone()));
+                    self.timers.clear(&Timer::More(owner.clone()));
+                    let priority = if owner == focus {
+                        Priority::Now
+                    } else {
+                        Priority::Later
+                    };
+                    let call = Call::Replies {
+                        id: owner,
+                        cursor: None,
+                    };
+                    self.sched.send(call, priority);
+                }
+            }
             (Phase::Ready(session), action) if !session.threads.is_empty() => {
-                session.on_thread(action, now);
+                if let Some(id) = session.on_thread(action, now) {
+                    fetch_thread(&mut self.sched, &mut self.timers, id);
+                }
             }
             (Phase::Ready(session), Action::Open) => {
                 if let Some(id) = session
                     .log
                     .selected_id(session.log.active(), &session.store)
+                    .cloned()
                 {
                     session.threads.push(ThreadScreen::new(id.clone(), now));
+                    fetch_thread(&mut self.sched, &mut self.timers, id);
                 }
             }
             (Phase::Ready(session), Action::Refresh) => {
                 let log = session.log.active();
                 session.asked_to_refresh.insert(log);
-                self.timers.clear(Timer::Reload(log));
-                self.timers.clear(Timer::Older(log));
+                self.timers.clear(&Timer::Reload(log));
+                self.timers.clear(&Timer::Older(log));
                 self.sched.send(Call::Page(log), Priority::Now);
             }
             (Phase::Ready(session), action) => session.log.act(action, &session.store),
@@ -361,6 +430,15 @@ impl Engine {
             }
             return;
         };
+        match call {
+            Call::Commit(id) => self.timers.clear(&Timer::Commit(id.clone())),
+            Call::Replies { id, cursor: None } => self.timers.clear(&Timer::Replies(id.clone())),
+            Call::Replies {
+                id,
+                cursor: Some(_),
+            } => self.timers.clear(&Timer::More(id.clone())),
+            _ => {}
+        }
         let Call::Page(log) = call else {
             session.store.apply(call, reply);
             return;
@@ -387,7 +465,7 @@ impl Engine {
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
         }
-        self.timers.clear(Timer::Retry);
+        self.timers.clear(&Timer::Retry);
         self.timers.set(Timer::Poll, now + POLL);
         self.timers.set(Timer::RelativeTimes, now + MINUTE);
     }
@@ -432,6 +510,30 @@ impl Engine {
                     }
                     Call::Older { log, .. } => {
                         self.timers.set(Timer::Older(log), now + RETRY);
+                        false
+                    }
+                    Call::Commit(id) => {
+                        if error.is_not_found() {
+                            session.store.missing(&id);
+                        } else {
+                            session.store.fail_commit(&id, failure.clone());
+                            self.timers.set(Timer::Commit(id), now + RETRY);
+                        }
+                        false
+                    }
+                    Call::Replies { id, cursor } => {
+                        let more = cursor.is_some();
+                        if error.is_not_found() {
+                            session.store.no_replies(&id, more);
+                        } else {
+                            session.store.fail_replies(&id, more, failure.clone());
+                            let timer = if more {
+                                Timer::More(id)
+                            } else {
+                                Timer::Replies(id)
+                            };
+                            self.timers.set(timer, now + RETRY);
+                        }
                         false
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
@@ -529,8 +631,8 @@ impl Engine {
                     frame.render_widget(pill(listing.new_commits), banner);
                 }
                 let retry = Retry {
-                    page: self.timers.remaining(Timer::Reload(active), now),
-                    older: self.timers.remaining(Timer::Older(active), now),
+                    page: self.timers.remaining(&Timer::Reload(active), now),
+                    older: self.timers.remaining(&Timer::Older(active), now),
                 };
                 let health = self.health.as_ref().map(|failure| (failure, next_call));
                 let failure = if on_log {
@@ -539,7 +641,16 @@ impl Engine {
                         None => health,
                     })
                 } else {
-                    health
+                    session
+                        .threads
+                        .last()
+                        .and_then(|thread| {
+                            let focus = thread.focus();
+                            let failure = session.store.thread(focus)?.failure.as_ref()?;
+                            let wait = self.timers.remaining(&Timer::Commit(focus.clone()), now);
+                            Some((failure, wait))
+                        })
+                        .or(health)
                 };
                 let error = failure
                     .filter(|_| self.toast.is_none() && self.keymap.pending().is_empty())
@@ -557,7 +668,9 @@ impl Engine {
                     None => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
                 match session.threads.last_mut() {
-                    Some(thread) => thread.draw(frame, inset(body), &session.store, now, wall),
+                    Some(thread) => {
+                        thread.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                    }
                     None => session
                         .log
                         .draw(frame, inset(body), &session.store, retry, wall),
@@ -599,7 +712,7 @@ impl Engine {
             None => lines.push(Line::styled("Loading…", theme::muted())),
             Some(failure) => lines.extend(fatal::screen(
                 failure,
-                self.timers.remaining(Timer::Retry, now),
+                self.timers.remaining(&Timer::Retry, now),
             )),
         }
         lines.push(Line::default());

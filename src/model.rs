@@ -6,6 +6,14 @@ use serde::de::{self, DeserializeOwned, Deserializer};
 #[serde(transparent)]
 pub struct CommitId(pub String);
 
+impl CommitId {
+    /// Derived the way the server derives `short_hash`, for a commit the client has no copy of.
+    pub fn short_hash(&self) -> String {
+        let hex: Vec<char> = self.0.chars().filter(|c| *c != '-').collect();
+        hex[hex.len().saturating_sub(7)..].iter().collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct UserId(pub String);
@@ -233,10 +241,8 @@ pub struct Tombstone {
 }
 
 impl Tombstone {
-    /// A tombstone has no `short_hash`, so it is derived the way the server derives one.
     pub fn short_hash(&self) -> String {
-        let hex: Vec<char> = self.id.0.chars().filter(|c| *c != '-').collect();
-        hex[hex.len().saturating_sub(7)..].iter().collect()
+        self.id.short_hash()
     }
 }
 

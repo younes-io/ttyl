@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{boot, contains, page, press, screen, tap};
+use common::{answer, boot, contains, page, press, screen, tap};
 use devnull::engine::Engine;
 use devnull::model::Log;
 use ratatui::crossterm::event::KeyCode;
@@ -25,7 +25,8 @@ fn back_returns_to_the_same_tab_selection_and_scroll() {
         (KeyCode::Enter, KeyCode::Esc),
         (KeyCode::Char('o'), KeyCode::Backspace),
     ] {
-        tap(&mut engine, open, at);
+        let effects = tap(&mut engine, open, at);
+        answer(&mut engine, effects, at);
         let thread = engine.thread().expect("enter opens a thread");
         let rows = page(Log::Latest).rows;
         assert_eq!(*thread.focus(), rows[selected].commit.id);
@@ -43,7 +44,8 @@ fn back_returns_to_the_same_tab_selection_and_scroll() {
 fn the_thread_hint_names_its_keys_and_keeps_help_when_narrow() {
     let at = Instant::now();
     let mut engine = on_latest(at);
-    tap(&mut engine, KeyCode::Enter, at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, effects, at);
     let rows = screen(&mut engine, 100, 24, at);
     assert_eq!(rows[23], " j/k move  enter open  esc back  ? help  Q quit");
     let rows = screen(&mut engine, 30, 24, at);

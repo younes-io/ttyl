@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::api::Call;
-use crate::model::Log;
+use crate::model::{CommitId, Log};
 
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
@@ -18,13 +18,16 @@ pub enum Priority {
     Later,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CallKey {
     Me,
     Redeem,
     Page(Log),
     Older(Log),
     Since(Log),
+    Commit(CommitId),
+    /// A list's first page and its later pages share one key, so a list never has two calls in flight.
+    Replies(CommitId),
 }
 
 impl Call {
@@ -35,6 +38,8 @@ impl Call {
             Call::Page(log) => CallKey::Page(*log),
             Call::Older { log, .. } => CallKey::Older(*log),
             Call::Since { log, .. } => CallKey::Since(*log),
+            Call::Commit(id) => CallKey::Commit(id.clone()),
+            Call::Replies { id, .. } => CallKey::Replies(id.clone()),
         }
     }
 }
@@ -64,7 +69,7 @@ impl Scheduler {
 
     pub fn send(&mut self, call: Call, priority: Priority) {
         let key = call.key();
-        if self.in_flight(key) {
+        if self.in_flight(&key) {
             return;
         }
         if let Some(queued) = self.now.iter_mut().find(|queued| queued.key() == key) {
@@ -78,8 +83,18 @@ impl Scheduler {
         }
     }
 
-    pub fn in_flight(&self, key: CallKey) -> bool {
-        self.flying.values().any(|(call, _)| call.key() == key)
+    pub fn in_flight(&self, key: &CallKey) -> bool {
+        self.flying.values().any(|(call, _)| call.key() == *key)
+    }
+
+    /// In flight, or waiting in either queue.
+    pub fn pending(&self, key: &CallKey) -> bool {
+        self.in_flight(key)
+            || self
+                .now
+                .iter()
+                .chain(&self.later)
+                .any(|call| call.key() == *key)
     }
 
     pub fn busy(&self) -> bool {

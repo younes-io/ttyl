@@ -8,7 +8,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
-use crate::model::{CommitId, Log, LogPage};
+use crate::model::{CommitId, CommitPage, Log, LogPage, RepliesPage};
 
 pub const BASE: &str = "https://dev-null.sh";
 
@@ -36,16 +36,32 @@ pub struct Account {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Me,
-    Redeem { code: String, verifier: String },
+    Redeem {
+        code: String,
+        verifier: String,
+    },
     Page(Log),
-    Older { log: Log, cursor: String },
-    Since { log: Log, since: CommitId },
+    Older {
+        log: Log,
+        cursor: String,
+    },
+    Since {
+        log: Log,
+        since: CommitId,
+    },
+    Commit(CommitId),
+    Replies {
+        id: CommitId,
+        cursor: Option<String>,
+    },
 }
 
 #[derive(Debug)]
 pub enum Reply {
     Account(Account),
     Page(LogPage),
+    Thread(Box<CommitPage>),
+    Replies(RepliesPage),
 }
 
 #[derive(Debug)]
@@ -67,6 +83,13 @@ impl Error {
     /// The server does not know this device, or the user has not approved it yet.
     pub fn needs_sign_in(&self) -> bool {
         matches!(self, Error::Api { code: Some(code), .. } if code == "device_not_approved")
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(
+            self,
+            Error::Api { status: 404, .. } | Error::Unexpected(404)
+        )
     }
 }
 
@@ -147,6 +170,8 @@ impl Client {
             Call::Since { log, since } => {
                 self.page(*log, Some(("since", &since.0))).map(Reply::Page)
             }
+            Call::Commit(id) => self.commit(id).map(|page| Reply::Thread(Box::new(page))),
+            Call::Replies { id, cursor } => self.replies(id, cursor.as_deref()).map(Reply::Replies),
         }
     }
 
@@ -169,6 +194,21 @@ impl Client {
         }
         let (status, text) = self.send("GET", &path, String::new())?;
         LogPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn commit(&self, id: &CommitId) -> Result<CommitPage, Error> {
+        let path = format!("/api/v1/commits/{}", escape(&id.0));
+        let (status, text) = self.send("GET", &path, String::new())?;
+        CommitPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn replies(&self, id: &CommitId, cursor: Option<&str>) -> Result<RepliesPage, Error> {
+        let mut path = format!("/api/v1/commits/{}/replies", escape(&id.0));
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("?cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        RepliesPage::parse(&text).map_err(|error| unreadable(status, error))
     }
 
     fn send(&self, method: &str, path: &str, body: String) -> Result<(u16, String), Error> {

@@ -30,17 +30,29 @@ pub struct Entry {
     pub lines: Range<usize>,
     pub header: usize,
     pub lane: Lane,
+    pub indent: usize,
 }
 
 impl Feed {
-    /// The lines in `window`, with the selected commit's rail drawn in its lane color.
+    /// The lines in `window`, with the selected commit's rail drawn in its lane color, or its one line lit when it
+    /// has no rail.
     pub fn window(&self, selected: Option<usize>, window: Range<usize>) -> Vec<Line<'static>> {
         let mut lines = self.lines[window.clone()].to_vec();
-        if let Some(entry) = selected.and_then(|at| self.entries.get(at)) {
-            let rail = Span::styled("┃ ", Style::new().fg(theme::lane(entry.lane)));
-            for at in (entry.header + 1..entry.lines.end).filter(|at| window.contains(at)) {
-                lines[at - window.start].spans[0] = rail.clone();
+        let Some(entry) = selected.and_then(|at| self.entries.get(at)) else {
+            return lines;
+        };
+        if entry.header + 1 == entry.lines.end {
+            if window.contains(&entry.header) {
+                for span in &mut lines[entry.header - window.start].spans {
+                    span.style = span.style.fg(theme::FOREGROUND);
+                }
             }
+            return lines;
+        }
+        let rail = Span::styled("┃ ", Style::new().fg(theme::lane(entry.lane)));
+        let at_rail = usize::from(entry.indent > 0);
+        for at in (entry.header + 1..entry.lines.end).filter(|at| window.contains(at)) {
+            lines[at - window.start].spans[at_rail] = rail.clone();
         }
         lines
     }
@@ -69,10 +81,7 @@ pub fn layout<Tz: TimeZone>(
     expanded: &HashSet<CommitId>,
     now: &DateTime<Tz>,
 ) -> Feed {
-    let mut out = Writer {
-        lines: Vec::new(),
-        width: usize::from(width).max(RAIL_WIDTH + 8),
-    };
+    let mut out = Writer::new(width);
     if page.rows.is_empty() {
         empty(&mut out, page);
         return Feed {
@@ -109,6 +118,7 @@ pub fn layout<Tz: TimeZone>(
             lines: start..out.lines.len(),
             header,
             lane: row.commit.author.lane,
+            indent: 0,
         });
     }
 
@@ -131,59 +141,93 @@ pub fn layout<Tz: TimeZone>(
     }
 }
 
-struct Writer {
-    lines: Vec<Line<'static>>,
+pub(crate) struct Writer {
+    pub lines: Vec<Line<'static>>,
     width: usize,
+    /// Blank columns before the rail, so a nested reply sits to the right of its parent.
+    pub pad: usize,
 }
 
 impl Writer {
-    fn content(&self) -> usize {
-        self.width - RAIL_WIDTH
+    pub fn new(width: u16) -> Self {
+        Writer {
+            lines: Vec::new(),
+            width: usize::from(width).max(RAIL_WIDTH + 8),
+            pad: 0,
+        }
     }
 
-    fn push(&mut self, rail: Span<'static>, spans: Vec<Span<'static>>) {
+    pub fn content(&self) -> usize {
+        self.width.saturating_sub(self.pad + RAIL_WIDTH).max(8)
+    }
+
+    pub fn push(&mut self, rail: Span<'static>, spans: Vec<Span<'static>>) {
         self.node(rail.clone(), rail, spans);
     }
 
     /// Wraps `spans` to the content width, with `node` on the first line and `rail` on the rest.
-    fn node(&mut self, node: Span<'static>, rail: Span<'static>, spans: Vec<Span<'static>>) {
+    pub fn node(&mut self, node: Span<'static>, rail: Span<'static>, spans: Vec<Span<'static>>) {
         let pieces: Vec<_> = spans
             .into_iter()
             .map(|span| (span.content.into_owned(), span.style))
             .collect();
         let mut lines = Vec::new();
         wrap(&pieces, self.content(), &mut lines);
-        for (index, mut line) in lines.into_iter().enumerate() {
-            line.insert(
-                0,
-                if index == 0 {
-                    node.clone()
-                } else {
-                    rail.clone()
-                },
-            );
-            self.lines.push(Line::from(line));
+        for (index, line) in lines.into_iter().enumerate() {
+            let rail = if index == 0 { &node } else { &rail };
+            self.line(rail.clone(), line);
         }
     }
 
-    fn line(&mut self, rail: Span<'static>, mut spans: Vec<Span<'static>>) {
+    pub fn line(&mut self, rail: Span<'static>, mut spans: Vec<Span<'static>>) {
         spans.insert(0, rail);
+        if self.pad > 0 {
+            spans.insert(0, Span::raw(" ".repeat(self.pad)));
+        }
         self.lines.push(Line::from(spans));
     }
 
-    fn gap(&mut self) {
+    pub fn gap(&mut self) {
         self.push(Span::styled("│", Style::new().fg(theme::RAIL)), Vec::new());
     }
+}
+
+pub(crate) fn rail() -> Span<'static> {
+    Span::styled("│ ", Style::new().fg(theme::RAIL))
 }
 
 fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &DateTime<Tz>) {
     let commit = &row.commit;
     let lane = Style::new().fg(theme::lane(commit.author.lane));
-    let rail = Span::styled("│ ", Style::new().fg(theme::RAIL));
-    let header = header(commit, out.content(), now);
+    let rail = rail();
+    let header = header(commit, out.content(), now, None);
     out.node(Span::styled("● ", lane), rail.clone(), header);
+    content(
+        out,
+        &rail,
+        row,
+        !expanded,
+        commit.quoted_commit_id.is_some(),
+        now,
+    );
+    stats(out, &rail, row);
+    if let Some(reply) = row.reply_preview.data.first() {
+        let width = out.content();
+        out.line(rail, reply_line(reply, width, now));
+    }
+}
 
-    let folded = commit.preview_segments.as_ref().filter(|_| !expanded);
+/// The body, folded to its preview when `fold`, and what the web shows under it.
+pub(crate) fn content<Tz: TimeZone>(
+    out: &mut Writer,
+    rail: &Span<'static>,
+    row: &Row,
+    fold: bool,
+    quoted: bool,
+    now: &DateTime<Tz>,
+) {
+    let commit = &row.commit;
+    let folded = commit.preview_segments.as_ref().filter(|_| fold);
     for line in body(folded.unwrap_or(&commit.body_segments), out.content()) {
         out.push(rail.clone(), line);
     }
@@ -198,15 +242,17 @@ fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &Da
     for line in lines {
         out.line(rail.clone(), line);
     }
-    if commit.quoted_commit_id.is_some() {
-        quote(out, &rail, row.quoted_commit.as_ref(), now);
+    if quoted {
+        quote(out, rail, row.quoted_commit.as_ref(), now);
     }
     let mut lines = Vec::new();
     link_preview(&row.media, out.content(), &mut lines);
     for line in lines {
         out.line(rail.clone(), line);
     }
+}
 
+pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
     let star = if row.starred {
         Style::new().fg(theme::AMBER)
     } else {
@@ -220,10 +266,6 @@ fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &Da
             Span::styled(format!("★ {}", row.stars_count), star),
         ],
     );
-    if let Some(reply) = row.reply_preview.data.first() {
-        let width = out.content();
-        out.line(rail, reply_line(reply, width, now));
-    }
 }
 
 fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
@@ -280,7 +322,7 @@ fn quote<Tz: TimeZone>(
     match quoted {
         Some(Shown::Live(quote)) => {
             let commit = &quote.commit;
-            lines.push(header(commit, inner, now));
+            lines.push(header(commit, inner, now, None));
             let segments = commit
                 .preview_segments
                 .as_ref()
@@ -328,7 +370,7 @@ fn quote<Tz: TimeZone>(
     );
 }
 
-fn bad_object(short_hash: &str) -> String {
+pub(crate) fn bad_object(short_hash: &str) -> String {
     format!("fatal: bad object {short_hash}")
 }
 
@@ -419,10 +461,12 @@ fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
     line
 }
 
+/// `mark` follows the time, muted, as the thread marks a quote.
 pub(crate) fn header<Tz: TimeZone>(
     commit: &Commit,
     width: usize,
     now: &DateTime<Tz>,
+    mark: Option<&str>,
 ) -> Vec<Span<'static>> {
     let author = &commit.author;
     let bold = Style::new()
@@ -436,6 +480,9 @@ pub(crate) fn header<Tz: TimeZone>(
         format!(" · {}", relative_time(commit.created_at, now)),
         theme::muted(),
     ));
+    if let Some(mark) = mark {
+        spans.push(Span::styled(format!(" · {mark}"), theme::muted()));
+    }
     match commit.status {
         Status::Pending => spans.push(Span::styled("  in review", Style::new().fg(theme::AMBER))),
         Status::Rejected => spans.push(Span::styled(
@@ -455,7 +502,7 @@ pub(crate) fn header<Tz: TimeZone>(
     fit(spans, width)
 }
 
-fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+pub(crate) fn fit(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
     if spans.iter().map(Span::width).sum::<usize>() <= width {
         return spans;
     }
@@ -698,4 +745,29 @@ pub fn day_label<Tz: TimeZone>(day: NaiveDate, now: &DateTime<Tz>) -> String {
         _ if day.year() == now.year() => day.format("%a, %b %-d").to_string(),
         _ => day.format("%a, %b %-d, %Y").to_string(),
     }
+}
+
+/// The offset that keeps the selected entry's lines on screen, its header first when they do not all fit.
+pub(crate) fn scroll(
+    feed: &Feed,
+    total: usize,
+    selected: usize,
+    offset: usize,
+    height: usize,
+) -> usize {
+    let Some(entry) = feed.entries.get(selected) else {
+        return 0;
+    };
+    let is_last = selected + 1 == feed.entries.len();
+    let start = entry.lines.start;
+    let end = if is_last { total } else { entry.lines.end };
+    let offset = offset.min(total.saturating_sub(height));
+    let offset = if start < offset {
+        start
+    } else if end > offset + height {
+        (end - height).min(start)
+    } else {
+        offset
+    };
+    offset.max((entry.header + 1).saturating_sub(height))
 }
