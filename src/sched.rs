@@ -27,6 +27,12 @@ pub enum CallKey {
     Since(Log),
     Commit(CommitId),
     Replies(CommitId),
+    Star(CommitId),
+    Follow(String),
+    User(String),
+    Delete(CommitId),
+    Pastel(CommitId),
+    Report(CommitId),
 }
 
 impl Call {
@@ -39,6 +45,12 @@ impl Call {
             Call::Since { log, .. } => CallKey::Since(*log),
             Call::Commit(id) => CallKey::Commit(id.clone()),
             Call::Replies { id, .. } => CallKey::Replies(id.clone()),
+            Call::Star { id, .. } => CallKey::Star(id.clone()),
+            Call::Follow { username, .. } => CallKey::Follow(username.clone()),
+            Call::User(username) => CallKey::User(username.clone()),
+            Call::Delete(id) => CallKey::Delete(id.clone()),
+            Call::Pastel(id) => CallKey::Pastel(id.clone()),
+            Call::Report { id, .. } => CallKey::Report(id.clone()),
         }
     }
 }

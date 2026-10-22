@@ -505,7 +505,7 @@ fn draw_piece<Tz: TimeZone>(
         }
         Piece::Ancestor(id) => match store.node(id) {
             Some(Node::Live(row)) => {
-                ancestor(out, row, now);
+                ancestor(out, &row, now);
                 row.commit.author.lane
             }
             Some(Node::Gone(_)) | None => {
@@ -520,7 +520,7 @@ fn draw_piece<Tz: TimeZone>(
             );
             match (store.node(id), missing) {
                 (Some(Node::Live(row)), false) => {
-                    focus(out, row, now);
+                    focus(out, &row, now);
                     row.commit.author.lane
                 }
                 (None, false) => {
@@ -552,7 +552,7 @@ fn draw_piece<Tz: TimeZone>(
         }
         Piece::Reply { id, depth, parent } => match store.node(id) {
             Some(Node::Live(row)) => {
-                reply(out, row, *depth, parent, store, expanded.contains(id), now);
+                reply(out, &row, *depth, parent, store, expanded.contains(id), now);
                 row.commit.author.lane
             }
             Some(Node::Gone(_)) | None => {

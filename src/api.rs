@@ -8,7 +8,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
-use crate::model::{CommitId, CommitPage, Log, LogPage, RepliesPage};
+use crate::model::{CommitId, CommitPage, Focus, Log, LogPage, Reason, RepliesPage};
 
 pub const BASE: &str = "https://dev-null.sh";
 
@@ -23,6 +23,10 @@ pub struct Client {
 pub struct Me {
     pub username: String,
     pub name: Option<String>,
+    #[serde(default)]
+    pub pasteis_mode: bool,
+    #[serde(default)]
+    pub pasteis_remaining: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +58,22 @@ pub enum Call {
         id: CommitId,
         cursor: Option<String>,
     },
+    Star {
+        id: CommitId,
+        on: bool,
+    },
+    Follow {
+        username: String,
+        on: bool,
+    },
+    User(String),
+    Delete(CommitId),
+    Pastel(CommitId),
+    Report {
+        id: CommitId,
+        reason: Reason,
+        details: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -62,6 +82,10 @@ pub enum Reply {
     Page(LogPage),
     Thread(Box<CommitPage>),
     Replies(RepliesPage),
+    Commit(Box<Focus>),
+    Pastel { commit: Box<Focus>, remaining: u32 },
+    User { is_following: bool },
+    Done,
 }
 
 #[derive(Debug)]
@@ -172,7 +196,71 @@ impl Client {
             }
             Call::Commit(id) => self.commit(id).map(|page| Reply::Thread(Box::new(page))),
             Call::Replies { id, cursor } => self.replies(id, cursor.as_deref()).map(Reply::Replies),
+            Call::Star { id, on } => self
+                .star(id, *on)
+                .map(|focus| Reply::Commit(Box::new(focus))),
+            Call::Follow { username, on } => {
+                let path = format!("/api/v1/users/{}/follow", escape(username));
+                self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
+                    .map(|_| Reply::Done)
+            }
+            Call::User(username) => self.user(username),
+            Call::Delete(id) => {
+                let path = format!("/api/v1/commits/{}", escape(&id.0));
+                self.send("DELETE", &path, String::new())
+                    .map(|_| Reply::Done)
+            }
+            Call::Pastel(id) => self.pastel(id),
+            Call::Report {
+                id,
+                reason,
+                details,
+            } => {
+                let path = format!("/api/v1/commits/{}/reports", escape(&id.0));
+                let body =
+                    serde_json::json!({ "reason": reason.slug(), "details": details }).to_string();
+                self.send("POST", &path, body).map(|_| Reply::Done)
+            }
         }
+    }
+
+    fn star(&self, id: &CommitId, on: bool) -> Result<Focus, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Focus,
+        }
+
+        let path = format!("/api/v1/commits/{}/star", escape(&id.0));
+        let (status, text) = self.send(if on { "POST" } else { "DELETE" }, &path, String::new())?;
+        parse::<Wire>(status, &text).map(|wire| wire.data)
+    }
+
+    fn user(&self, username: &str) -> Result<Reply, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            is_following: bool,
+        }
+
+        let path = format!("/api/v1/users/{}", escape(username));
+        let (status, text) = self.send("GET", &path, String::new())?;
+        parse::<Wire>(status, &text).map(|wire| Reply::User {
+            is_following: wire.is_following,
+        })
+    }
+
+    fn pastel(&self, id: &CommitId) -> Result<Reply, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Focus,
+            pasteis_remaining: u32,
+        }
+
+        let path = format!("/api/v1/commits/{}/pasteis", escape(&id.0));
+        let (status, text) = self.send("POST", &path, String::new())?;
+        parse::<Wire>(status, &text).map(|wire| Reply::Pastel {
+            commit: Box::new(wire.data),
+            remaining: wire.pasteis_remaining,
+        })
     }
 
     /// Trades the code from the browser for this device's approval.

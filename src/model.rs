@@ -36,6 +36,42 @@ impl Log {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    Spam,
+    Harassment,
+    Unsafe,
+    Other,
+}
+
+impl Reason {
+    pub const ALL: [Reason; 4] = [
+        Reason::Spam,
+        Reason::Harassment,
+        Reason::Unsafe,
+        Reason::Other,
+    ];
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Reason::Spam => "spam",
+            Reason::Harassment => "harassment",
+            Reason::Unsafe => "unsafe",
+            Reason::Other => "other",
+        }
+    }
+
+    /// The web's words for each reason.
+    pub fn label(self) -> &'static str {
+        match self {
+            Reason::Spam => "Spam or misleading links",
+            Reason::Harassment => "Harassment or hate",
+            Reason::Unsafe => "Harmful or private information",
+            Reason::Other => "Something else",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -192,6 +228,14 @@ pub struct Row {
     pub replies_count: u32,
     pub quoted_commit: Option<Shown<Quote>>,
     pub reply_preview: ReplyPreview,
+    #[serde(skip)]
+    pub deletion: Option<Deletion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Deletion {
+    Running,
+    Done,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -315,6 +359,14 @@ impl LogPage {
     }
 }
 
+/// A commit as its own page shows it, which is also what a star or a pastel answers with.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Focus {
+    #[serde(flatten)]
+    pub card: Card,
+    pub replies_count: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommitPage {
     pub commit: Card,
@@ -329,13 +381,6 @@ impl CommitPage {
         struct Wire {
             data: Focus,
             ancestors: Vec<Shown<Ancestor>>,
-        }
-
-        #[derive(Deserialize)]
-        struct Focus {
-            #[serde(flatten)]
-            card: Card,
-            replies_count: u32,
         }
 
         #[derive(Deserialize)]

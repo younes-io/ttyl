@@ -232,6 +232,14 @@ impl Engine {
         for (call, priority) in self.thread_wants() {
             self.sched.send(call, priority);
         }
+        if self.health.is_none()
+            && let Phase::Ready(session) = &mut self.phase
+        {
+            let sched = &self.sched;
+            for call in session.store.writes(|key| sched.pending(key)) {
+                self.sched.send(call, Priority::Now);
+            }
+        }
         self.sched
             .release(now)
             .into_iter()
@@ -532,6 +540,32 @@ impl Engine {
                             self.timers.set(timer, now + RETRY);
                         }
                         false
+                    }
+                    Call::Star { .. } | Call::Follow { .. } | Call::User(_)
+                        if !matches!(failure, Failure::Refused(_)) =>
+                    {
+                        true
+                    }
+                    Call::Star { .. }
+                    | Call::Follow { .. }
+                    | Call::User(_)
+                    | Call::Delete(_)
+                    | Call::Pastel(_)
+                    | Call::Report { .. } => {
+                        session.store.refused(&call);
+                        let text = match (&error, &call) {
+                            (Error::WrongShape(_), Call::Star { id, .. }) => {
+                                format!("fatal: could not star {}", id.short_hash())
+                            }
+                            (
+                                Error::WrongShape(_),
+                                Call::Follow { username, .. } | Call::User(username),
+                            ) => format!("fatal: could not follow @{username}"),
+                            _ => error.to_string(),
+                        };
+                        self.toast = Some(text);
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
                 };

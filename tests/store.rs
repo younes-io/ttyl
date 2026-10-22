@@ -16,6 +16,8 @@ fn store() -> Store {
         me: Me {
             username: "ada".to_owned(),
             name: None,
+            pasteis_mode: false,
+            pasteis_remaining: None,
         },
         unread: 0,
     })
@@ -78,6 +80,8 @@ fn an_account_reply_moves_the_unread_count() {
             me: Me {
                 username: "ada".to_owned(),
                 name: Some("Ada".to_owned()),
+                pasteis_mode: false,
+                pasteis_remaining: None,
             },
             unread: 3,
         }),

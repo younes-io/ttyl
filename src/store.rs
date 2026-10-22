@@ -1,10 +1,14 @@
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+
+use chrono::Utc;
 
 use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::model::{
-    Card, CommitId, CommitPage, Log, LogPage, RepliesPage, ReplyPreview, Row, Shown, Suggestion,
-    Tombstone,
+    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, ReplyPreview, Row, Shown,
+    Suggestion, Tombstone,
 };
+use crate::sched::CallKey;
 
 pub struct Store {
     pub me: Me,
@@ -14,11 +18,28 @@ pub struct Store {
     logs: HashMap<Log, Slot>,
     threads: HashMap<CommitId, Thread>,
     replies: HashMap<CommitId, Branch>,
+    /// Whether the user wants each commit starred, kept apart from the row so a reply carrying the new count never
+    /// counts the press twice.
+    stars: HashMap<CommitId, bool>,
+    follows: HashMap<String, Follow>,
+    deleting: HashSet<CommitId>,
     generation: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Follow {
+    /// f was pressed before the client knew; `flip` is whether the presses since add up to a change.
+    Asking {
+        flip: bool,
+    },
+    Known {
+        server: bool,
+        want: bool,
+    },
+}
+
 pub enum Node<'a> {
-    Live(&'a Row),
+    Live(Box<Cow<'a, Row>>),
     Gone(&'a Tombstone),
 }
 
@@ -95,8 +116,118 @@ impl Store {
             logs: HashMap::new(),
             threads: HashMap::new(),
             replies: HashMap::new(),
+            stars: HashMap::new(),
+            follows: HashMap::new(),
+            deleting: HashSet::new(),
             generation: 0,
         }
+    }
+
+    /// Flips the star the user sees and returns whether it is now starred.
+    pub fn star(&mut self, id: &CommitId) -> Option<bool> {
+        let row = self.rows.get(id)?;
+        let want = !self.stars.get(id).copied().unwrap_or(row.starred);
+        self.stars.insert(id.clone(), want);
+        self.generation += 1;
+        Some(want)
+    }
+
+    /// Flips the follow the user sees and returns it, or `None` while the client still asks the server.
+    pub fn follow(&mut self, username: &str) -> Option<bool> {
+        let next = match self.follows.get(username) {
+            None => Follow::Asking { flip: true },
+            Some(Follow::Asking { flip }) => Follow::Asking { flip: !flip },
+            Some(Follow::Known { server, want }) => Follow::Known {
+                server: *server,
+                want: !want,
+            },
+        };
+        self.follows.insert(username.to_owned(), next);
+        match next {
+            Follow::Asking { .. } => None,
+            Follow::Known { want, .. } => Some(want),
+        }
+    }
+
+    pub fn following(&self, username: &str) -> Option<bool> {
+        match self.follows.get(username)? {
+            Follow::Asking { .. } => None,
+            Follow::Known { want, .. } => Some(*want),
+        }
+    }
+
+    pub fn start_delete(&mut self, id: &CommitId) {
+        self.deleting.insert(id.clone());
+        self.generation += 1;
+    }
+
+    /// The calls that bring the server to what the user wants, one per subject that has none pending. A want the
+    /// server already matches is forgotten, so a change made elsewhere is not undone later.
+    pub fn writes(&mut self, pending: impl Fn(&CallKey) -> bool) -> Vec<Call> {
+        let mut calls = Vec::new();
+        let rows = &self.rows;
+        self.stars.retain(|id, want| {
+            if pending(&CallKey::Star(id.clone())) {
+                return true;
+            }
+            match rows.get(id) {
+                Some(row) if row.starred != *want => {
+                    calls.push(Call::Star {
+                        id: id.clone(),
+                        on: *want,
+                    });
+                    true
+                }
+                Some(_) | None => false,
+            }
+        });
+        for (username, follow) in &self.follows {
+            match *follow {
+                Follow::Asking { .. } if !pending(&CallKey::User(username.clone())) => {
+                    calls.push(Call::User(username.clone()));
+                }
+                Follow::Known { server, want }
+                    if server != want && !pending(&CallKey::Follow(username.clone())) =>
+                {
+                    calls.push(Call::Follow {
+                        username: username.clone(),
+                        on: want,
+                    });
+                }
+                Follow::Asking { .. } | Follow::Known { .. } => {}
+            }
+        }
+        calls
+    }
+
+    /// The server said no to a write, so what the user sees goes back to what the server has.
+    pub fn refused(&mut self, call: &Call) {
+        match call {
+            Call::Star { id, .. } => {
+                self.stars.remove(id);
+            }
+            Call::Follow { username, .. } => {
+                if let Some(Follow::Known { server, want }) = self.follows.get_mut(username) {
+                    *want = *server;
+                }
+            }
+            Call::User(username) => {
+                self.follows.remove(username);
+            }
+            Call::Delete(id) => {
+                self.deleting.remove(id);
+            }
+            Call::Me
+            | Call::Redeem { .. }
+            | Call::Page(_)
+            | Call::Older { .. }
+            | Call::Since { .. }
+            | Call::Commit(_)
+            | Call::Replies { .. }
+            | Call::Pastel(_)
+            | Call::Report { .. } => return,
+        }
+        self.generation += 1;
     }
 
     pub fn apply(&mut self, call: &Call, reply: Reply) {
@@ -118,8 +249,83 @@ impl Store {
             (Call::Replies { id, cursor }, Reply::Replies(page)) => {
                 self.land_replies(id, cursor.as_deref(), page);
             }
-            (_, Reply::Thread(_) | Reply::Replies(_)) => {}
+            (Call::Star { .. }, Reply::Commit(focus)) => {
+                self.keep_counted(focus.card, Some(focus.replies_count));
+                self.generation += 1;
+            }
+            (Call::Pastel(_), Reply::Pastel { commit, remaining }) => {
+                self.keep_counted(commit.card, Some(commit.replies_count));
+                self.me.pasteis_remaining = Some(remaining);
+                self.generation += 1;
+            }
+            (Call::User(username), Reply::User { is_following }) => {
+                let want = match self.follows.get(username) {
+                    Some(Follow::Asking { flip }) => is_following ^ flip,
+                    Some(Follow::Known { want, .. }) => *want,
+                    None => is_following,
+                };
+                self.follows.insert(
+                    username.clone(),
+                    Follow::Known {
+                        server: is_following,
+                        want,
+                    },
+                );
+            }
+            (Call::Follow { username, on }, Reply::Done) => {
+                if let Some(Follow::Known { server, .. }) = self.follows.get_mut(username) {
+                    *server = *on;
+                }
+            }
+            (Call::Delete(id), Reply::Done) => {
+                self.deleting.remove(id);
+                let row = self.rows.get(id);
+                let tombstone = Tombstone {
+                    id: id.clone(),
+                    parent_id: row.and_then(|row| row.commit.parent_id.clone()),
+                    deleted_at: Utc::now(),
+                    replies_count: row.map(|row| row.replies_count),
+                };
+                self.gone.insert(id.clone(), tombstone);
+                self.generation += 1;
+            }
+            (
+                _,
+                Reply::Thread(_)
+                | Reply::Replies(_)
+                | Reply::Commit(_)
+                | Reply::Pastel { .. }
+                | Reply::User { .. }
+                | Reply::Done,
+            ) => {}
         }
+    }
+
+    /// The row as the user sees it, with their star and a delete still running.
+    fn shown<'a>(&self, row: &'a Row) -> Cow<'a, Row> {
+        let id = &row.commit.id;
+        let want = self
+            .stars
+            .get(id)
+            .copied()
+            .filter(|want| *want != row.starred);
+        let deleting = self.deleting.contains(id);
+        if want.is_none() && !deleting {
+            return Cow::Borrowed(row);
+        }
+        let mut row = row.clone();
+        if let Some(want) = want {
+            row.starred = want;
+            row.stars_count = if want {
+                row.stars_count + 1
+            } else {
+                row.stars_count.saturating_sub(1)
+            };
+        }
+        if deleting {
+            row.deletion = Some(Deletion::Running);
+        }
+        Cow::Owned(row)
     }
 
     fn land_thread(&mut self, id: &CommitId, page: CommitPage) {
@@ -161,6 +367,7 @@ impl Store {
                             replies_count: reply.replies_count,
                             quoted_commit,
                             reply_preview,
+                            deletion: None,
                         },
                     );
                     id
@@ -254,6 +461,7 @@ impl Store {
                 replies_count: replies_count.or(old_count).unwrap_or(0),
                 quoted_commit: card.quoted_commit.or(old_quote),
                 reply_preview,
+                deletion: None,
             },
         );
         self.gone.remove(&id);
@@ -378,11 +586,11 @@ impl Store {
     pub fn node(&self, id: &CommitId) -> Option<Node<'_>> {
         match self.gone.get(id) {
             Some(tombstone) => Some(Node::Gone(tombstone)),
-            None => self.rows.get(id).map(Node::Live),
+            None => self.rows.get(id).map(|row| Node::Live(Box::new(self.shown(row)))),
         }
     }
 
-    /// Changes whenever a page lands, so a layout built from the rows can tell it is stale.
+    /// Changes whenever what the rows show changes, so a layout built from them can tell it is stale.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -404,7 +612,13 @@ impl Store {
             rows: listing
                 .ids
                 .iter()
-                .filter_map(|id| self.rows.get(id).cloned())
+                .filter_map(|id| {
+                    let mut row = self.shown(self.rows.get(id)?).into_owned();
+                    if self.gone.contains_key(id) {
+                        row.deletion = Some(Deletion::Done);
+                    }
+                    Some(row)
+                })
                 .collect(),
             next_cursor: listing.next_cursor.clone(),
             is_ranked: listing.is_ranked,
