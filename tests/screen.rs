@@ -190,7 +190,10 @@ fn latest_draws_headers_day_markers_and_badges() {
     assert!(contains(&rows, "┆ Today"));
     assert!(contains(&rows, "@ada · 29m  in review"), "{rows:#?}");
     assert!(contains(&rows, "@ada · 15h  rejected"), "{rows:#?}");
-    assert!(contains(&rows, "↩ 3   ★ 12"));
+    assert!(
+        first.starts_with(" ● Ada @ada · 18m · ↩ 3  ★ 12"),
+        "counts ride the header: {first:?}"
+    );
     assert!(contains(&rows, "today's footgun:"));
     assert!(
         contains(&rows, "echo \"<b>$name</b>\";"),
@@ -203,12 +206,15 @@ fn space_unfolds_the_selected_long_commit() {
     let mut app = app();
     press(&mut app, "2jjjj");
     let folded = screen(&mut app, 70, 40);
-    assert!(contains(&folded, "show more"));
+    assert!(
+        contains(&folded, "+8 lines · space to expand"),
+        "{folded:#?}"
+    );
     assert!(contains(&folded, "┆ Yesterday"));
 
     press(&mut app, " ");
     let unfolded = screen(&mut app, 70, 40);
-    assert!(!contains(&unfolded, "show more"));
+    assert!(!contains(&unfolded, "+8 lines"));
     assert!(
         contains(&unfolded, "10."),
         "the tenth list item shows once unfolded: {unfolded:#?}"
@@ -228,39 +234,14 @@ fn commit_rows(rows: &[String], hash: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_quoted_commit_sits_in_a_box_under_the_quoting_commit() {
+fn a_quoted_commit_takes_one_line_under_the_quoting_commit() {
     let mut app = app();
     press(&mut app, "2");
     let rows = commit_rows(&screen(&mut app, 70, 120), "e4f5a62");
-    let top = rows
-        .iter()
-        .position(|row| row.contains("╭"))
-        .expect("box top");
-    assert!(rows[top].trim_end().ends_with("╮"), "{rows:#?}");
-    assert!(
-        rows[top + 1].starts_with(" │ │ Margaret @margaret · 11h"),
+    assert_eq!(
+        rows[2].trim_end(),
+        " │ ❝ Margaret @margaret  notes from rewriting our scheduler. 1. the …",
         "{rows:#?}"
-    );
-    assert!(rows[top + 1].trim_end().ends_with("0000401 │"), "{rows:#?}");
-    let bottom = rows
-        .iter()
-        .position(|row| row.contains("╰"))
-        .expect("box bottom");
-    assert!(
-        rows[top + 1..bottom]
-            .iter()
-            .all(|row| row.trim_end().ends_with('│')),
-        "every line inside the box is closed on the right: {rows:#?}"
-    );
-    assert!(
-        rows[top..=bottom]
-            .iter()
-            .all(|row| row.trim_end().chars().count() == 70 - 1),
-        "the box spans the content width: {rows:#?}"
-    );
-    assert!(
-        rows[bottom + 1].contains("↩ 0   ★ 0"),
-        "the footer follows the box: {rows:#?}"
     );
 }
 
@@ -271,10 +252,9 @@ fn a_deleted_quote_and_a_deleted_reply_read_as_bad_objects() {
     let rows = screen(&mut app, 70, 120);
     let quote = commit_rows(&rows, "0000a01");
     assert!(
-        contains(&quote, "│ │ fatal: bad object 0000b01"),
+        contains(&quote, "│ ❝ fatal: bad object 0000b01"),
         "{quote:#?}"
     );
-    assert!(contains(&quote, "This commit is no longer available."));
     let reply = commit_rows(&rows, "0000201");
     assert!(
         reply
@@ -289,12 +269,8 @@ fn the_newest_reply_previews_on_one_line_under_its_commit() {
     let mut app = app();
     press(&mut app, "2");
     let rows = commit_rows(&screen(&mut app, 70, 120), "e4f5a61");
-    let footer = rows
-        .iter()
-        .position(|row| row.contains("↩ 3   ★ 12"))
-        .expect("footer");
     assert_eq!(
-        rows[footer + 1].trim_end(),
+        rows[3].trim_end(),
         " ┃   ● Grace @grace · 10m  @ada did you keep an index on created_at?"
     );
 }
@@ -307,7 +283,7 @@ fn link_previews_images_and_polls_each_take_one_line() {
     assert!(
         contains(
             &commit_rows(&rows, "0000601"),
-            "│ We need tool support for keyset pagination · use-the-index-luke.com"
+            "│ ⇗ We need tool support for keyset pagination · use-the-index-luke.com"
         ),
         "{rows:#?}"
     );
@@ -386,7 +362,7 @@ fn every_line_fits_the_width_it_was_laid_out_for() {
         .map(|row| row.commit.id.clone())
         .collect::<HashSet<_>>();
     for width in [24, 40, 57, 80, 120] {
-        let feed = feed::layout(&page, width, &expanded, &now());
+        let (feed, _) = feed::layout(&page, width, &expanded, true, &now());
         for line in &feed.lines {
             assert!(line.width() <= usize::from(width), "{width}: {line:?}");
         }
@@ -500,4 +476,26 @@ fn a_narrow_footer_error_still_ends_in_help() {
             "{width}: the spinner cells stay free: {rows:#?}"
         );
     }
+}
+
+#[test]
+fn a_wide_terminal_shows_the_selected_commits_replies_beside_the_feed() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = screen(&mut app, 120, 40);
+    assert!(
+        rows.iter().all(|row| !row
+            .chars()
+            .take(72)
+            .collect::<String>()
+            .contains("@grace · 10m")),
+        "the reply leaves the feed: {rows:#?}"
+    );
+    assert!(contains(&rows, "│ 3 replies · 12 stars"), "{rows:#?}");
+    assert!(contains(&rows, "│ Replies"), "{rows:#?}");
+    assert!(contains(&rows, "@ada did you keep an index on created_at?"));
+    assert!(contains(&rows, "│ enter opens the thread"));
+
+    let narrow = screen(&mut app, 100, 40);
+    assert!(!contains(&narrow, "│ Replies"), "{narrow:#?}");
 }

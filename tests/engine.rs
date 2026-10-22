@@ -290,7 +290,7 @@ fn a_page_that_fails_waits_its_turn_instead_of_refiring_on_every_key() {
     };
     let rows = screen(&mut engine, 100, 20, at);
     assert!(
-        !contains(&rows, "fatal"),
+        !contains(&rows, "maintenance"),
         "another log's failure stays off this log's screen: {rows:#?}"
     );
     engine.update(
@@ -749,9 +749,10 @@ fn an_older_page_failure_speaks_only_at_the_end_of_the_feed() {
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(5));
     let rows = screen(&mut engine, 120, 30, at + secs(12));
-    assert_eq!(
-        rows[28].trim(),
-        "fatal: could not load older commits · retrying in 23s",
+    assert!(
+        rows[28]
+            .trim_start()
+            .starts_with("fatal: could not load older commits · retrying in 23s"),
         "{rows:#?}"
     );
     assert!(

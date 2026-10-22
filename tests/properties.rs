@@ -198,7 +198,7 @@ proptest! {
             .filter(|_| expand)
             .map(|row| row.commit.id.clone())
             .collect();
-        let feed = feed::layout(&page, width, &expanded, &now());
+        let (feed, _) = feed::layout(&page, width, &expanded, true, &now());
         for line in &feed.lines {
             prop_assert!(line.width() <= usize::from(width), "{width}: {:?}", text(line));
         }
@@ -212,8 +212,9 @@ proptest! {
         let mut row = fixture_row();
         row.commit.body_segments = vec![Segment::Text { text: body.clone() }];
         row.commit.preview_segments = None;
+        let expanded = HashSet::from([row.commit.id.clone()]);
         let page = row_page(row);
-        let feed = feed::layout(&page, width, &HashSet::new(), &now());
+        let (feed, _) = feed::layout(&page, width, &expanded, true, &now());
         let rendered: String = feed
             .lines
             .iter()
@@ -236,7 +237,7 @@ proptest! {
         let author = row.commit.author.clone();
         following.rows.clear();
         following.suggestions = vec![suggestion(row)];
-        let feed = feed::layout(&following, width, &HashSet::new(), &now());
+        let (feed, _) = feed::layout(&following, width, &HashSet::new(), true, &now());
         let line = feed
             .lines
             .iter()
@@ -317,7 +318,7 @@ fn a_suggestion_cut_right_after_its_author_still_ends_in_an_ellipsis() {
     }];
     following.rows.clear();
     following.suggestions = vec![suggestion(row)];
-    let feed = feed::layout(&following, 12, &HashSet::new(), &now());
+    let (feed, _) = feed::layout(&following, 12, &HashSet::new(), true, &now());
     let line = feed
         .lines
         .iter()

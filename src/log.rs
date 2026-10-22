@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 
 use crate::keys::Action;
 use crate::model::{CommitId, Log};
@@ -38,7 +38,11 @@ struct Place {
 struct LaidOut {
     inputs: Inputs,
     feed: feed::Feed,
+    folded: Vec<bool>,
 }
+
+/// From this width the selected commit's quote, link and replies get a pane of their own beside the feed.
+const WIDE: u16 = 110;
 
 #[derive(PartialEq)]
 struct Inputs {
@@ -121,10 +125,17 @@ impl LogScreen {
         let ids = self.ids(store);
         match action {
             Action::Down | Action::Up | Action::Top | Action::Bottom => !ids.is_empty(),
-            Action::Expand => ids
-                .get(self.selected())
-                .and_then(|id| store.row(id))
-                .is_some_and(|row| row.commit.preview_segments.is_some()),
+            Action::Expand => {
+                let place = &self.places[index(self.active)];
+                let folded = place
+                    .laid_out
+                    .as_ref()
+                    .is_some_and(|laid_out| laid_out.folded.get(place.selected) == Some(&true));
+                folded
+                    || ids
+                        .get(self.selected())
+                        .is_some_and(|id| self.expanded.contains(id))
+            }
             Action::Open => !ids.is_empty(),
             Action::Show(_) | Action::NextLog | Action::Refresh => true,
             Action::Back
@@ -267,6 +278,17 @@ impl LogScreen {
                 area,
             ),
             Slot::Loaded(listing) => {
+                let wide = area.width >= WIDE && !listing.ids.is_empty();
+                let (area, pane) = if wide {
+                    let feed = area.width * 3 / 5;
+                    let [feed, pane] =
+                        Layout::horizontal([Constraint::Length(feed), Constraint::Fill(1)])
+                            .spacing(1)
+                            .areas(area);
+                    (feed, Some(pane))
+                } else {
+                    (area, None)
+                };
                 let inputs = Inputs {
                     width: area.width,
                     generation: store.generation(),
@@ -278,8 +300,13 @@ impl LogScreen {
                     Some(laid_out) if laid_out.inputs == inputs => laid_out,
                     _ => {
                         let page = store.page(self.active).expect("a loaded slot has a page");
-                        let feed = feed::layout(&page, area.width, &self.expanded, now);
-                        LaidOut { inputs, feed }
+                        let (feed, folded) =
+                            feed::layout(&page, area.width, &self.expanded, !wide, now);
+                        LaidOut {
+                            inputs,
+                            feed,
+                            folded,
+                        }
                     }
                 };
                 let feed = &place.laid_out.insert(laid_out).feed;
@@ -312,6 +339,17 @@ impl LogScreen {
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
                 frame.render_widget(Paragraph::new(lines), area);
+                if let (Some(pane), Some(row)) =
+                    (pane, selected.and_then(|at| store.row(&listing.ids[at])))
+                {
+                    let block = Block::new()
+                        .borders(Borders::LEFT)
+                        .border_style(Style::new().fg(theme::RAIL))
+                        .padding(Padding::horizontal(1));
+                    let inner = block.inner(pane);
+                    let lines = feed::context(row, inner.width, now);
+                    frame.render_widget(Paragraph::new(lines).block(block), pane);
+                }
             }
         }
     }

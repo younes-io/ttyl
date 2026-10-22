@@ -75,22 +75,27 @@ pub fn older_failed(what: &str, retry: Duration) -> [Line<'static>; 2] {
     ]
 }
 
+/// Lays the page out one dense row per commit, and says which rows were cut short. With `inline_replies`
+/// the newest reply sits under its commit, for terminals too narrow for the context pane.
 pub fn layout<Tz: TimeZone>(
     page: &LogPage,
     width: u16,
     expanded: &HashSet<CommitId>,
+    inline_replies: bool,
     now: &DateTime<Tz>,
-) -> Feed {
+) -> (Feed, Vec<bool>) {
     let mut out = Writer::new(width);
     if page.rows.is_empty() {
         empty(&mut out, page);
-        return Feed {
+        let feed = Feed {
             lines: out.lines,
             entries: Vec::new(),
         };
+        return (feed, Vec::new());
     }
 
     let mut entries = Vec::with_capacity(page.rows.len());
+    let mut folded = Vec::with_capacity(page.rows.len());
     let mut last_day = None;
     for (index, row) in page.rows.iter().enumerate() {
         if index > 0 {
@@ -113,7 +118,8 @@ pub fn layout<Tz: TimeZone>(
             }
         }
         let header = out.lines.len();
-        row_lines(&mut out, row, expanded.contains(&row.commit.id), now);
+        let open = expanded.contains(&row.commit.id);
+        folded.push(row_lines(&mut out, row, open, inline_replies, now));
         entries.push(Entry {
             lines: start..out.lines.len(),
             header,
@@ -135,10 +141,11 @@ pub fn layout<Tz: TimeZone>(
         );
     }
 
-    Feed {
+    let feed = Feed {
         lines: out.lines,
         entries,
-    }
+    };
+    (feed, folded)
 }
 
 pub(crate) struct Writer {
@@ -195,7 +202,17 @@ pub(crate) fn rail() -> Span<'static> {
     Span::styled("│ ", Style::new().fg(theme::RAIL))
 }
 
-fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &DateTime<Tz>) {
+const BODY_LINES: usize = 4;
+
+/// One commit as the feed shows it: a header carrying the counts, the body cut to `BODY_LINES` unless
+/// `expanded`, and the quote, media and link each on one line. Returns whether the body was cut.
+fn row_lines<Tz: TimeZone>(
+    out: &mut Writer,
+    row: &Row,
+    expanded: bool,
+    inline_replies: bool,
+    now: &DateTime<Tz>,
+) -> bool {
     let commit = &row.commit;
     if row.deletion == Some(Deletion::Done) {
         out.node(
@@ -203,25 +220,176 @@ fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &Da
             rail(),
             vec![Span::styled(bad_object(&commit.short_hash), theme::muted())],
         );
-        return;
+        return false;
     }
     let lane = Style::new().fg(theme::lane(commit.author.lane));
     let rail = rail();
-    let header = header(commit, out.content(), now, None);
+    let header = header_with(commit, out.content(), now, counts(row));
     out.node(Span::styled("● ", lane), rail.clone(), header);
-    content(
-        out,
-        &rail,
-        row,
-        !expanded,
-        commit.quoted_commit_id.is_some(),
-        now,
-    );
-    stats(out, &rail, row);
-    if let Some(reply) = row.reply_preview.data.first() {
-        let width = out.content();
-        out.line(rail, reply_line(reply, width, now));
+
+    let mut text = body(&commit.body_segments, out.content());
+    let cut = text.len().saturating_sub(BODY_LINES);
+    let folded = !expanded && cut > 1;
+    if folded {
+        text.truncate(BODY_LINES);
     }
+    for line in text {
+        out.push(rail.clone(), line);
+    }
+    if folded {
+        out.push(
+            rail.clone(),
+            vec![Span::styled(
+                format!("+{cut} lines · space to expand"),
+                theme::muted(),
+            )],
+        );
+    }
+    let width = out.content();
+    let mut lines = Vec::new();
+    web_only(&row.media, width, &mut lines);
+    if commit.quoted_commit_id.is_some() {
+        lines.push(quote_line(row.quoted_commit.as_ref(), width));
+    }
+    if let Some(preview) = &row.media.link_preview
+        && let Some(title) = &preview.title
+    {
+        lines.push(fit(
+            vec![
+                Span::styled("⇗ ", theme::muted()),
+                Span::styled(title.clone(), Style::new().fg(theme::FOREGROUND)),
+                Span::styled(format!(" · {}", domain(&preview.url)), theme::muted()),
+            ],
+            width,
+        ));
+    }
+    if inline_replies && let Some(reply) = row.reply_preview.data.first() {
+        lines.push(reply_line(reply, width, now));
+    }
+    for line in lines {
+        out.line(rail.clone(), line);
+    }
+    folded
+}
+
+/// The header's tail: replies and stars when there are any, or that the commit is being deleted.
+fn counts(row: &Row) -> Vec<Span<'static>> {
+    if row.deletion == Some(Deletion::Running) {
+        return vec![Span::styled(" · deleting…", theme::muted())];
+    }
+    let mut spans = Vec::new();
+    if row.replies_count > 0 {
+        spans.push(Span::styled(
+            format!(" · ↩ {}", row.replies_count),
+            theme::muted(),
+        ));
+    }
+    if row.stars_count > 0 || row.starred {
+        let star = if row.starred {
+            Style::new().fg(theme::AMBER)
+        } else {
+            theme::muted()
+        };
+        let lead = if spans.is_empty() { " · " } else { "  " };
+        spans.push(Span::styled(lead, theme::muted()));
+        spans.push(Span::styled(format!("★ {}", row.stars_count), star));
+    }
+    spans
+}
+
+fn quote_line(quoted: Option<&Shown<Quote>>, width: usize) -> Vec<Span<'static>> {
+    let mark = Span::styled("❝ ", theme::muted());
+    match quoted {
+        Some(Shown::Live(quote)) => one_liner("❝ ", &quote.commit, "", theme::muted(), width),
+        Some(Shown::Deleted(tombstone)) => fit(
+            vec![
+                mark,
+                Span::styled(bad_object(&tombstone.short_hash()), theme::muted()),
+            ],
+            width,
+        ),
+        None => vec![
+            mark,
+            Span::styled("This commit isn't available.", theme::muted()),
+        ],
+    }
+}
+
+/// What the feed row leaves out for the selected commit: the whole quote, the link, and the replies
+/// loaded with it. The log draws it beside the feed on wide terminals.
+pub fn context<Tz: TimeZone>(row: &Row, width: u16, now: &DateTime<Tz>) -> Vec<Line<'static>> {
+    let width = usize::from(width).max(8);
+    let mut lines: Vec<Vec<Span<'static>>> = Vec::new();
+    let heading = |text: String| {
+        vec![Span::styled(
+            text,
+            Style::new()
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD),
+        )]
+    };
+    let plural = |count: u32, one: &str, many: &str| {
+        format!("{count} {}", if count == 1 { one } else { many })
+    };
+    lines.push(vec![Span::styled(
+        format!(
+            "{} · {}",
+            plural(row.replies_count, "reply", "replies"),
+            plural(row.stars_count, "star", "stars")
+        ),
+        theme::muted(),
+    )]);
+    if row.commit.quoted_commit_id.is_some() {
+        lines.push(Vec::new());
+        lines.push(heading("Quoting".to_owned()));
+        match row.quoted_commit.as_ref() {
+            Some(Shown::Live(quote)) => {
+                lines.push(header(&quote.commit, width, now, None));
+                lines.extend(body(&quote.commit.body_segments, width));
+                web_only(&quote.media, width, &mut lines);
+                link_preview(&quote.media, width, &mut lines);
+            }
+            other => lines.push(quote_line(other, width)),
+        }
+    }
+    if let Some(preview) = &row.media.link_preview
+        && preview.title.is_some()
+    {
+        lines.push(Vec::new());
+        link_preview(&row.media, width, &mut lines);
+        if let Some(description) = &preview.description {
+            wrap(&[(description.clone(), theme::muted())], width, &mut lines);
+        }
+    }
+    if !row.reply_preview.data.is_empty() {
+        lines.push(Vec::new());
+        lines.push(heading("Replies".to_owned()));
+        for reply in &row.reply_preview.data {
+            match reply {
+                Shown::Live(reply) => {
+                    lines.push(header(&reply.commit, width, now, None));
+                    let mut text = body(&reply.commit.body_segments, width);
+                    if text.len() > BODY_LINES {
+                        text.truncate(BODY_LINES);
+                        text.push(vec![Span::styled("…", theme::muted())]);
+                    }
+                    lines.extend(text);
+                }
+                Shown::Deleted(tombstone) => lines.push(vec![Span::styled(
+                    bad_object(&tombstone.short_hash()),
+                    theme::muted(),
+                )]),
+            }
+            lines.push(Vec::new());
+        }
+    }
+    if row.replies_count > 0 {
+        if row.reply_preview.data.is_empty() {
+            lines.push(Vec::new());
+        }
+        lines.push(vec![Span::styled("enter opens the thread", theme::muted())]);
+    }
+    lines.into_iter().map(Line::from).collect()
 }
 
 pub(crate) fn content<Tz: TimeZone>(
@@ -480,6 +648,19 @@ pub(crate) fn header<Tz: TimeZone>(
     now: &DateTime<Tz>,
     mark: Option<&str>,
 ) -> Vec<Span<'static>> {
+    let tail = mark
+        .map(|mark| Span::styled(format!(" · {mark}"), theme::muted()))
+        .into_iter()
+        .collect();
+    header_with(commit, width, now, tail)
+}
+
+fn header_with<Tz: TimeZone>(
+    commit: &Commit,
+    width: usize,
+    now: &DateTime<Tz>,
+    tail: Vec<Span<'static>>,
+) -> Vec<Span<'static>> {
     let author = &commit.author;
     let bold = Style::new()
         .fg(theme::FOREGROUND)
@@ -492,9 +673,7 @@ pub(crate) fn header<Tz: TimeZone>(
         format!(" · {}", relative_time(commit.created_at, now)),
         theme::muted(),
     ));
-    if let Some(mark) = mark {
-        spans.push(Span::styled(format!(" · {mark}"), theme::muted()));
-    }
+    spans.extend(tail);
     match commit.status {
         Status::Pending => spans.push(Span::styled("  in review", Style::new().fg(theme::AMBER))),
         Status::Rejected => spans.push(Span::styled(

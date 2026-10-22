@@ -177,18 +177,18 @@ fn a_draft_emptied_by_hand_is_deleted() {
 fn esc_keeps_the_draft_and_reopening_restores_it_with_the_stash_line() {
     let at = Instant::now();
     let mut engine = on_grace(at);
-    press(&mut engine, "rhello", at);
+    press(&mut engine, "rquokka", at);
     assert!(tap(&mut engine, KeyCode::Esc, at).is_empty());
     let rows = screen(&mut engine, 100, HEIGHT, at);
     assert!(
         !contains(&rows, "Reply to"),
         "esc closes the panel: {rows:#?}"
     );
-    assert_eq!(engine.draft(&Target::Reply(grace())), Some("hello"));
+    assert_eq!(engine.draft(&Target::Reply(grace())), Some("quokka"));
 
     press(&mut engine, "c", at);
     let rows = screen(&mut engine, 100, HEIGHT, at);
-    assert!(!contains(&rows, "hello"), "a new commit has its own draft");
+    assert!(!contains(&rows, "quokka"), "a new commit has its own draft");
     assert!(!contains(&rows, "stash@{0}"));
     tap(&mut engine, KeyCode::Esc, at);
 
@@ -196,7 +196,7 @@ fn esc_keeps_the_draft_and_reopening_restores_it_with_the_stash_line() {
     for width in WIDTHS {
         let rows = screen(&mut engine, width, HEIGHT, at);
         let panel = title_row(&rows, "Reply to @grace");
-        assert_eq!(rows[panel + 1], " hello");
+        assert_eq!(rows[panel + 1], " quokka");
         assert_eq!(
             rows[panel + 4],
             " stash@{0}: restored your unsent draft",
@@ -205,7 +205,7 @@ fn esc_keeps_the_draft_and_reopening_restores_it_with_the_stash_line() {
     }
     press(&mut engine, "!", at);
     let rows = screen(&mut engine, 100, HEIGHT, at);
-    assert!(contains(&rows, " hello!"));
+    assert!(contains(&rows, " quokka!"));
     assert!(
         !contains(&rows, "stash@{0}"),
         "the stash line goes on the first edit"

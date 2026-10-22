@@ -167,7 +167,9 @@ fn a_new_commit_closes_the_panel_drops_the_draft_and_goes_on_top_of_latest_and_f
         assert_eq!(panel_title(&rows), None, "{rows:#?}");
         assert!(contains(&rows, "[log a1b2c3d] first line"), "{rows:#?}");
         assert!(
-            !contains(&rows, "second"),
+            rows.iter()
+                .filter(|row| row.contains("[log a1b2c3d]"))
+                .all(|row| !row.contains("second")),
             "the toast keeps the first line: {rows:#?}"
         );
     }
