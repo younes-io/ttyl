@@ -185,11 +185,11 @@ impl ThreadScreen {
             | Action::Up
             | Action::Top
             | Action::Bottom
-            | Action::Open
             | Action::Back
             | Action::Show(_)
             | Action::NextLog
             | Action::Refresh => true,
+            Action::Open => self.opens(store).is_some(),
             Action::Expand => {
                 let pieces = self.pieces(store, &BARE);
                 pieces

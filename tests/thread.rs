@@ -41,15 +41,15 @@ fn back_returns_to_the_same_tab_selection_and_scroll() {
 }
 
 #[test]
-fn the_thread_hint_names_its_keys_and_keeps_help_when_narrow() {
+fn the_thread_hint_keeps_back_and_help_when_narrow() {
     let at = Instant::now();
     let mut engine = on_latest(at);
     let effects = tap(&mut engine, KeyCode::Enter, at);
     answer(&mut engine, effects, at);
     let rows = screen(&mut engine, 100, 24, at);
-    assert_eq!(rows[23], " j/k move  enter open  esc back  ? help  Q quit");
+    assert_eq!(rows[23], " esc back  j/k move  ? help  Q quit");
     let rows = screen(&mut engine, 30, 24, at);
-    assert_eq!(rows[23], " j/k move  ? help  Q quit", "{rows:#?}");
+    assert_eq!(rows[23], " esc back  ? help  Q quit", "{rows:#?}");
     let rows = screen(&mut engine, 12, 24, at);
     assert_eq!(rows[23], " ? help", "{rows:#?}");
 }
@@ -63,7 +63,6 @@ fn help_on_a_thread_lists_the_thread_keys() {
     let rows = screen(&mut engine, 100, 40, at);
     for shown in [
         "move down",
-        "open this commit's thread",
         "esc/backspace  back",
         "following",
         "next log",
@@ -72,7 +71,11 @@ fn help_on_a_thread_lists_the_thread_keys() {
     ] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
-    for hidden in ["open the thread", "refresh this log"] {
+    for hidden in [
+        "open the thread",
+        "open this commit's thread",
+        "refresh this log",
+    ] {
         assert!(!contains(&rows, hidden), "{hidden}: {rows:#?}");
     }
     press(&mut engine, "?", at);

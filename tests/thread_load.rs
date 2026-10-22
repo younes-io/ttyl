@@ -121,6 +121,19 @@ fn opened(keys: &str, height: u16) -> (Engine, Instant) {
 }
 
 #[test]
+fn enter_open_is_offered_only_on_a_commit_it_would_open() {
+    let (mut engine, at) = opened("", HEIGHT);
+    let hint = |engine: &mut Engine| screen(engine, WIDTH, HEIGHT, at)[HEIGHT as usize - 1].clone();
+    assert_eq!(hint(&mut engine), " esc back  j/k move  ? help  Q quit");
+    assert!(tap(&mut engine, KeyCode::Enter, at).is_empty());
+    press(&mut engine, "j", at);
+    assert_eq!(
+        hint(&mut engine),
+        " esc back  j/k move  enter open  ? help  Q quit"
+    );
+}
+
+#[test]
 fn opening_asks_for_the_commit_and_its_replies_in_the_same_update() {
     let at = Instant::now();
     let mut engine = boot_serving(at, world_pages);

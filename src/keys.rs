@@ -118,6 +118,13 @@ pub struct Binding {
 
 pub const TABLE: &[Binding] = &[
     Binding {
+        scope: Scope::Thread,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
         scope: Scope::List,
         chords: &[&[Key::ch('j')], &[Key::code(KeyCode::Down)]],
         action: Action::Down,
@@ -200,13 +207,6 @@ pub const TABLE: &[Binding] = &[
         action: Action::Open,
         hint: Some("enter open"),
         help: "open this commit's thread",
-    },
-    Binding {
-        scope: Scope::Thread,
-        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
-        action: Action::Back,
-        hint: Some("esc back"),
-        help: "back",
     },
     Binding {
         scope: Scope::Thread,
