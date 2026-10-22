@@ -24,6 +24,7 @@ const LANES: [Color; 6] = [
     Color::Rgb(0xfc, 0xc4, 0x19),
 ];
 
+pub const ACCENT: Color = LANES[0];
 pub const AMBER: Color = LANES[5];
 
 pub fn lane(lane: Lane) -> Color {

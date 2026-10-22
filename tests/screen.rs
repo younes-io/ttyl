@@ -568,3 +568,33 @@ fn the_selected_commit_is_a_card_of_even_rows_with_padding_above_and_below() {
         "the card reaches past the text"
     );
 }
+
+#[test]
+fn z_covers_the_screen_with_a_drifting_wordmark_until_any_key() {
+    let mut app = app();
+    press(&mut app, "2");
+    let feed = screen(&mut app, 80, 30);
+    press(&mut app, "z");
+    let ink = |rows: &[String]| -> Vec<(usize, usize)> {
+        rows.iter()
+            .enumerate()
+            .flat_map(|(y, row)| {
+                row.chars()
+                    .enumerate()
+                    .filter(|(_, ch)| "█▀▄".contains(*ch))
+                    .map(move |(x, _)| (x, y))
+            })
+            .collect()
+    };
+    let first = screen(&mut app, 80, 30);
+    assert!(!contains(&first, "@ada"), "the feed is hidden: {first:#?}");
+    assert!(!ink(&first).is_empty(), "the wordmark is drawn: {first:#?}");
+    let later = common::screen(&mut app.0, 80, 30, app.1 + secs(3));
+    assert_ne!(ink(&first), ink(&later), "the wordmark drifts");
+    press(&mut app, "j");
+    assert_eq!(
+        screen(&mut app, 80, 30),
+        feed,
+        "the first key only brings the feed back"
+    );
+}

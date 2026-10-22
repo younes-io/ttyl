@@ -30,6 +30,7 @@ pub enum Action {
     Send,
     Editor,
     Site,
+    Saver,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -624,6 +625,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Inbox,
         hint: None,
         help: "notifications",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('z')]],
+        action: Action::Saver,
+        hint: None,
+        help: "screensaver",
     },
     Binding {
         scope: Scope::Global,

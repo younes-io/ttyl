@@ -27,6 +27,7 @@ use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
     self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
 };
+use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
 use crate::signin::Callback;
@@ -158,7 +159,7 @@ impl Session {
         if let Action::Commit(act) = action {
             return self.allows(act);
         }
-        matches!(action, Action::Quit | Action::Help)
+        matches!(action, Action::Quit | Action::Help | Action::Saver)
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
@@ -461,6 +462,7 @@ pub struct Engine {
     device_name: String,
     start: Instant,
     drafts: Drafts,
+    saver: Option<Instant>,
 }
 
 impl Engine {
@@ -477,6 +479,7 @@ impl Engine {
             device_name,
             start: now,
             drafts: Drafts::default(),
+            saver: None,
         }
     }
 
@@ -620,6 +623,7 @@ impl Engine {
             self.counting_down().then(|| now + SECOND),
             (!self.thread_wants(now).is_empty()).then_some(now),
             self.placeholder_at().filter(|at| *at > now),
+            self.saver.map(|_| now + saver::STEP),
         ]
         .into_iter()
         .flatten()
@@ -777,6 +781,9 @@ impl Engine {
     }
 
     fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
+        if self.saver.take().is_some() {
+            return Vec::new();
+        }
         let scopes = self.scopes();
         let mode = self.input_mode();
         let sending = self.sending();
@@ -867,6 +874,7 @@ impl Engine {
                 return vec![Effect::Open(format!("{}/", api::BASE))];
             }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
+            (Phase::Ready(_), Action::Saver) => self.saver = Some(now),
             (Phase::Ready(session), Action::Compose) => {
                 let draft = self.drafts.get(&Target::New);
                 session.composer = Some(Composer::open(Target::New, None, draft));
@@ -1354,6 +1362,9 @@ impl Engine {
     }
 
     pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
+        if let Some(since) = self.saver {
+            return saver::draw(frame, since, now);
+        }
         let room =
             usize::from(frame.area().width).saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
         let sending = self.sending();

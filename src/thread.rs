@@ -215,6 +215,7 @@ impl ThreadScreen {
             }
             Action::Quit
             | Action::Help
+            | Action::Saver
             | Action::Close
             | Action::SignIn
             | Action::StartOver
