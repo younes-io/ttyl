@@ -587,7 +587,7 @@ impl Engine {
         self.load_older();
         self.load_older_inbox();
         self.load_older_group();
-        for (call, priority) in self.thread_wants() {
+        for (call, priority) in self.thread_wants(now) {
             self.sched.send(call, priority);
         }
         if self.health.is_none()
@@ -611,7 +611,7 @@ impl Engine {
             self.sched.next_wake(now),
             self.sched.busy().then(|| now + FRAME),
             self.counting_down().then(|| now + SECOND),
-            (!self.thread_wants().is_empty()).then_some(now),
+            (!self.thread_wants(now).is_empty()).then_some(now),
             self.placeholder_at().filter(|at| *at > now),
         ]
         .into_iter()
@@ -669,11 +669,16 @@ impl Engine {
         }
     }
 
-    fn thread_wants(&self) -> Vec<(Call, Priority)> {
+    fn thread_wants(&self, now: Instant) -> Vec<(Call, Priority)> {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
         };
-        let Some(thread) = session.thread() else {
+        let thread = match session.stack.last() {
+            Some(Screen::Thread(thread)) => Some(thread.as_ref()),
+            Some(Screen::Inbox | Screen::Group(_)) => None,
+            None => session.log.peek(&session.store, now),
+        };
+        let Some(thread) = thread else {
             return Vec::new();
         };
         thread
@@ -690,10 +695,11 @@ impl Engine {
         let Phase::Ready(session) = &self.phase else {
             return None;
         };
-        match session.stack.last()? {
-            Screen::Thread(thread) => thread.placeholder_at(&session.store),
-            Screen::Inbox => session.inbox.placeholder_at(),
-            Screen::Group(group) => group.placeholder_at(),
+        match session.stack.last() {
+            Some(Screen::Thread(thread)) => thread.placeholder_at(&session.store),
+            Some(Screen::Inbox) => session.inbox.placeholder_at(),
+            Some(Screen::Group(group)) => group.placeholder_at(),
+            None => session.log.peek_due(),
         }
     }
 
@@ -1463,9 +1469,14 @@ impl Engine {
                         session.inbox.draw(frame, inset(body), retry, now, wall);
                     }
                     Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
-                    None => session
-                        .log
-                        .draw(frame, inset(body), &session.store, retry, wall),
+                    None => session.log.draw(
+                        frame,
+                        inset(body),
+                        &session.store,
+                        &self.timers,
+                        now,
+                        wall,
+                    ),
                 }
                 if let Some(composer) = &mut session.composer {
                     composer.draw(frame, panel, sending);

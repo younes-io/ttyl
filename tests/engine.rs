@@ -690,7 +690,7 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
         panic!("{effects:?}");
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(10));
-    let rows = screen(&mut engine, 120, 30, at + secs(11));
+    let rows = screen(&mut engine, 100, 30, at + secs(11));
     assert!(
         rows[29].starts_with(
             " fatal: the site is in maintenance · your log is still here · retrying in 29s"
@@ -715,7 +715,7 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
             other => panic!("{other:?}"),
         }
     }
-    let rows = screen(&mut engine, 120, 30, at + secs(31));
+    let rows = screen(&mut engine, 100, 30, at + secs(31));
     assert!(
         rows[29].starts_with(
             " fatal: the site is in maintenance · your log is still here · retrying in 9s"
@@ -731,7 +731,7 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
         Event::Reply(*reload, Ok(Reply::Page(page(Log::Latest)))),
         at + secs(40),
     );
-    let rows = screen(&mut engine, 120, 30, at + secs(40));
+    let rows = screen(&mut engine, 100, 30, at + secs(40));
     assert!(
         !rows[29].contains("fatal"),
         "the reload that answers clears it: {:?}",

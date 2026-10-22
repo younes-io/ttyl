@@ -479,10 +479,22 @@ fn a_narrow_footer_error_still_ends_in_help() {
 }
 
 #[test]
-fn a_wide_terminal_shows_the_selected_commits_replies_beside_the_feed() {
-    let mut app = app();
-    press(&mut app, "2");
-    let rows = screen(&mut app, 120, 40);
+fn a_wide_terminal_fetches_the_selected_commits_thread_into_a_pane_once_the_selection_rests() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    common::press(&mut engine, "2", at);
+    let pane = |rows: &[String]| -> Vec<String> {
+        rows.iter()
+            .map(|row| row.chars().skip(72).collect::<String>())
+            .collect()
+    };
+    let thread_calls = |effects: &[Effect]| {
+        common::runs(effects)
+            .into_iter()
+            .filter(|call| matches!(call, Call::Commit(_) | Call::Replies { .. }))
+            .count()
+    };
+    let rows = common::screen(&mut engine, 120, 40, at);
     assert!(
         rows.iter().all(|row| !row
             .chars()
@@ -491,11 +503,31 @@ fn a_wide_terminal_shows_the_selected_commits_replies_beside_the_feed() {
             .contains("@grace · 10m")),
         "the reply leaves the feed: {rows:#?}"
     );
-    assert!(contains(&rows, "│ 3 replies · 12 stars"), "{rows:#?}");
-    assert!(contains(&rows, "│ Replies"), "{rows:#?}");
-    assert!(contains(&rows, "@ada did you keep an index on created_at?"));
-    assert!(contains(&rows, "│ enter opens the thread"));
+    assert!(
+        contains(&pane(&rows), "switched the feed to cursorPaginate(20)"),
+        "the pane shows the selected commit at once: {rows:#?}"
+    );
+    assert_eq!(
+        thread_calls(&engine.pump(at)),
+        0,
+        "moving past sends nothing"
+    );
 
-    let narrow = screen(&mut app, 100, 40);
-    assert!(!contains(&narrow, "│ Replies"), "{narrow:#?}");
+    let rested = at + std::time::Duration::from_millis(300);
+    let effects = engine.pump(rested);
+    assert_eq!(thread_calls(&effects), 2, "{effects:?}");
+    common::answer(&mut engine, effects, rested);
+    let rows = common::screen(&mut engine, 120, 40, rested);
+    assert!(
+        contains(&pane(&rows), "│ did you keep an index on created_at?"),
+        "{rows:#?}"
+    );
+
+    common::press(&mut engine, "j", rested);
+    common::screen(&mut engine, 100, 40, rested);
+    assert_eq!(
+        thread_calls(&engine.pump(rested + secs(1))),
+        0,
+        "a narrow terminal has no pane to fetch for"
+    );
 }

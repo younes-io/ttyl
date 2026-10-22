@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
@@ -8,10 +8,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 
+use crate::clock::{Timer, Timers};
 use crate::keys::Action;
 use crate::model::{CommitId, Log};
 use crate::store::{Slot, Store};
 use crate::theme;
+use crate::thread::{LOADING_NOTE_DELAY, ThreadScreen};
 use crate::{fatal, feed};
 
 pub const LOGS: [Log; 3] = [Log::Following, Log::Latest, Log::Trending];
@@ -25,6 +27,7 @@ pub struct LogScreen {
     active: Log,
     places: [Place; 3],
     expanded: HashSet<CommitId>,
+    peek: Option<ThreadScreen>,
 }
 
 #[derive(Default)]
@@ -41,8 +44,11 @@ struct LaidOut {
     folded: Vec<bool>,
 }
 
-/// From this width the selected commit's quote, link and replies get a pane of their own beside the feed.
+/// From this width the selected commit's thread gets a pane of its own beside the feed.
 const WIDE: u16 = 110;
+/// How long the selection rests on a commit before the pane fetches its thread, so scrolling past
+/// commits sends nothing.
+const DWELL: Duration = LOADING_NOTE_DELAY;
 
 #[derive(PartialEq)]
 struct Inputs {
@@ -74,6 +80,7 @@ impl Default for LogScreen {
             active: Log::Following,
             places: Default::default(),
             expanded: HashSet::new(),
+            peek: None,
         }
     }
 }
@@ -85,6 +92,17 @@ fn index(log: Log) -> usize {
 }
 
 impl LogScreen {
+    /// The pane's thread, once the selection has rested on it long enough to fetch.
+    pub fn peek(&self, store: &Store, now: Instant) -> Option<&ThreadScreen> {
+        let peek = self.peek.as_ref()?;
+        let selected = self.selected_id(self.active, store)?;
+        (peek.focus() == selected && now >= peek.opened_at() + DWELL).then_some(peek)
+    }
+
+    pub fn peek_due(&self) -> Option<Instant> {
+        self.peek.as_ref().map(|peek| peek.opened_at() + DWELL)
+    }
+
     pub fn active(&self) -> Log {
         self.active
     }
@@ -268,9 +286,14 @@ impl LogScreen {
         frame: &mut Frame,
         area: Rect,
         store: &Store,
-        retry: Retry,
+        timers: &Timers,
+        at: Instant,
         now: &DateTime<Tz>,
     ) {
+        let retry = Retry {
+            page: timers.remaining(&Timer::Reload(self.active), at),
+            older: timers.remaining(&Timer::Older(self.active), at),
+        };
         match store.slot(self.active) {
             Slot::Loading => frame.render_widget(Line::styled("Loading…", theme::muted()), area),
             Slot::Failed(failure) => frame.render_widget(
@@ -325,7 +348,7 @@ impl LogScreen {
                 }
                 let height = usize::from(area.height);
                 place.offset = feed::scroll(feed, total, place.selected, place.offset, height);
-                place.anchor = id.map(|id| Anchor {
+                place.anchor = id.clone().map(|id| Anchor {
                     id,
                     line: start(place.selected).saturating_sub(place.offset),
                 });
@@ -339,17 +362,23 @@ impl LogScreen {
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
                 frame.render_widget(Paragraph::new(lines), area);
-                if let (Some(pane), Some(row)) =
-                    (pane, selected.and_then(|at| store.row(&listing.ids[at])))
-                {
-                    let block = Block::new()
-                        .borders(Borders::LEFT)
-                        .border_style(Style::new().fg(theme::RAIL))
-                        .padding(Padding::horizontal(1));
-                    let inner = block.inner(pane);
-                    let lines = feed::context(row, inner.width, now);
-                    frame.render_widget(Paragraph::new(lines).block(block), pane);
-                }
+                let (Some(pane), Some(id)) = (pane, id) else {
+                    self.peek = None;
+                    return;
+                };
+                let block = Block::new()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::new().fg(theme::RAIL))
+                    .padding(Padding::horizontal(1));
+                let inner = block.inner(pane);
+                frame.render_widget(block, pane);
+                let peek = match self.peek.take() {
+                    Some(peek) if *peek.focus() == id => peek,
+                    _ => ThreadScreen::new(id, at),
+                };
+                self.peek
+                    .insert(peek)
+                    .draw(frame, inner, store, timers, at, now);
             }
         }
     }

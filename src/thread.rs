@@ -138,6 +138,10 @@ impl ThreadScreen {
         }
     }
 
+    pub fn opened_at(&self) -> Instant {
+        self.opened_at
+    }
+
     pub fn focus(&self) -> &CommitId {
         &self.focus
     }
