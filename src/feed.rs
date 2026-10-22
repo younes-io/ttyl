@@ -437,7 +437,7 @@ fn one_liner(
     fit(spans, width)
 }
 
-fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
+pub(crate) fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
     let mut line = Vec::new();
     let mut gap = false;
     let mut add = |piece: &str, style: Style, gap: &mut bool| {
