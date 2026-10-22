@@ -453,8 +453,9 @@ pub enum Kind {
     LeveledUp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Filter {
+    #[default]
     All,
     Replies,
     Quotes,

@@ -210,7 +210,10 @@ impl ThreadScreen {
             | Action::Compose
             | Action::Send
             | Action::Editor
-            | Action::Site => false,
+            | Action::Site
+            | Action::Inbox
+            | Action::NextFilter
+            | Action::PreviousFilter => false,
         }
     }
 

@@ -16,10 +16,11 @@ use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
+use crate::inbox::{self, Inbox};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES,
-    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES,
-    SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
+    SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log, Reason, Status};
@@ -76,10 +77,17 @@ pub enum Phase {
 pub struct Session {
     pub store: Store,
     pub log: LogScreen,
-    threads: Vec<ThreadScreen>,
+    inbox: Inbox,
+    stack: Vec<Screen>,
     overlay: Option<Overlay>,
     composer: Option<Composer>,
     asked_to_refresh: HashSet<Log>,
+}
+
+/// What sits over the log, newest last. Back pops one.
+enum Screen {
+    Thread(Box<ThreadScreen>),
+    Inbox,
 }
 
 enum Overlay {
@@ -99,11 +107,22 @@ enum Overlay {
 const SERVER_DETAILS_MAX: usize = 500;
 
 impl Session {
+    fn thread(&self) -> Option<&ThreadScreen> {
+        match self.stack.last() {
+            Some(Screen::Thread(thread)) => Some(thread),
+            Some(Screen::Inbox) | None => None,
+        }
+    }
+
+    fn on_inbox(&self) -> bool {
+        matches!(self.stack.last(), Some(Screen::Inbox))
+    }
+
     fn screen_scopes(&self) -> &'static [Scope] {
-        if self.threads.is_empty() {
-            LOG_SCOPES
-        } else {
-            THREAD_SCOPES
+        match self.stack.last() {
+            None => LOG_SCOPES,
+            Some(Screen::Thread(_)) => THREAD_SCOPES,
+            Some(Screen::Inbox) => INBOX_SCOPES,
         }
     }
 
@@ -111,16 +130,19 @@ impl Session {
         if let Action::Commit(act) = action {
             return self.allows(act);
         }
-        matches!(action, Action::Quit | Action::Help | Action::Compose)
-            || match self.threads.last() {
-                Some(thread) => thread.can(action, &self.store),
+        matches!(action, Action::Quit | Action::Help)
+            || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
+            || match self.stack.last() {
+                Some(Screen::Thread(thread)) => thread.can(action, &self.store),
+                Some(Screen::Inbox) => self.inbox.can(action, &self.store),
                 None => self.log.can(action, &self.store),
             }
     }
 
     fn selected(&self) -> Option<&CommitId> {
-        match self.threads.last() {
-            Some(thread) => Some(thread.selected()),
+        match self.stack.last() {
+            Some(Screen::Thread(thread)) => Some(thread.selected()),
+            Some(Screen::Inbox) => None,
             None => self.log.selected_id(self.log.active(), &self.store),
         }
     }
@@ -141,30 +163,25 @@ impl Session {
             }
     }
 
-    fn on_thread(&mut self, action: Action, now: Instant) -> Option<CommitId> {
-        match action {
-            Action::Back => {
-                self.threads.pop();
+    fn on_screen(&mut self, action: Action, now: Instant) -> Option<CommitId> {
+        match (self.stack.last_mut(), action) {
+            (_, Action::Back) => {
+                self.stack.pop();
             }
-            Action::Show(_) | Action::NextLog => {
-                self.threads.clear();
+            (_, Action::Show(_) | Action::NextLog) => {
+                self.stack.clear();
                 self.log.act(action, &self.store);
             }
-            Action::Open => {
-                if let Some(id) = self
-                    .threads
-                    .last()
-                    .and_then(|thread| thread.opens(&self.store))
-                {
-                    self.threads.push(ThreadScreen::new(id.clone(), now));
+            (Some(Screen::Thread(thread)), Action::Open) => {
+                if let Some(id) = thread.opens(&self.store) {
+                    self.stack
+                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
                     return Some(id);
                 }
             }
-            action => {
-                if let Some(thread) = self.threads.last_mut() {
-                    thread.act(action, &self.store);
-                }
-            }
+            (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
+            (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
+            (None, _) => {}
         }
         None
     }
@@ -386,7 +403,7 @@ impl Engine {
 
     pub fn thread(&self) -> Option<&ThreadScreen> {
         match &self.phase {
-            Phase::Ready(session) => session.threads.last(),
+            Phase::Ready(session) => session.thread(),
             Phase::Splash | Phase::SignIn(_) => None,
         }
     }
@@ -522,7 +539,7 @@ impl Engine {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
         };
-        let Some(thread) = session.threads.last() else {
+        let Some(thread) = session.thread() else {
             return Vec::new();
         };
         thread
@@ -539,7 +556,7 @@ impl Engine {
         let Phase::Ready(session) = &self.phase else {
             return None;
         };
-        session.threads.last()?.placeholder_at(&session.store)
+        session.thread()?.placeholder_at(&session.store)
     }
 
     fn poll_new(&mut self) {
@@ -702,8 +719,13 @@ impl Engine {
             }
             (Phase::SignIn(_), Action::SignIn) => return vec![Effect::StartSignIn],
             (Phase::SignIn(step), Action::StartOver) => *step = Step::Ready(None),
-            (Phase::Ready(session), Action::Refresh) if !session.threads.is_empty() => {
-                let thread = session.threads.last().expect("a thread is open");
+            (Phase::Ready(session), Action::Inbox) => {
+                if !session.on_inbox() {
+                    session.stack.push(Screen::Inbox);
+                }
+            }
+            (Phase::Ready(session), Action::Refresh) if session.thread().is_some() => {
+                let thread = session.thread().expect("a thread is open");
                 let focus = thread.focus().clone();
                 self.timers.clear(&Timer::Commit(focus.clone()));
                 self.sched.send(Call::Commit(focus.clone()), Priority::Now);
@@ -723,8 +745,8 @@ impl Engine {
                 }
             }
             (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
-            (Phase::Ready(session), action) if !session.threads.is_empty() => {
-                if let Some(id) = session.on_thread(action, now) {
+            (Phase::Ready(session), action) if !session.stack.is_empty() => {
+                if let Some(id) = session.on_screen(action, now) {
                     fetch_thread(&mut self.sched, &mut self.timers, id);
                 }
             }
@@ -734,7 +756,9 @@ impl Engine {
                     .selected_id(session.log.active(), &session.store)
                     .cloned()
                 {
-                    session.threads.push(ThreadScreen::new(id.clone(), now));
+                    session
+                        .stack
+                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
                     fetch_thread(&mut self.sched, &mut self.timers, id);
                 }
             }
@@ -902,7 +926,8 @@ impl Engine {
         self.phase = Phase::Ready(Box::new(Session {
             store: Store::new(account),
             log: LogScreen::default(),
-            threads: Vec::new(),
+            inbox: Inbox::default(),
+            stack: Vec::new(),
             overlay: None,
             composer: None,
             asked_to_refresh: HashSet::new(),
@@ -1126,13 +1151,17 @@ impl Engine {
                     Constraint::Length(1),
                 ])
                 .areas(area);
-                frame.render_widget(session.log.top_bar(&session.store, top.width), top);
+                let title = session.on_inbox().then_some(inbox::TITLE);
+                frame.render_widget(session.log.top_bar(&session.store, title, top.width), top);
                 let active = session.log.active();
                 let loaded = match session.store.slot(active) {
                     Slot::Loaded(listing) => Some(listing),
                     Slot::Loading | Slot::Failed(_) => None,
                 };
-                let on_log = session.threads.is_empty();
+                let on_log = session.stack.is_empty();
+                if session.on_inbox() {
+                    frame.render_widget(session.inbox.filter_bar(banner.width), banner);
+                }
                 if let Some(listing) = loaded
                     && listing.new_commits > 0
                     && on_log
@@ -1151,8 +1180,7 @@ impl Engine {
                     })
                 } else {
                     session
-                        .threads
-                        .last()
+                        .thread()
                         .and_then(|thread| {
                             let focus = thread.focus();
                             let failure = session.store.thread(focus)?.failure.as_ref()?;
@@ -1184,10 +1212,11 @@ impl Engine {
                     ]),
                     (None, None) => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
-                match session.threads.last_mut() {
-                    Some(thread) => {
+                match session.stack.last_mut() {
+                    Some(Screen::Thread(thread)) => {
                         thread.draw(frame, inset(body), &session.store, &self.timers, now, wall)
                     }
+                    Some(Screen::Inbox) => {}
                     None => session
                         .log
                         .draw(frame, inset(body), &session.store, retry, wall),

@@ -52,7 +52,10 @@ fn g_then_g_goes_to_the_top_and_g_then_another_key_cancels() {
         ),
         Resolve::Pending
     );
-    assert_eq!(hints(LOG_SCOPES, keymap.pending(), &all), "g-  g top");
+    assert_eq!(
+        hints(LOG_SCOPES, keymap.pending(), &all),
+        "g-  g top · n notifications"
+    );
     assert_eq!(
         keymap.resolve(
             key(KeyCode::Char('g')),

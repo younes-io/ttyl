@@ -15,6 +15,9 @@ pub enum Action {
     Back,
     Show(Log),
     NextLog,
+    Inbox,
+    NextFilter,
+    PreviousFilter,
     Refresh,
     Help,
     Close,
@@ -50,6 +53,7 @@ pub enum Scope {
     Help,
     Log,
     Thread,
+    Inbox,
     List,
     Commit,
     Global,
@@ -84,6 +88,13 @@ pub const THREAD_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
+pub const INBOX_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Inbox,
+    Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -96,6 +107,7 @@ pub const UNIONS: &[&[Scope]] = &[
     RULES_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
+    INBOX_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +148,7 @@ impl Key {
             KeyCode::Enter => "enter".to_owned(),
             KeyCode::Esc => "esc".to_owned(),
             KeyCode::Tab => "tab".to_owned(),
+            KeyCode::BackTab => "shift-tab".to_owned(),
             KeyCode::Up => "↑".to_owned(),
             KeyCode::Down => "↓".to_owned(),
             KeyCode::Home => "home".to_owned(),
@@ -300,6 +313,41 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: None,
         help: "reload this thread",
+    },
+    Binding {
+        scope: Scope::Inbox,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter open"),
+        help: "open",
+    },
+    Binding {
+        scope: Scope::Inbox,
+        chords: &[&[Key::code(KeyCode::Tab)]],
+        action: Action::NextFilter,
+        hint: Some("tab filter"),
+        help: "next filter",
+    },
+    Binding {
+        scope: Scope::Inbox,
+        chords: &[&[Key::code(KeyCode::BackTab)]],
+        action: Action::PreviousFilter,
+        hint: None,
+        help: "previous filter",
+    },
+    Binding {
+        scope: Scope::Inbox,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
+        scope: Scope::Inbox,
+        chords: &[&[Key::ch('R')]],
+        action: Action::Refresh,
+        hint: None,
+        help: "reload notifications",
     },
     Binding {
         scope: Scope::Commit,
@@ -523,6 +571,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Quit,
         hint: None,
         help: "quit",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch('n')]],
+        action: Action::Inbox,
+        hint: None,
+        help: "notifications",
     },
     Binding {
         scope: Scope::Global,

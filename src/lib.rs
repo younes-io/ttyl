@@ -10,6 +10,7 @@ pub mod editor;
 pub mod engine;
 pub mod fatal;
 pub mod feed;
+pub mod inbox;
 pub mod keys;
 pub mod log;
 pub mod model;

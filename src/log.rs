@@ -139,7 +139,10 @@ impl LogScreen {
             | Action::Compose
             | Action::Send
             | Action::Editor
-            | Action::Site => false,
+            | Action::Site
+            | Action::Inbox
+            | Action::NextFilter
+            | Action::PreviousFilter => false,
         }
     }
 
@@ -166,12 +169,12 @@ impl LogScreen {
 
     /// One row: the brand and the tabs on the left, unread and the handle on the right,
     /// giving up `CUTS` in order until it fits.
-    pub fn top_bar(&self, store: &Store, width: u16) -> Line<'static> {
+    pub fn top_bar(&self, store: &Store, title: Option<&str>, width: u16) -> Line<'static> {
         let width = usize::from(width);
         let (left, right) = (0..CUTS.len())
-            .map(|cut| self.top_bar_as(&CUTS[..cut], store))
+            .map(|cut| self.top_bar_as(&CUTS[..cut], store, title))
             .find(|(left, right)| left.width() + 2 + right.width() <= width)
-            .unwrap_or_else(|| self.top_bar_as(&CUTS, store));
+            .unwrap_or_else(|| self.top_bar_as(&CUTS, store, title));
         let pad = width.saturating_sub(left.width() + right.width());
         let mut spans = left.spans;
         spans.push(Span::raw(" ".repeat(pad)));
@@ -179,7 +182,12 @@ impl LogScreen {
         Line::from(spans)
     }
 
-    fn top_bar_as(&self, cuts: &[Cut], store: &Store) -> (Line<'static>, Line<'static>) {
+    fn top_bar_as(
+        &self,
+        cuts: &[Cut],
+        store: &Store,
+        title: Option<&str>,
+    ) -> (Line<'static>, Line<'static>) {
         let kept = |cut| !cuts.contains(&cut);
         let mut left = Vec::new();
         if kept(Cut::Brand) {
@@ -188,21 +196,28 @@ impl LogScreen {
                 Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
             ));
         }
-        for (index, log) in LOGS.iter().enumerate() {
-            let gap = if index == 0 && !kept(Cut::Brand) {
+        let bold = Style::new()
+            .fg(theme::FOREGROUND)
+            .add_modifier(Modifier::BOLD);
+        let lead = |index| {
+            if index == 0 && !kept(Cut::Brand) {
                 " "
             } else {
                 "  "
-            };
+            }
+        };
+        if let Some(title) = title {
+            left.push(Span::styled(format!("{}{title}", lead(0)), bold));
+        }
+        for (index, log) in LOGS.iter().enumerate().filter(|_| title.is_none()) {
+            let gap = lead(index);
             let label = if kept(Cut::Slugs) {
                 format!("{gap}{} {}", index + 1, log.slug())
             } else {
                 format!("{gap}{}", index + 1)
             };
             let style = if *log == self.active {
-                Style::new()
-                    .fg(theme::FOREGROUND)
-                    .add_modifier(Modifier::BOLD)
+                bold
             } else {
                 theme::muted()
             };
