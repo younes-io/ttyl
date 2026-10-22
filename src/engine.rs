@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
+use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::keys::{
     self, Act, Action, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap,
@@ -39,6 +40,7 @@ pub enum Event {
     SignIn(io::Result<Wait>),
     Link(io::Result<String>),
     InputLost(io::Error),
+    DraftFailed(io::Error),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,6 +51,7 @@ pub enum Effect {
     Abort(String),
     Copy(String),
     Open(String),
+    Draft(draft::Write),
 }
 
 pub enum Phase {
@@ -300,6 +303,7 @@ pub struct Engine {
     toast: Option<String>,
     device_name: String,
     start: Instant,
+    drafts: Drafts,
 }
 
 impl Engine {
@@ -315,7 +319,16 @@ impl Engine {
             toast: None,
             device_name,
             start: now,
+            drafts: Drafts::default(),
         }
+    }
+
+    pub fn with_drafts(self, drafts: Drafts) -> Self {
+        Engine { drafts, ..self }
+    }
+
+    pub fn draft(&self, target: &Target) -> Option<&str> {
+        self.drafts.get(target)
     }
 
     pub fn log(&self) -> Option<&LogScreen> {
@@ -363,6 +376,10 @@ impl Engine {
             }
             Event::InputLost(error) => {
                 vec![Effect::Abort(format!("can't read the keyboard: {error}"))]
+            }
+            Event::DraftFailed(error) => {
+                self.toast(format!("fatal: could not save your draft: {error}"), now);
+                Vec::new()
             }
         }
     }

@@ -1,6 +1,7 @@
 use std::env;
 use std::io;
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,7 @@ use std::time::Instant;
 use chrono::Local;
 use devnull::api::{self, Call, Client};
 use devnull::device::{self, DeviceKey};
+use devnull::draft::{self, Drafts};
 use devnull::engine::{Effect, Engine, Event, WORKERS};
 use devnull::sched::Ticket;
 use devnull::{desktop, signin, welcome};
@@ -55,6 +57,7 @@ struct Runtime {
     events: Sender<Event>,
     jobs: Sender<(Ticket, Call)>,
     device_name: String,
+    drafts: Option<PathBuf>,
 }
 
 fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
@@ -62,12 +65,15 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
     let jobs = spawn_workers(Arc::clone(&client), events.clone());
     spawn_input(events.clone());
     let device_name = welcome::device_name();
+    let drafts = draft::dir();
+    let saved = drafts.as_deref().map(draft::load).unwrap_or_default();
     let mut runtime = Runtime {
-        engine: Engine::new(device_name.clone(), Instant::now()),
+        engine: Engine::new(device_name.clone(), Instant::now()).with_drafts(Drafts::new(saved)),
         client,
         events,
         jobs,
         device_name,
+        drafts,
     };
     loop {
         let now = Instant::now();
@@ -118,6 +124,18 @@ impl Runtime {
                 }
                 Effect::Copy(text) => desktop::copy(&text),
                 Effect::Open(url) => desktop::open(&url),
+                Effect::Draft(write) => {
+                    let stored = match &self.drafts {
+                        Some(dir) => draft::store(dir, &write),
+                        None => Err(io::Error::other("no home directory")),
+                    };
+                    if let Err(error) = stored {
+                        let effects = self
+                            .engine
+                            .update(Event::DraftFailed(error), Instant::now());
+                        self.perform(effects)?;
+                    }
+                }
             }
         }
         ControlFlow::Continue(())
