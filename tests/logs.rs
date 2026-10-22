@@ -5,7 +5,7 @@ use std::time::Instant;
 use common::{account, boot, contains, cursor, older, page, press, runs, screen, secs};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
-use devnull::model::Log;
+use devnull::model::{Log, LogPage};
 use devnull::sched::Ticket;
 
 fn older_of(effects: &[Effect]) -> (Ticket, String) {
@@ -65,6 +65,31 @@ fn an_older_page_is_appended_after_the_rows_already_listed_without_repeating_the
         11 + 19 - 1,
         "the repeated row is listed once"
     );
+}
+
+#[test]
+fn a_page_that_adds_nothing_new_is_not_followed() {
+    let at = Instant::now();
+    for next in [
+        older(Log::Latest, "none", 0, Some("page-3")),
+        LogPage {
+            next_cursor: Some("page-3".to_owned()),
+            ..page(Log::Latest)
+        },
+    ] {
+        let mut engine = boot(at);
+        let (ticket, _) = older_of(&press(&mut engine, "2G", at));
+        engine.update(Event::Reply(ticket, Ok(Reply::Page(next))), at);
+        for tick in 0..50 {
+            let effects = engine.pump(at + secs(tick));
+            assert!(
+                !effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::Run(_, Call::Older { .. }))),
+                "no further older page: {effects:?}"
+            );
+        }
+    }
 }
 
 #[test]

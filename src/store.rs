@@ -534,8 +534,8 @@ impl Store {
         if !listing.ends_at(cursor) {
             return;
         }
-        listing.next_cursor = page.next_cursor;
         self.generation += 1;
+        let before = listing.ids.len();
         for row in page.rows {
             let id = row.commit.id.clone();
             if !listing.ids.contains(&id) {
@@ -544,6 +544,9 @@ impl Store {
             self.gone.remove(&id);
             self.rows.insert(id, row);
         }
+        // A page that adds nothing leaves the reader as near the end as before, so following its
+        // cursor would ask again on every pump.
+        listing.next_cursor = page.next_cursor.filter(|_| listing.ids.len() > before);
     }
 
     fn absorb(&mut self, rows: Vec<Row>) -> Vec<CommitId> {
