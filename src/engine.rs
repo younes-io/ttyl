@@ -395,6 +395,34 @@ fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
     sched.send(Call::Replies { id, cursor: None }, Priority::Now);
 }
 
+/// Reloads the thread and every reply list it shows, so replies to replies come in too.
+fn refresh_thread(
+    sched: &mut Scheduler,
+    timers: &mut Timers,
+    thread: &ThreadScreen,
+    store: &Store,
+) {
+    let focus = thread.focus().clone();
+    timers.clear(&Timer::Commit(focus.clone()));
+    sched.send(Call::Commit(focus.clone()), Priority::Now);
+    for owner in thread.lists(store) {
+        timers.clear(&Timer::Replies(owner.clone()));
+        timers.clear(&Timer::More(owner.clone()));
+        let priority = if owner == focus {
+            Priority::Now
+        } else {
+            Priority::Later
+        };
+        sched.send(
+            Call::Replies {
+                id: owner,
+                cursor: None,
+            },
+            priority,
+        );
+    }
+}
+
 fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, now: Instant) {
     let filter = inbox.filter();
     inbox.asked(now);
@@ -924,23 +952,7 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Refresh) if session.thread().is_some() => {
                 let thread = session.thread().expect("a thread is open");
-                let focus = thread.focus().clone();
-                self.timers.clear(&Timer::Commit(focus.clone()));
-                self.sched.send(Call::Commit(focus.clone()), Priority::Now);
-                for owner in thread.lists(&session.store) {
-                    self.timers.clear(&Timer::Replies(owner.clone()));
-                    self.timers.clear(&Timer::More(owner.clone()));
-                    let priority = if owner == focus {
-                        Priority::Now
-                    } else {
-                        Priority::Later
-                    };
-                    let call = Call::Replies {
-                        id: owner,
-                        cursor: None,
-                    };
-                    self.sched.send(call, priority);
-                }
+                refresh_thread(&mut self.sched, &mut self.timers, thread, &session.store);
             }
             (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
             (Phase::Ready(session), action) if !session.stack.is_empty() => {
@@ -966,6 +978,9 @@ impl Engine {
                 self.timers.clear(&Timer::Reload(log));
                 self.timers.clear(&Timer::Older(log));
                 self.sched.send(Call::Page(log), Priority::Now);
+                if let Some(peek) = session.log.peek(&session.store, now) {
+                    refresh_thread(&mut self.sched, &mut self.timers, peek, &session.store);
+                }
             }
             (Phase::Ready(session), action) => session.log.act(action, &session.store),
             (Phase::Splash | Phase::SignIn(_), _) => {}

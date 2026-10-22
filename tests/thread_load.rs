@@ -19,6 +19,8 @@ const EARLIER: &str = "7a000000-0000-4000-8000-000000000051";
 const GRACE: &str = "7a000000-0000-4000-8000-000000000001";
 const DELETED: &str = "7a000000-0000-4000-8000-00000000000b";
 const WIDTH: u16 = 100;
+/// Wide enough for the log to show the selected commit's thread beside it.
+const WIDE: u16 = 140;
 const HEIGHT: u16 = 40;
 
 fn id(id: &str) -> CommitId {
@@ -70,10 +72,20 @@ fn answer_poll(engine: &mut Engine, effects: Vec<Effect>, at: Instant) -> Vec<Ef
     rest
 }
 
-fn settle(engine: &mut Engine, mut effects: Vec<Effect>, height: u16, at: Instant) -> Vec<Call> {
+fn settle(engine: &mut Engine, effects: Vec<Effect>, height: u16, at: Instant) -> Vec<Call> {
+    settle_at(engine, effects, WIDTH, height, at)
+}
+
+fn settle_at(
+    engine: &mut Engine,
+    mut effects: Vec<Effect>,
+    width: u16,
+    height: u16,
+    at: Instant,
+) -> Vec<Call> {
     let mut calls = Vec::new();
     loop {
-        screen(engine, WIDTH, height, at);
+        screen(engine, width, height, at);
         effects.extend(engine.pump(at));
         if effects.is_empty() {
             return calls;
@@ -371,4 +383,31 @@ fn the_earlier_line_opens_the_commit_above_the_cut() {
     let thread = engine.thread().unwrap();
     assert_eq!(*thread.focus(), id(DEEPEST));
     assert_eq!(*thread.selected(), id(EARLIER));
+}
+
+#[test]
+fn refreshing_the_log_reloads_every_list_in_the_peeked_thread() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, world_pages);
+    settle_at(&mut engine, Vec::new(), WIDE, HEIGHT, at);
+    let later = at + Duration::from_secs(5);
+    let lists: HashSet<CommitId> = settle_at(&mut engine, Vec::new(), WIDE, HEIGHT, later)
+        .into_iter()
+        .filter_map(|call| match call {
+            Call::Replies { id, cursor: None } => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert!(lists.len() > 1, "{lists:?}");
+    let effects = press(&mut engine, "R", later);
+    let calls = settle_at(&mut engine, effects, WIDE, HEIGHT, later);
+    assert!(calls.contains(&Call::Page(Log::Following)), "{calls:?}");
+    assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");
+    for owner in lists {
+        let call = Call::Replies {
+            id: owner,
+            cursor: None,
+        };
+        assert!(calls.contains(&call), "{call:?} in {calls:?}");
+    }
 }
