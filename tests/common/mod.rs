@@ -253,7 +253,10 @@ pub fn boot_serving(at: Instant, pages: fn(Log) -> LogPage) -> Engine {
 }
 
 pub fn boot_as(at: Instant, me: Account, pages: fn(Log) -> LogPage) -> Engine {
-    let mut engine = Engine::new("devnull-tui".to_owned(), at);
+    sign_in(Engine::new("devnull-tui".to_owned(), at), at, me, pages)
+}
+
+pub fn sign_in(mut engine: Engine, at: Instant, me: Account, pages: fn(Log) -> LogPage) -> Engine {
     let effects = engine.pump(at);
     let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
         panic!("the engine asks for /me first: {effects:?}");

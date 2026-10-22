@@ -206,7 +206,8 @@ impl ThreadScreen {
             | Action::StartOver
             | Action::Confirm
             | Action::Pick(_)
-            | Action::Commit(_) => false,
+            | Action::Commit(_)
+            | Action::Compose => false,
         }
     }
 

@@ -460,7 +460,10 @@ fn a_narrow_hint_line_keeps_help_and_drops_the_other_hints_from_the_end() {
     let mut app = app();
     press(&mut app, "2jj");
     let wide = screen(&mut app, 100, 20)[19].clone();
-    assert_eq!(wide, " j/k move  enter open  s star  ? help  Q quit");
+    assert_eq!(
+        wide,
+        " j/k move  enter open  s star  c commit  ? help  Q quit"
+    );
     let rows = screen(&mut app, 44, 20);
     assert_eq!(
         rows[19], " j/k move  enter open  ? help  Q quit",

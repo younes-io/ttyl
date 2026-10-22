@@ -23,6 +23,7 @@ pub enum Action {
     Commit(Act),
     Confirm,
     Pick(Reason),
+    Compose,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub enum Act {
     Pastel,
     Delete,
     Report,
+    Reply,
+    Quote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +53,7 @@ pub enum Scope {
     Confirm,
     Report,
     Details,
+    Composer,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -58,6 +62,7 @@ pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
+pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -79,6 +84,7 @@ pub const UNIONS: &[&[Scope]] = &[
     CONFIRM_SCOPES,
     REPORT_SCOPES,
     DETAILS_SCOPES,
+    COMPOSER_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
 ];
@@ -294,6 +300,13 @@ pub const TABLE: &[Binding] = &[
         help: "star or unstar",
     },
     Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('c')]],
+        action: Action::Compose,
+        hint: Some("c commit"),
+        help: "write a commit",
+    },
+    Binding {
         scope: Scope::Commit,
         chords: &[&[Key::ch('f')]],
         action: Action::Commit(Act::Follow),
@@ -334,6 +347,20 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Report),
         hint: None,
         help: "report",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('r')]],
+        action: Action::Commit(Act::Reply),
+        hint: None,
+        help: "reply",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('q')]],
+        action: Action::Commit(Act::Quote),
+        hint: None,
+        help: "quote",
     },
     Binding {
         scope: Scope::Confirm,
@@ -414,6 +441,20 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Details,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc close"),
+        help: "close, keeping the draft",
+    },
+    Binding {
+        scope: Scope::Composer,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,
@@ -546,11 +587,13 @@ pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) ->
 }
 
 /// Drops hints from the end until they fit `width`. `? help` is how a user finds every
-/// other key, so it never goes; `Q quit` goes only when nothing else is left.
+/// other key, and the composer has no `?`, so `esc close` is its only way out shown; neither
+/// goes. `Q quit` goes only when nothing else is left.
 pub fn fit(hints: &str, width: usize) -> String {
     let mut hints: Vec<&str> = hints.split("  ").collect();
     while hints.join("  ").width() > width {
-        let ordinary = |hint: &&str| !hint.starts_with("? ") && *hint != "Q quit";
+        let ordinary =
+            |hint: &&str| !hint.starts_with("? ") && *hint != "esc close" && *hint != "Q quit";
         let Some(at) = hints
             .iter()
             .rposition(ordinary)

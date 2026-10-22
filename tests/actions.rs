@@ -276,7 +276,7 @@ fn star_and_follow_are_not_offered_on_your_own_commit() {
     let mut engine = boot(at);
     assert!(press(&mut engine, "sf", at).is_empty());
     let rows = screen(&mut engine, 100, 30, at);
-    assert_eq!(rows[29], " j/k move  enter open  ? help  Q quit");
+    assert_eq!(rows[29], " j/k move  enter open  c commit  ? help  Q quit");
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 100, 40, at);
     assert!(!contains(&rows, "star or unstar"), "{rows:#?}");
@@ -449,7 +449,7 @@ fn delete_is_offered_only_on_your_own_commit() {
     assert!(press(&mut engine, "D", at).is_empty());
     assert_eq!(
         footer(&mut engine, at),
-        " j/k move  enter open  s star  ? help  Q quit"
+        " j/k move  enter open  s star  c commit  ? help  Q quit"
     );
     assert!(!contains(&helps(&mut engine, at), "delete"));
 
@@ -472,7 +472,7 @@ fn any_key_but_y_on_the_delete_prompt_sends_nothing_and_closes_it() {
         assert!(press(&mut engine, &format!("D{no}"), at).is_empty(), "{no}");
         assert_eq!(
             footer(&mut engine, at),
-            " j/k move  enter open  ? help  Q quit",
+            " j/k move  enter open  c commit  ? help  Q quit",
             "{no}"
         );
         press(&mut engine, "D", at);
@@ -485,7 +485,7 @@ fn any_key_but_y_on_the_delete_prompt_sends_nothing_and_closes_it() {
         assert!(engine.thread().is_none(), "{no:?} opened nothing");
         assert_eq!(
             footer(&mut engine, at),
-            " j/k move  enter open  ? help  Q quit",
+            " j/k move  enter open  c commit  ? help  Q quit",
             "{no:?}"
         );
     }
@@ -584,7 +584,7 @@ fn report_is_offered_only_on_a_commit_that_is_not_yours() {
     assert!(press(&mut engine, "!", at).is_empty());
     assert_eq!(
         footer(&mut engine, at),
-        " j/k move  enter open  ? help  Q quit"
+        " j/k move  enter open  c commit  ? help  Q quit"
     );
     let rows = helps(&mut engine, at);
     assert!(!contains(&rows, "report"), "{rows:#?}");
@@ -650,7 +650,7 @@ fn esc_on_the_report_dialog_sends_nothing() {
     assert!(tap(&mut engine, KeyCode::Esc, at).is_empty());
     assert_eq!(
         footer(&mut engine, at),
-        " j/k move  enter open  s star  ? help  Q quit"
+        " j/k move  enter open  s star  c commit  ? help  Q quit"
     );
     press(&mut engine, "!3spam", at);
     assert!(tap(&mut engine, KeyCode::Esc, at).is_empty());
@@ -662,7 +662,7 @@ fn esc_on_the_report_dialog_sends_nothing() {
     assert!(!contains(&rows, "report 0000201"), "{rows:#?}");
     assert_eq!(
         footer(&mut engine, at),
-        " j/k move  enter open  s star  ? help  Q quit"
+        " j/k move  enter open  s star  c commit  ? help  Q quit"
     );
 }
 

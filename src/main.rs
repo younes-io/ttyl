@@ -16,7 +16,10 @@ use devnull::engine::{Effect, Engine, Event, WORKERS};
 use devnull::sched::Ticket;
 use devnull::{desktop, signin, welcome};
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self as input, Event as Input};
+use ratatui::crossterm::event::{
+    self as input, DisableBracketedPaste, EnableBracketedPaste, Event as Input,
+};
+use ratatui::crossterm::execute;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -46,7 +49,9 @@ fn start() -> Result<(), String> {
         key,
     ));
     let mut terminal = ratatui::init();
+    let _ = execute!(io::stdout(), EnableBracketedPaste);
     let result = run(&mut terminal, client);
+    let _ = execute!(io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     result.map_err(|error| error.to_string())
 }
@@ -147,6 +152,7 @@ fn spawn_input(events: Sender<Event>) {
         loop {
             let event = match input::read() {
                 Ok(Input::Key(key)) => Event::Key(key),
+                Ok(Input::Paste(text)) => Event::Paste(text),
                 Ok(Input::Resize(..)) => Event::Tick,
                 Ok(_) => continue,
                 Err(error) => {

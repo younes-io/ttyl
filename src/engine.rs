@@ -12,11 +12,12 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
+use crate::compose::Composer;
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::keys::{
-    self, Act, Action, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap,
-    LOG_SCOPES, REPORT_SCOPES, Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES,
+    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log, Reason};
@@ -35,6 +36,7 @@ const HINT_INDENT: &str = " ";
 
 pub enum Event {
     Key(KeyEvent),
+    Paste(String),
     Reply(Ticket, Result<Reply, Error>),
     Tick,
     SignIn(io::Result<Wait>),
@@ -65,6 +67,7 @@ pub struct Session {
     pub log: LogScreen,
     threads: Vec<ThreadScreen>,
     overlay: Option<Overlay>,
+    composer: Option<Composer>,
     asked_to_refresh: HashSet<Log>,
 }
 
@@ -97,7 +100,7 @@ impl Session {
         if let Action::Commit(act) = action {
             return self.allows(act);
         }
-        matches!(action, Action::Quit | Action::Help)
+        matches!(action, Action::Quit | Action::Help | Action::Compose)
             || match self.threads.last() {
                 Some(thread) => thread.can(action, &self.store),
                 None => self.log.can(action, &self.store),
@@ -123,6 +126,7 @@ impl Session {
                 Act::Copy | Act::Browse => true,
                 Act::Delete => own,
                 Act::Report => !own,
+                Act::Reply | Act::Quote => true,
             }
     }
 
@@ -155,7 +159,7 @@ impl Session {
     }
 
     fn can(&self, action: Action) -> bool {
-        self.overlay.is_some() || self.screen_allows(action)
+        self.overlay.is_some() || self.composer.is_some() || self.screen_allows(action)
     }
 
     fn scopes(&self) -> &'static [Scope] {
@@ -164,6 +168,7 @@ impl Session {
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
+            None if self.composer.is_some() => COMPOSER_SCOPES,
             None => self.screen_scopes(),
         }
     }
@@ -171,7 +176,18 @@ impl Session {
     fn input_mode(&self) -> InputMode {
         match self.overlay {
             Some(Overlay::Delete(_) | Overlay::Details { .. }) => InputMode::Text,
+            None if self.composer.is_some() => InputMode::Text,
             Some(Overlay::Help | Overlay::Reason { .. }) | None => InputMode::Commands,
+        }
+    }
+
+    fn pasted(&mut self, pasted: &str) {
+        if let Some(Overlay::Details { text, .. }) = &mut self.overlay {
+            let room = SERVER_DETAILS_MAX.saturating_sub(text.chars().count());
+            let flat = pasted
+                .chars()
+                .map(|ch| if ch.is_control() { ' ' } else { ch });
+            text.extend(flat.take(room));
         }
     }
 
@@ -348,6 +364,14 @@ impl Engine {
     pub fn update(&mut self, event: Event, now: Instant) -> Vec<Effect> {
         match event {
             Event::Key(key) => self.key(key, now),
+            Event::Paste(text) => {
+                if let Phase::Ready(session) = &mut self.phase
+                    && session.composer.is_none()
+                {
+                    session.pasted(&text);
+                }
+                self.edit(|composer| composer.paste(&text))
+            }
             Event::Reply(ticket, result) => {
                 if let Some((call, priority)) = self.sched.finish(ticket) {
                     match result {
@@ -536,13 +560,33 @@ impl Engine {
         match keymap.resolve(event, mode, scopes, &can) {
             Resolve::Act(action) => self.act(action, now),
             Resolve::Text(event) => {
-                if let Phase::Ready(session) = &mut self.phase {
+                if let Phase::Ready(session) = &mut self.phase
+                    && session.composer.is_none()
+                {
                     session.typed(event);
                 }
-                Vec::new()
+                self.edit(|composer| composer.typed(event))
             }
             Resolve::Pending | Resolve::Ignored => Vec::new(),
         }
+    }
+
+    /// Applies `edit` to the open composer and saves the draft when the text changed.
+    fn edit(&mut self, edit: impl FnOnce(&mut Composer) -> bool) -> Vec<Effect> {
+        let Phase::Ready(session) = &mut self.phase else {
+            return Vec::new();
+        };
+        let Some(composer) = &mut session.composer else {
+            return Vec::new();
+        };
+        if !edit(composer) {
+            return Vec::new();
+        }
+        self.drafts
+            .write(composer.target(), composer.text())
+            .map(Effect::Draft)
+            .into_iter()
+            .collect()
     }
 
     fn act(&mut self, action: Action, now: Instant) -> Vec<Effect> {
@@ -553,7 +597,14 @@ impl Engine {
                     self.sched.send(call, Priority::Now);
                 }
             }
+            (Phase::Ready(session), Action::Close) if session.composer.is_some() => {
+                session.composer = None;
+            }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
+            (Phase::Ready(session), Action::Compose) => {
+                let draft = self.drafts.get(&Target::New);
+                session.composer = Some(Composer::open(Target::New, None, draft));
+            }
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(&Timer::Retry);
                 self.sched.send(Call::Me, Priority::Now);
@@ -650,6 +701,15 @@ impl Engine {
                 session.overlay = Some(Overlay::Reason { id, at: 0 });
                 (None, Vec::new())
             }
+            Act::Reply | Act::Quote => {
+                let target = match act {
+                    Act::Reply => Target::Reply(id),
+                    _ => Target::Quote(id),
+                };
+                let draft = self.drafts.get(&target);
+                session.composer = Some(Composer::open(target, Some(&author), draft));
+                (None, Vec::new())
+            }
         };
         if let Some(text) = toast {
             self.toast(text, now);
@@ -719,6 +779,7 @@ impl Engine {
             log: LogScreen::default(),
             threads: Vec::new(),
             overlay: None,
+            composer: None,
             asked_to_refresh: HashSet::new(),
         }));
         for log in LOGS {
@@ -896,10 +957,15 @@ impl Engine {
                     Block::new().style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND)),
                     area,
                 );
-                let [top, banner, body, foot] = Layout::vertical([
+                let panel = session
+                    .composer
+                    .as_ref()
+                    .map_or(0, |composer| composer.height(area.width, area.height));
+                let [top, banner, body, panel, foot] = Layout::vertical([
                     Constraint::Length(1),
                     Constraint::Length(1),
                     Constraint::Fill(1),
+                    Constraint::Length(panel),
                     Constraint::Length(1),
                 ])
                 .areas(area);
@@ -939,7 +1005,11 @@ impl Engine {
                         .or(health)
                 };
                 let error = failure
-                    .filter(|_| self.toast.is_none() && self.keymap.pending().is_empty())
+                    .filter(|_| {
+                        self.toast.is_none()
+                            && self.keymap.pending().is_empty()
+                            && session.composer.is_none()
+                    })
                     .and_then(|(failure, wait)| {
                         fatal::hint(failure, wait, room.saturating_sub(help.len()))
                     });
@@ -964,6 +1034,9 @@ impl Engine {
                     None => session
                         .log
                         .draw(frame, inset(body), &session.store, retry, wall),
+                }
+                if let Some(composer) = &mut session.composer {
+                    composer.draw(frame, panel);
                 }
                 frame.render_widget(hint, foot);
                 if self.sched.busy() {

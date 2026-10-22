@@ -568,7 +568,7 @@ fn refresh_toasts_then_the_hints_come_back() {
 
     engine.pump(at + secs(5));
     let rows = screen(&mut engine, 80, 20, at + secs(5));
-    assert_eq!(rows[19], " j/k move  enter open  ? help  Q quit");
+    assert_eq!(rows[19], " j/k move  enter open  c commit  ? help  Q quit");
 }
 
 #[test]

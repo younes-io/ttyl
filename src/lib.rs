@@ -1,6 +1,7 @@
 pub mod api;
 pub mod clock;
 pub mod code;
+pub mod compose;
 pub mod desktop;
 pub mod device;
 pub mod draft;
