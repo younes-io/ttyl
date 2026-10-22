@@ -86,7 +86,6 @@ fn refused(status: u16, message: &str, retry_after: Option<u64>) -> Error {
     }
 }
 
-/// Whether the posted commit's row sits above grace's in the log on screen.
 fn on_top(rows: &[String]) -> bool {
     let posted = rows.iter().position(|row| row.ends_with("a1b2c3d"));
     let grace = rows.iter().position(|row| row.ends_with("0000201"));

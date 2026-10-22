@@ -19,7 +19,6 @@ const TOP_LEVEL_DOMAINS: &[&str] = &[
     "tr", "il", "za", "mx", "ar", "kr", "cn", "tw", "hk", "sg", "vn", "th",
 ];
 
-/// The body as the server stores it: trimmed, with line breaks as `\n` and long runs of blank prose lines cut to one.
 pub fn normalize(text: &str) -> String {
     let text = text.trim_matches([' ', '\t', '\n', '\r', '\0', '\x0B']);
     if !text.contains('\r') && text.matches('\n').count() < 3 {
@@ -39,13 +38,11 @@ pub fn normalize(text: &str) -> String {
         .collect()
 }
 
-/// Characters left under the limit, below zero when over it. A prose link counts as at most 23.
 pub fn left(text: &str) -> isize {
     let used = isize::try_from(count(&normalize(text))).unwrap_or(isize::MAX);
     isize::try_from(LIMIT).unwrap_or(isize::MAX) - used
 }
 
-/// Why the server would turn this body down, or None when it would take it.
 pub fn refusal(text: &str) -> Option<String> {
     let body = normalize(text);
     if body.is_empty() {
@@ -61,8 +58,7 @@ pub fn refusal(text: &str) -> Option<String> {
     (over > 0).then(|| format!("{over} over the limit. nothing sent."))
 }
 
-/// The character the feed cuts a long body at, or None when it shows whole.
-pub fn fold(text: &str) -> Option<usize> {
+pub fn fold_char(text: &str) -> Option<usize> {
     let lines: Vec<&str> = text.splitn(PREVIEW_LINES + 1, '\n').collect();
     if lines.len() > PREVIEW_LINES {
         let shown = lines[..PREVIEW_LINES].join("\n").chars().count();
@@ -109,7 +105,6 @@ fn collapse_blank_lines(prose: &str) -> String {
     out
 }
 
-/// Prose and code alternating, prose at the even indexes, as the server's CodeSpans splits them.
 fn split(text: &str) -> Vec<&str> {
     if !text.contains('`') {
         return vec![text];
@@ -144,7 +139,6 @@ fn line_break(text: &str, at: usize) -> Option<usize> {
     }
 }
 
-/// A closing fence at `at`: three or more backticks, spaces or tabs, then the end of the line.
 fn closing_fence(text: &str, at: usize) -> Option<usize> {
     let ticks = backticks(text, at);
     if ticks < 3 {
@@ -232,13 +226,15 @@ fn word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-/// `[\p{L}\p{N}\p{M}\p{Pc}]`, with a mark taken as a character that joins the one before it.
+/// `[\p{L}\p{N}\p{M}\p{Pc}]`.
 fn scheme_blocker(ch: char) -> bool {
     const CONNECTORS: &str =
         "_\u{203F}\u{2040}\u{2054}\u{FE33}\u{FE34}\u{FE4D}\u{FE4E}\u{FE4F}\u{FF3F}";
-    ch.is_alphanumeric()
-        || CONNECTORS.contains(ch)
-        || format!("a{ch}").graphemes(true).nth(1).is_none()
+    ch.is_alphanumeric() || CONNECTORS.contains(ch) || joins_previous(ch)
+}
+
+fn joins_previous(ch: char) -> bool {
+    format!("a{ch}").graphemes(true).nth(1).is_none()
 }
 
 fn url_char(ch: char) -> bool {
@@ -303,7 +299,6 @@ fn bare_domain(chars: &[char], at: usize) -> Option<usize> {
     Some(domain_end + 1 + path)
 }
 
-/// The end of an allowed top-level domain at `at` that ends the word, or None.
 fn top_level_domain(chars: &[char], at: usize) -> Option<usize> {
     let len = chars[at..].iter().take_while(|&&ch| word_char(ch)).count();
     let tld: String = chars[at..at + len].iter().collect();
@@ -416,11 +411,11 @@ mod tests {
 
     #[test]
     fn fold_is_at_280_characters_or_the_end_of_the_eighth_line() {
-        assert_eq!(fold(&"a".repeat(280)), None);
-        assert_eq!(fold(&"a".repeat(281)), Some(280));
+        assert_eq!(fold_char(&"a".repeat(280)), None);
+        assert_eq!(fold_char(&"a".repeat(281)), Some(280));
         let lines = "line\n".repeat(9);
-        assert_eq!(fold(&lines), Some(8 * 5 - 1));
-        assert_eq!(fold(&"x\n".repeat(7)), None);
+        assert_eq!(fold_char(&lines), Some(8 * 5 - 1));
+        assert_eq!(fold_char(&"x\n".repeat(7)), None);
     }
 
     #[test]

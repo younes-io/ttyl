@@ -650,18 +650,17 @@ pub fn hints(scopes: &[Scope], pending: &[Key], can: &dyn Fn(Action) -> bool) ->
         .join("  ")
 }
 
-/// Drops hints from the end until they fit `width`. `? help` is how a user finds every
-/// other key, and the composer has no `?`, so `esc close` is its only way out shown; neither
-/// goes. `Q quit` goes only when nothing else is left.
+const NEVER_DROPPED: [&str; 3] = ["? help", "? close", "esc close"];
+const DROPPED_LAST: &str = "Q quit";
+
 pub fn fit(hints: &str, width: usize) -> String {
     let mut hints: Vec<&str> = hints.split("  ").collect();
     while hints.join("  ").width() > width {
-        let ordinary =
-            |hint: &&str| !hint.starts_with("? ") && *hint != "esc close" && *hint != "Q quit";
+        let ordinary = |hint: &&str| !NEVER_DROPPED.contains(hint) && *hint != DROPPED_LAST;
         let Some(at) = hints
             .iter()
             .rposition(ordinary)
-            .or_else(|| hints.iter().rposition(|hint| *hint == "Q quit"))
+            .or_else(|| hints.iter().rposition(|hint| *hint == DROPPED_LAST))
         else {
             break;
         };

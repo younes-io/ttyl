@@ -51,8 +51,8 @@ pub enum Event {
     Link(io::Result<String>),
     InputLost(io::Error),
     DraftFailed(io::Error),
-    /// The editor's text, or `None` when it exited with an error.
-    Edited(Option<String>),
+    Edited(String),
+    EditorFailed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -436,8 +436,8 @@ impl Engine {
                 self.toast(format!("fatal: could not save your draft: {error}"), now);
                 Vec::new()
             }
-            Event::Edited(Some(text)) => self.edit(|composer| composer.replace(&text)),
-            Event::Edited(None) => {
+            Event::Edited(text) => self.edit(|composer| composer.replace(&text)),
+            Event::EditorFailed => {
                 if let Phase::Ready(session) = &mut self.phase
                     && let Some(composer) = &mut session.composer
                 {
@@ -591,7 +591,6 @@ impl Engine {
         }
     }
 
-    /// Whether the open composer's commit is on its way, which locks the panel until it lands.
     fn sending(&self) -> bool {
         let Phase::Ready(session) = &self.phase else {
             return false;
@@ -632,7 +631,6 @@ impl Engine {
         }
     }
 
-    /// Applies `edit` to the open composer and saves the draft when the text changed.
     fn edit(&mut self, edit: impl FnOnce(&mut Composer) -> bool) -> Vec<Effect> {
         if self.sending() {
             return Vec::new();
@@ -1025,7 +1023,6 @@ impl Engine {
         }
     }
 
-    /// Tells the user why a commit did not go out. The draft stays and nothing is sent again.
     fn refused_post(&mut self, target: &Target, error: &Error, now: Instant) {
         let rules = error.is("commit_rules_required");
         let text = if error.may_have_landed() {

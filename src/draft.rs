@@ -15,7 +15,6 @@ pub enum Target {
 }
 
 impl Target {
-    /// None for an id that is not safe as a file name, whose draft then lives only in memory.
     fn file_name(&self) -> Option<String> {
         let (kind, id) = match self {
             Target::New => return Some("new".to_owned()),
@@ -64,7 +63,6 @@ impl Drafts {
         self.texts.get(target).map(String::as_str)
     }
 
-    /// The disk change that makes the stored draft `text`, or None when it already is.
     pub fn write(&mut self, target: &Target, text: &str) -> Option<Write> {
         if text.trim().is_empty() {
             self.texts
@@ -85,7 +83,6 @@ impl Drafts {
     }
 }
 
-/// `$XDG_STATE_HOME/devnull-tui/drafts`, falling back to `~/.local/state`.
 pub fn dir() -> Option<PathBuf> {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -107,23 +104,26 @@ pub fn load(dir: &Path) -> HashMap<Target, String> {
         .collect()
 }
 
-/// Writes through a temp file and a rename, so a crash mid-write leaves the old draft whole.
+fn replace_private(dir: &Path, name: &str, text: &str) -> io::Result<()> {
+    DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    let temp = dir.join(format!(".{name}.tmp"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temp)?;
+    file.write_all(text.as_bytes())?;
+    fs::rename(&temp, dir.join(name))
+}
+
 pub fn store(dir: &Path, write: &Write) -> io::Result<()> {
     match write {
         Write::Save(target, text) => {
             let Some(name) = target.file_name() else {
                 return Ok(());
             };
-            DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-            let temp = dir.join(format!(".{name}.tmp"));
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&temp)?;
-            file.write_all(text.as_bytes())?;
-            fs::rename(&temp, dir.join(name))
+            replace_private(dir, &name, text)
         }
         Write::Drop(target) => {
             let Some(name) = target.file_name() else {

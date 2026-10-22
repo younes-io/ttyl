@@ -1,10 +1,9 @@
 //! The bare-paste rules of `@sanity-labs/secret-scan`, which the web's `sensitive-text.ts` runs
-//! before a commit goes out, written out by hand because the TUI has no regex engine.
+//! before a commit goes out.
 
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-/// Whether `text` holds something shaped like a credential.
 pub fn detected(text: &str) -> bool {
     TOKENS.iter().any(|token| token.found(text))
         || [
@@ -13,7 +12,7 @@ pub fn detected(text: &str) -> bool {
             slack_webhook,
             sendgrid,
             jwt,
-            private_key,
+            private_key_header,
             connection_string,
             postgres,
             credentials,
@@ -25,7 +24,6 @@ pub fn detected(text: &str) -> bool {
         .any(|rule| rule(text))
 }
 
-/// A known prefix, then a run of one character class, as most vendors shape their keys.
 struct Token {
     prefixes: &'static [&'static str],
     body: fn(u8) -> bool,
@@ -40,7 +38,6 @@ struct Token {
 enum End {
     Free,
     Boundary,
-    /// A quote, backtick, space, `;`, an escaped `\n` or `\r`, or the end of the text.
     Separator,
 }
 
@@ -273,8 +270,7 @@ fn jwt(text: &str) -> bool {
     })
 }
 
-/// The `-----BEGIN … PRIVATE KEY-----` line alone, so a key pasted without its last line still counts.
-fn private_key(text: &str) -> bool {
+fn private_key_header(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let class =
         |byte: u8| byte == b' ' || byte == b'_' || byte == b'-' || byte.is_ascii_alphanumeric();
@@ -331,7 +327,6 @@ fn postgres(text: &str) -> bool {
     })
 }
 
-/// A `user:password@host` URL for the schemes TruffleHog checks that way.
 fn credentials(text: &str) -> bool {
     let bytes = text.as_bytes();
     let host = |byte: u8| word(byte) || b"-.%/:".contains(&byte);
@@ -409,7 +404,6 @@ fn sanity(text: &str) -> bool {
     })
 }
 
-/// Where the scan's known prefixes begin, the only places a token can start.
 fn starts<'a>(text: &'a str, prefix: &'a str) -> impl Iterator<Item = usize> + 'a {
     text.match_indices(prefix).map(|(at, _)| at)
 }
@@ -432,7 +426,6 @@ fn lower_hex(byte: u8) -> bool {
     byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
-/// A regex `\b`: a word character on exactly one side of `at`.
 fn boundary(bytes: &[u8], at: usize) -> bool {
     let before = at > 0 && word(bytes[at - 1]);
     let after = bytes.get(at).is_some_and(|&byte| word(byte));
@@ -491,18 +484,20 @@ const KNOWN_PREFIXES: &[&str] = &[
     "AKIA",
 ];
 
-/// Passes the rule's entropy floor and is not a known prefix over filler like `ghp_xxxx…`.
+const MIN_SUFFIX_ENTROPY: f64 = 1.5;
+
 fn real(secret: &str, floor: f64) -> bool {
-    if entropy(secret) < floor {
-        return false;
-    }
+    entropy(secret) >= floor && !placeholder(secret)
+}
+
+fn placeholder(secret: &str) -> bool {
     let prefix = KNOWN_PREFIXES
         .iter()
         .filter(|prefix| secret.starts_with(**prefix))
         .max_by_key(|prefix| prefix.len());
-    prefix.is_none_or(|prefix| {
+    prefix.is_some_and(|prefix| {
         let suffix = &secret[prefix.len()..];
-        !suffix.is_empty() && entropy(suffix) >= 1.5
+        suffix.is_empty() || entropy(suffix) < MIN_SUFFIX_ENTROPY
     })
 }
 

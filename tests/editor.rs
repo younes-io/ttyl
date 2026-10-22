@@ -41,7 +41,7 @@ fn the_edited_text_comes_back_and_is_saved_without_the_final_newline() {
     let at = Instant::now();
     let mut engine = composing("first", at);
     ctrl(&mut engine, 'e', at);
-    let effects = engine.update(Event::Edited(Some("first\nsecond\n".to_owned())), at);
+    let effects = engine.update(Event::Edited("first\nsecond\n".to_owned()), at);
     assert_eq!(
         effects,
         [Effect::Draft(Write::Save(
@@ -65,11 +65,11 @@ fn an_editor_that_saves_nothing_new_writes_nothing_and_an_emptied_file_drops_the
     let mut engine = composing("same", at);
     assert!(
         engine
-            .update(Event::Edited(Some("same\n".to_owned())), at)
+            .update(Event::Edited("same\n".to_owned()), at)
             .is_empty()
     );
     assert_eq!(
-        engine.update(Event::Edited(Some("\n".to_owned())), at),
+        engine.update(Event::Edited("\n".to_owned()), at),
         [Effect::Draft(Write::Drop(Target::New))]
     );
 }
@@ -79,7 +79,7 @@ fn a_failed_editor_keeps_the_old_text_and_says_so() {
     let at = Instant::now();
     let mut engine = composing("keep me", at);
     ctrl(&mut engine, 'e', at);
-    assert!(engine.update(Event::Edited(None), at).is_empty());
+    assert!(engine.update(Event::EditorFailed, at).is_empty());
     assert_eq!(engine.draft(&Target::New), Some("keep me"));
     for width in [100, 44] {
         let rows = screen(&mut engine, width, HEIGHT, at);

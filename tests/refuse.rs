@@ -37,7 +37,6 @@ fn one_post(effects: &[Effect]) -> Ticket {
     *ticket
 }
 
-/// Opens the composer on `target`, types "hello", and sends it.
 fn sent(target: &Target, at: Instant) -> (Engine, Ticket) {
     let mut engine = boot(at);
     let open = match target {
@@ -66,7 +65,6 @@ fn api(status: u16, code: Option<&str>, message: &str) -> Error {
     }
 }
 
-/// Lets time pass, with the logs refreshing on their timers, and returns every commit sent.
 fn posts_over_the_next_hour(engine: &mut Engine, at: Instant) -> Vec<Call> {
     let mut sent = Vec::new();
     for later in [1, 6, 31, 60, 600, 3600] {

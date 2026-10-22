@@ -120,8 +120,6 @@ impl Error {
         matches!(self, Error::Api { code: Some(given), .. } if given == code)
     }
 
-    /// The request left but no answer says what became of it: the connection dropped or timed
-    /// out, a gateway gave up waiting, or the server took it and sent back something unreadable.
     pub fn may_have_landed(&self) -> bool {
         match self {
             Error::Http(

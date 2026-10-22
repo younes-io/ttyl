@@ -315,7 +315,6 @@ impl Store {
         }
     }
 
-    /// Puts a commit the user just sent where they would look for it, without a refresh.
     fn place(&mut self, target: &Target, id: CommitId) {
         match target {
             Target::New | Target::Quote(_) => {

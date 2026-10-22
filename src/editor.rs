@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// `$VISUAL`, then `$EDITOR`, then `vi`, the order git uses.
 pub fn chosen() -> String {
     ["VISUAL", "EDITOR"]
         .into_iter()
@@ -15,11 +14,11 @@ pub fn chosen() -> String {
         .unwrap_or_else(|| "vi".to_owned())
 }
 
-/// Runs `editor` on a private temp file holding `text` and returns what it saved, or `None`
-/// when the file could not be written or read back or the editor exited with an error.
 pub fn edit(editor: &str, text: &str) -> Option<String> {
     let path = temp_path();
-    let edited = write(&path, text).ok().and_then(|()| run(editor, &path));
+    let edited = create_private(&path, text)
+        .ok()
+        .and_then(|()| run(editor, &path));
     let _ = fs::remove_file(&path);
     edited
 }
@@ -30,8 +29,7 @@ fn temp_path() -> PathBuf {
     env::temp_dir().join(format!("devnull-commit-{}-{next}.md", std::process::id()))
 }
 
-/// The draft may hold a secret, so the file is the user's alone and never an existing one.
-fn write(path: &Path, text: &str) -> io::Result<()> {
+fn create_private(path: &Path, text: &str) -> io::Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)

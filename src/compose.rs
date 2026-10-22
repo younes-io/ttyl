@@ -29,20 +29,21 @@ const RULES: [&str; 2] = [
 ];
 const SAVED: &str = "Your draft is saved.";
 
-/// A question the panel puts to the user in place of editing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
-    /// The body looks like it holds a secret, and the next key says whether to send it anyway.
     Secret,
-    /// The server takes a first commit only from the web, where the commit rules are.
     Rules,
 }
 
-/// A status line message, with a shorter wording for a narrow panel.
 struct Note {
     wide: String,
     narrow: Option<&'static str>,
     style: Style,
+}
+
+enum Row {
+    Text(Range<usize>),
+    Fold,
 }
 
 pub struct Composer {
@@ -83,7 +84,6 @@ impl Composer {
         self.text.text()
     }
 
-    /// Applies one key and says whether the text changed, which is what the draft on disk follows.
     pub fn typed(&mut self, event: KeyEvent) -> bool {
         let before = self.text.text().to_owned();
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
@@ -126,7 +126,6 @@ impl Composer {
         self.edited(before)
     }
 
-    /// Shows `text` on the status line until the next edit.
     pub fn note(&mut self, text: impl Into<String>, style: Style) {
         self.note = Some(Note {
             wide: text.into(),
@@ -135,7 +134,6 @@ impl Composer {
         });
     }
 
-    /// Like `note`, with `narrow` in place of `wide` when the panel has no room for it.
     pub fn note_or(&mut self, wide: &str, narrow: &'static str, style: Style) {
         self.note = Some(Note {
             wide: wide.to_owned(),
@@ -166,24 +164,22 @@ impl Composer {
         changed
     }
 
-    /// The text rows at `width`, with `None` for the line that marks where the feed folds.
-    fn lines(&self, width: usize) -> Vec<Option<Range<usize>>> {
+    fn lines(&self, width: usize) -> Vec<Row> {
         let rows = self.text.rows(width);
         let text = self.text.text();
-        let fold = body::fold(text).map(|at| {
+        let fold = body::fold_char(text).map(|at| {
             text.char_indices()
                 .nth(at)
                 .map_or(text.len(), |(byte, _)| byte)
         });
         let marker = fold.and_then(|fold| rows.iter().position(|row| fold <= row.end));
-        let mut lines: Vec<Option<Range<usize>>> = rows.into_iter().map(Some).collect();
+        let mut lines: Vec<Row> = rows.into_iter().map(Row::Text).collect();
         if let Some(at) = marker {
-            lines.insert(at + 1, None);
+            lines.insert(at + 1, Row::Fold);
         }
         lines
     }
 
-    /// Rows the panel takes on a `screen` tall terminal: a title, the text, and the status rows.
     pub fn height(&self, width: u16, screen: u16) -> u16 {
         let status = self.status(inner_width(width)).len();
         let most = (usize::from(screen) / 2)
@@ -196,7 +192,6 @@ impl Composer {
         u16::try_from(rows.clamp(MIN_ROWS, most) + TITLE + status).unwrap_or(u16::MAX)
     }
 
-    /// Draws the panel; `sending` says a commit from this target is on its way.
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, sending: bool) {
         self.width = layout_width(area.width);
         let title = if sending { SENDING } else { &self.title };
@@ -232,7 +227,7 @@ impl Composer {
         }
         let lines = self.lines(self.width);
         let (row, column) = self.text.row_and_column(self.width);
-        let marker = lines.iter().position(Option::is_none);
+        let marker = lines.iter().position(|line| matches!(line, Row::Fold));
         let row = row + usize::from(marker.is_some_and(|at| row >= at));
         let shown = usize::from(text_area.height);
         if row < self.scroll {
@@ -245,8 +240,8 @@ impl Composer {
             .skip(self.scroll)
             .take(shown)
             .map(|line| match line {
-                Some(range) => Line::raw(self.text.display(range)),
-                None => Line::styled(FOLDS, theme::muted()),
+                Row::Text(range) => Line::raw(self.text.display(range)),
+                Row::Fold => Line::styled(FOLDS, theme::muted()),
             })
             .collect();
         frame.render_widget(Paragraph::new(lines), text_area);
@@ -258,7 +253,6 @@ impl Composer {
         ));
     }
 
-    /// The rows under the text: the note, wrapped when it has no shorter wording, with the counter on the last.
     fn status(&self, width: usize) -> Vec<Line<'static>> {
         if self.prompt == Some(Prompt::Rules) {
             return vec![Line::styled(SAVED, theme::muted())];
@@ -302,7 +296,6 @@ impl Composer {
     }
 }
 
-/// The first-commit copy, broken where the blueprint breaks it when the panel is wide enough.
 fn rules(width: usize) -> Vec<Line<'static>> {
     let style = Style::new().fg(theme::FOREGROUND);
     if RULES.iter().all(|line| line.width() <= width) {
@@ -320,11 +313,13 @@ fn fit<'a>(wide: &'a str, narrow: &'a str, room: usize) -> &'a str {
     if wide.width() <= room { wide } else { narrow }
 }
 
+const BORDERS: usize = 2;
+const CURSOR_CELL: usize = 1;
+
 fn inner_width(width: u16) -> usize {
-    usize::from(width).saturating_sub(2)
+    usize::from(width).saturating_sub(BORDERS)
 }
 
-/// The panel's inner width less one cell, so the cursor after a full row still has a cell.
 fn layout_width(width: u16) -> usize {
-    usize::from(width).saturating_sub(3).max(1)
+    inner_width(width).saturating_sub(CURSOR_CELL).max(1)
 }

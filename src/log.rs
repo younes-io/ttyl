@@ -96,8 +96,6 @@ impl LogScreen {
         }
     }
 
-    /// The commit to keep selected while commits land above it. `None` at the head of the log, so
-    /// a reader there stays at the head and sees what landed.
     pub fn anchor(&self, log: Log, store: &Store) -> Option<CommitId> {
         if self.places[index(log)].selected == 0 {
             return None;

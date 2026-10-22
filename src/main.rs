@@ -22,7 +22,6 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 
-/// How long the input thread waits for a key before it checks whether to stand aside.
 const INPUT_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> ExitCode {
@@ -140,8 +139,11 @@ impl Runtime {
                 Effect::Copy(text) => desktop::copy(&text),
                 Effect::Open(url) => desktop::open(&url),
                 Effect::Edit(text) => {
-                    let edited = self.edit(terminal, &text);
-                    let effects = self.engine.update(Event::Edited(edited), Instant::now());
+                    let event = match self.edit(terminal, &text) {
+                        Some(edited) => Event::Edited(edited),
+                        None => Event::EditorFailed,
+                    };
+                    let effects = self.engine.update(event, Instant::now());
                     self.perform(terminal, effects)?;
                 }
                 Effect::Draft(write) => {
@@ -161,12 +163,14 @@ impl Runtime {
         ControlFlow::Continue(())
     }
 
-    /// Hands the terminal to the editor the way git commit does, with the input thread parked
-    /// first so it cannot read the editor's keys.
     fn edit(&mut self, terminal: &mut DefaultTerminal, text: &str) -> Option<String> {
-        let (paused, parked) = mpsc::channel();
-        let (resume, wait) = mpsc::channel();
-        if self.input.send(Pause { paused, wait }).is_err() || parked.recv().is_err() {
+        let (parked, is_parked) = mpsc::channel();
+        let (resume, until_resumed) = mpsc::channel();
+        let pause = Pause {
+            parked,
+            until_resumed,
+        };
+        if self.input.send(pause).is_err() || is_parked.recv().is_err() {
             return None;
         }
         let mut out = io::stdout();
@@ -181,11 +185,9 @@ impl Runtime {
     }
 }
 
-/// Asks the input thread to stand aside: it says so on `paused`, then waits until `wait`'s
-/// sender is dropped.
 struct Pause {
-    paused: Sender<()>,
-    wait: Receiver<()>,
+    parked: Sender<()>,
+    until_resumed: Receiver<()>,
 }
 
 fn spawn_input(events: Sender<Event>) -> Sender<Pause> {
@@ -193,8 +195,8 @@ fn spawn_input(events: Sender<Event>) -> Sender<Pause> {
     thread::spawn(move || {
         loop {
             if let Ok(pause) = control.try_recv() {
-                let _ = pause.paused.send(());
-                let _ = pause.wait.recv();
+                let _ = pause.parked.send(());
+                let _ = pause.until_resumed.recv();
                 continue;
             }
             match input::poll(INPUT_POLL) {

@@ -109,7 +109,6 @@ impl Buffer {
         self.vertical(width, true);
     }
 
-    /// Byte ranges of the rows the text wraps into at `width` cells, one grapheme at least per row.
     pub fn rows(&self, width: usize) -> Vec<Range<usize>> {
         let width = width.max(1);
         let mut rows = Vec::new();
