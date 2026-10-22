@@ -25,7 +25,7 @@ use crate::keys::{
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
+    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
 };
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
@@ -84,7 +84,14 @@ pub struct Session {
     stack: Vec<Screen>,
     overlay: Option<Overlay>,
     composer: Option<Composer>,
-    asked_to_refresh: HashSet<Log>,
+    asked_to_refresh: HashSet<Refresh>,
+}
+
+/// A list the user asked to reload, answered with a toast once it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Refresh {
+    Log(Log),
+    Inbox(Filter),
 }
 
 /// What sits over the log, newest last. Back pops one.
@@ -881,6 +888,11 @@ impl Engine {
                 Action::Refresh | Action::NextFilter | Action::PreviousFilter,
             ) if session.on_inbox() => {
                 session.inbox.act(action, &session.store);
+                if action == Action::Refresh {
+                    session
+                        .asked_to_refresh
+                        .insert(Refresh::Inbox(session.inbox.filter()));
+                }
                 fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
             }
             (Phase::Ready(session), Action::Open) if session.on_inbox() => {
@@ -942,7 +954,7 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Refresh) => {
                 let log = session.log.active();
-                session.asked_to_refresh.insert(log);
+                session.asked_to_refresh.insert(Refresh::Log(log));
                 self.timers.clear(&Timer::Reload(log));
                 self.timers.clear(&Timer::Older(log));
                 self.sched.send(Call::Page(log), Priority::Now);
@@ -1069,6 +1081,9 @@ impl Engine {
                             self.timers.clear(&Timer::Inbox(*filter));
                             session.store.unread = 0;
                             session.inbox.land(page);
+                            if session.asked_to_refresh.remove(&Refresh::Inbox(*filter)) {
+                                self.toast(format!("{} refreshed", inbox::TITLE), now);
+                            }
                         }
                         Some(cursor) => {
                             self.timers.clear(&Timer::OlderInbox(*filter));
@@ -1121,7 +1136,7 @@ impl Engine {
             }
             return Vec::new();
         };
-        let refreshed = session.asked_to_refresh.remove(log);
+        let refreshed = session.asked_to_refresh.remove(&Refresh::Log(*log));
         let selected = session.log.selected_id(*log, &session.store).cloned();
         session.store.apply(call, reply);
         session
@@ -1190,7 +1205,7 @@ impl Engine {
                 let offline = matches!(failure, Failure::Offline(_));
                 let connection = match call {
                     Call::Page(log) => {
-                        session.asked_to_refresh.remove(&log);
+                        session.asked_to_refresh.remove(&Refresh::Log(log));
                         session.store.fail(log, failure.clone());
                         self.timers.set(Timer::Reload(log), now + RETRY);
                         offline
@@ -1227,6 +1242,7 @@ impl Engine {
                         filter,
                         cursor: None,
                     } => {
+                        session.asked_to_refresh.remove(&Refresh::Inbox(filter));
                         session.inbox.fail(filter, failure.clone());
                         self.timers.set(Timer::Inbox(filter), now + RETRY);
                         offline

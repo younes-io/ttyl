@@ -590,3 +590,23 @@ fn a_rising_count_lights_up_for_five_seconds_and_a_steady_one_does_not() {
     engine.pump(at + secs(65));
     assert!(!count_lit(&mut engine, at + secs(65)));
 }
+
+#[test]
+fn a_refresh_says_so_when_the_list_lands_and_opening_stays_quiet() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    assert!(
+        !contains(&screen(&mut engine, 100, 30, at), "refreshed"),
+        "opening is not a refresh"
+    );
+    let (ticket, _, _) = list_call(&press(&mut engine, "R", at + secs(1)));
+    land(
+        &mut engine,
+        ticket,
+        page_of(Filter::All, None),
+        at + secs(2),
+    );
+    let rows = screen(&mut engine, 100, 30, at + secs(2));
+    assert_eq!(rows[29].trim_end(), " notifications refreshed");
+}
