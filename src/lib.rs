@@ -12,6 +12,7 @@ pub mod model;
 pub mod sched;
 pub mod signin;
 pub mod store;
+pub mod text;
 pub mod theme;
 pub mod thread;
 pub mod welcome;
