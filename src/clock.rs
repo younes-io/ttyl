@@ -7,6 +7,7 @@ pub const POLL: Duration = Duration::from_secs(30);
 pub const RETRY: Duration = Duration::from_secs(30);
 pub const MINUTE: Duration = Duration::from_secs(60);
 pub const TOAST: Duration = Duration::from_secs(4);
+pub const GLOW: Duration = Duration::from_secs(5);
 pub const FRAME: Duration = Duration::from_millis(100);
 pub const SECOND: Duration = Duration::from_secs(1);
 
@@ -16,6 +17,7 @@ pub enum Timer {
     Retry,
     RelativeTimes,
     Toast,
+    Glow,
     Reload(Log),
     Older(Log),
     Commit(CommitId),

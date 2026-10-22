@@ -558,3 +558,35 @@ fn f_follows_back_from_a_follow_group() {
         [&Call::User("grace".to_owned())]
     );
 }
+
+fn poll(engine: &mut Engine, unread: u32, at: Instant) {
+    for effect in engine.pump(at) {
+        if let Effect::Run(me, Call::Me) = effect {
+            engine.update(Event::Reply(me, Ok(Reply::Account(account(unread)))), at);
+        }
+    }
+}
+
+fn count_lit(engine: &mut Engine, at: Instant) -> bool {
+    let buffer = common::buffer(engine, 100, 30, at);
+    let row = screen(engine, 100, 30, at)[0].clone();
+    let x = row.find("● ").expect("the count shows") + "● ".len();
+    let x = u16::try_from(row[..x].chars().count()).unwrap();
+    buffer[(x, 0)]
+        .modifier
+        .contains(ratatui::style::Modifier::BOLD)
+}
+
+#[test]
+fn a_rising_count_lights_up_for_five_seconds_and_a_steady_one_does_not() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    poll(&mut engine, 3, at + secs(30));
+    assert!(!count_lit(&mut engine, at + secs(30)), "no rise, no glow");
+
+    poll(&mut engine, 5, at + secs(60));
+    assert!(screen(&mut engine, 100, 30, at + secs(60))[0].contains("● 5  @ada"));
+    assert!(count_lit(&mut engine, at + secs(64)));
+    engine.pump(at + secs(65));
+    assert!(!count_lit(&mut engine, at + secs(65)));
+}

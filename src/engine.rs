@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::body;
-use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
+use crate::clock::{FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
@@ -567,6 +567,7 @@ impl Engine {
                 Timer::Retry => self.sched.send(Call::Me, Priority::Now),
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
+                Timer::Glow => {}
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
                 Timer::Inbox(filter) => {
                     if let Phase::Ready(session) = &mut self.phase
@@ -1099,7 +1100,11 @@ impl Engine {
                 }
                 _ => None,
             };
+            let unread = session.store.unread;
             session.store.apply(call, reply);
+            if session.store.unread > unread {
+                self.timers.set(Timer::Glow, now + GLOW);
+            }
             let toast = said.or_else(|| {
                 let (username, server) = answered?;
                 let want = session.store.following(username)?;
@@ -1370,7 +1375,11 @@ impl Engine {
                 .areas(area);
                 let title =
                     (session.on_inbox() || session.group().is_some()).then_some(inbox::TITLE);
-                frame.render_widget(session.log.top_bar(&session.store, title, top.width), top);
+                let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
+                frame.render_widget(
+                    session.log.top_bar(&session.store, title, glow, top.width),
+                    top,
+                );
                 let active = session.log.active();
                 let loaded = match session.store.slot(active) {
                     Slot::Loaded(listing) => Some(listing),

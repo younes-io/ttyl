@@ -169,12 +169,18 @@ impl LogScreen {
 
     /// One row: the brand and the tabs on the left, unread and the handle on the right,
     /// giving up `CUTS` in order until it fits.
-    pub fn top_bar(&self, store: &Store, title: Option<&str>, width: u16) -> Line<'static> {
+    pub fn top_bar(
+        &self,
+        store: &Store,
+        title: Option<&str>,
+        glow: bool,
+        width: u16,
+    ) -> Line<'static> {
         let width = usize::from(width);
         let (left, right) = (0..CUTS.len())
-            .map(|cut| self.top_bar_as(&CUTS[..cut], store, title))
+            .map(|cut| self.top_bar_as(&CUTS[..cut], store, title, glow))
             .find(|(left, right)| left.width() + 2 + right.width() <= width)
-            .unwrap_or_else(|| self.top_bar_as(&CUTS, store, title));
+            .unwrap_or_else(|| self.top_bar_as(&CUTS, store, title, glow));
         let pad = width.saturating_sub(left.width() + right.width());
         let mut spans = left.spans;
         spans.push(Span::raw(" ".repeat(pad)));
@@ -187,6 +193,7 @@ impl LogScreen {
         cuts: &[Cut],
         store: &Store,
         title: Option<&str>,
+        glow: bool,
     ) -> (Line<'static>, Line<'static>) {
         let kept = |cut| !cuts.contains(&cut);
         let mut left = Vec::new();
@@ -225,9 +232,15 @@ impl LogScreen {
         }
         let mut right = Vec::new();
         if store.unread > 0 {
-            right.push(Span::styled("● ", Style::new().fg(theme::PRIMARY)));
+            let lit = Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD);
+            let (dot, number) = if glow {
+                (lit, lit)
+            } else {
+                (Style::new().fg(theme::PRIMARY), theme::muted())
+            };
+            right.push(Span::styled("● ", dot));
             if kept(Cut::Number) {
-                right.push(Span::styled(format!("{}  ", store.unread), theme::muted()));
+                right.push(Span::styled(format!("{}  ", store.unread), number));
             }
         }
         if kept(Cut::Handle) {
