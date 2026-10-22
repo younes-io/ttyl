@@ -20,6 +20,8 @@ const RESTORED: &str = "stash@{0}: restored your unsent draft";
 const FOLDS: &str = "the feed folds your commit here";
 const SENDING: &str = "committing…";
 const COUNT_FROM: isize = 200;
+const ASK: &str = "possible secret detected. commit anyway? [y/N]";
+const ASK_SHORT: &str = "possible secret. commit anyway? [y/N]";
 
 pub struct Composer {
     target: Target,
@@ -27,6 +29,7 @@ pub struct Composer {
     text: Buffer,
     restored: bool,
     note: Option<(String, Style)>,
+    asking: bool,
     width: usize,
     scroll: usize,
 }
@@ -44,6 +47,7 @@ impl Composer {
             text: Buffer::new(draft.unwrap_or("")),
             restored: draft.is_some(),
             note: None,
+            asking: false,
             width: 80,
             scroll: 0,
         }
@@ -95,11 +99,25 @@ impl Composer {
         self.note = Some((text.into(), style));
     }
 
+    /// Puts the secret question on the status line; the next key answers it.
+    pub fn ask(&mut self) {
+        self.asking = true;
+    }
+
+    pub fn asking(&self) -> bool {
+        self.asking
+    }
+
+    pub fn answered(&mut self) {
+        self.asking = false;
+    }
+
     fn edited(&mut self, before: String) -> bool {
         let changed = self.text.text() != before;
         if changed {
             self.restored = false;
             self.note = None;
+            self.asking = false;
         }
         changed
     }
@@ -197,12 +215,16 @@ impl Composer {
         } else {
             theme::muted()
         };
+        let room = width.saturating_sub(count.width() + usize::from(!count.is_empty()));
         let (note, style) = match &self.note {
+            _ if self.asking => (
+                if ASK.width() <= room { ASK } else { ASK_SHORT },
+                Style::new().fg(theme::AMBER),
+            ),
             Some((text, style)) => (text.as_str(), *style),
             None if self.restored => (RESTORED, theme::muted()),
             None => ("", theme::muted()),
         };
-        let room = width.saturating_sub(count.width() + usize::from(!count.is_empty()));
         let note = fatal::cut(note, room);
         let gap = width.saturating_sub(note.width() + count.width());
         Line::from(vec![

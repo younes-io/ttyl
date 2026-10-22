@@ -18,11 +18,13 @@ use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES,
-    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope,
+    THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log, Reason, Status};
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
+use crate::secret;
 use crate::signin::Callback;
 use crate::store::{Node, Slot, Store};
 use crate::theme;
@@ -170,6 +172,7 @@ impl Session {
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
+            None if self.composer.as_ref().is_some_and(Composer::asking) => SECRET_SCOPES,
             None if self.composer.is_some() => COMPOSER_SCOPES,
             None => self.screen_scopes(),
         }
@@ -285,6 +288,14 @@ impl Session {
             Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Details { .. }) | None => None,
         }
     }
+}
+
+fn post(sched: &mut Scheduler, composer: &Composer) {
+    let call = Call::Post {
+        target: composer.target().clone(),
+        body: composer.text().to_owned(),
+    };
+    sched.send(call, Priority::Now);
 }
 
 fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
@@ -576,10 +587,15 @@ impl Engine {
         match keymap.resolve(event, mode, scopes, &can) {
             Resolve::Act(action) => self.act(action, now),
             Resolve::Text(event) => {
-                if let Phase::Ready(session) = &mut self.phase
-                    && session.composer.is_none()
-                {
-                    session.typed(event);
+                if let Phase::Ready(session) = &mut self.phase {
+                    match &mut session.composer {
+                        None => session.typed(event),
+                        Some(composer) if composer.asking() => {
+                            composer.answered();
+                            return Vec::new();
+                        }
+                        Some(_) => {}
+                    }
                 }
                 self.edit(|composer| composer.typed(event))
             }
@@ -623,14 +639,15 @@ impl Engine {
                 if let Some(composer) = &mut session.composer {
                     match body::refusal(composer.text()) {
                         Some(refusal) => composer.note(refusal, theme::muted()),
-                        None => {
-                            let call = Call::Post {
-                                target: composer.target().clone(),
-                                body: composer.text().to_owned(),
-                            };
-                            self.sched.send(call, Priority::Now);
-                        }
+                        None if secret::detected(composer.text()) => composer.ask(),
+                        None => post(&mut self.sched, composer),
                     }
+                }
+            }
+            (Phase::Ready(session), Action::Confirm) => {
+                if let Some(composer) = &mut session.composer {
+                    composer.answered();
+                    post(&mut self.sched, composer);
                 }
             }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),

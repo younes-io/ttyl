@@ -13,6 +13,7 @@ pub mod keys;
 pub mod log;
 pub mod model;
 pub mod sched;
+pub mod secret;
 pub mod signin;
 pub mod store;
 pub mod text;

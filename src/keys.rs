@@ -55,6 +55,7 @@ pub enum Scope {
     Report,
     Details,
     Composer,
+    Secret,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -64,6 +65,7 @@ pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
+pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -86,6 +88,7 @@ pub const UNIONS: &[&[Scope]] = &[
     REPORT_SCOPES,
     DETAILS_SCOPES,
     COMPOSER_SCOPES,
+    SECRET_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
 ];
@@ -469,6 +472,20 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Composer,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Secret,
+        chords: &[&[Key::ch('y')]],
+        action: Action::Confirm,
+        hint: Some("y commit anyway"),
+        help: "commit anyway",
+    },
+    Binding {
+        scope: Scope::Secret,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,
