@@ -600,36 +600,62 @@ fn z_covers_the_screen_with_a_drifting_wordmark_until_any_key() {
 }
 
 #[test]
-fn the_screensaver_wordmark_melts_into_life_and_forms_again() {
+fn the_screensaver_wordmark_melts_into_life_while_a_new_one_drifts_in() {
     let mut app = app();
     press(&mut app, "z");
-    let shape = |rows: &[String]| -> Vec<(usize, usize, char)> {
-        let ink: Vec<_> = rows
+    let solid = |rows: &[String]| -> Vec<(usize, usize)> {
+        let cells: Vec<_> = rows
             .iter()
             .enumerate()
             .flat_map(|(y, row)| {
                 row.chars()
                     .enumerate()
-                    .filter(|(_, ch)| "█▀▄".contains(*ch))
-                    .map(move |(x, ch)| (x, y, ch))
+                    .filter(|(_, ch)| *ch == '█')
+                    .map(move |(x, _)| (x, y))
             })
             .collect();
-        let left = ink.iter().map(|(x, _, _)| *x).min().unwrap_or(0);
-        let top = ink.iter().map(|(_, y, _)| *y).min().unwrap_or(0);
-        ink.into_iter()
-            .map(|(x, y, ch)| (x - left, y - top, ch))
+        let left = cells.iter().map(|(x, _)| *x).min().unwrap_or(0);
+        let top = cells.iter().map(|(_, y)| *y).min().unwrap_or(0);
+        cells
+            .into_iter()
+            .map(|(x, y)| (x - left, y - top))
             .collect()
     };
+    let ink = |rows: &[String]| {
+        rows.iter()
+            .flat_map(|row| row.chars())
+            .filter(|ch| *ch != ' ')
+            .count()
+    };
     let at = |ms: u64| app.1 + Duration::from_millis(ms);
-    let logos: Vec<_> = (0..2)
-        .map(|n| shape(&common::screen(&mut app.0, 80, 30, at(110 * n))))
-        .collect();
-    let melted = shape(&common::screen(&mut app.0, 80, 30, at(6_000)));
-    assert!(!melted.is_empty(), "life keeps cells on screen");
-    assert!(!logos.contains(&melted), "the letters break up");
-    let back = (7..400).map(|s| shape(&common::screen(&mut app.0, 80, 30, at(s * 1_000))));
-    assert!(
-        back.into_iter().any(|frame| logos.contains(&frame)),
-        "the wordmark forms again once life settles"
+    let first = common::screen(&mut app.0, 80, 30, at(0));
+    let logos = [
+        solid(&first),
+        solid(&common::screen(&mut app.0, 80, 30, at(110))),
+    ];
+    let wordmarks = |rows: &[String]| {
+        let grid: Vec<Vec<char>> = rows.iter().map(|row| row.chars().collect()).collect();
+        let solid_at = |x: usize, y: usize| grid.get(y).and_then(|row| row.get(x)) == Some(&'█');
+        (0..30)
+            .flat_map(|top| (0..80).map(move |left| (left, top)))
+            .filter(|&(left, top)| {
+                logos
+                    .iter()
+                    .any(|logo| logo.iter().all(|&(x, y)| solid_at(left + x, top + y)))
+            })
+            .count()
+    };
+    assert_eq!(
+        wordmarks(&common::screen(&mut app.0, 80, 30, at(3_000))),
+        2,
+        "the wordmark melts as a new one appears"
     );
+    assert!(
+        ink(&common::screen(&mut app.0, 80, 30, at(6_000))) > ink(&first),
+        "life spreads around the new wordmark"
+    );
+    for s in 0..120 {
+        let frame = common::screen(&mut app.0, 80, 30, at(s * 500));
+        assert!(wordmarks(&frame) >= 1, "a wordmark is on screen at {s}");
+    }
 }
