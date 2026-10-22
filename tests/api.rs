@@ -8,6 +8,7 @@ use std::time::Duration;
 use common::openssh_accepts;
 use devnull::api::{Call, Client, Error, Reply};
 use devnull::device::DeviceKey;
+use devnull::draft::Target;
 use devnull::model::{CommitId, Log};
 
 struct Seen {
@@ -300,4 +301,53 @@ fn json_of_the_wrong_shape_names_the_field() {
         matches!(&error, Error::WrongShape(detail) if detail.contains("username")),
         "{error:?}"
     );
+}
+
+#[test]
+fn a_422_names_the_first_field_message_without_the_count() {
+    let (base, _server) = serve(
+        "422 Unprocessable Content",
+        r#"{"message":"The body field must not be greater than 4000 characters. (and 1 more error)","errors":{"body":["The body field must not be greater than 4000 characters."],"parent_id":["The selected parent id is invalid."]}}"#,
+    );
+    let post = Call::Post {
+        target: Target::New,
+        body: "x".to_owned(),
+    };
+    let error = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&post)
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "The body field must not be greater than 4000 characters."
+    );
+    assert!(!error.may_have_landed());
+}
+
+#[test]
+fn a_dropped_connection_may_have_landed_and_a_refused_one_did_not() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(&stream).read_line(&mut line).unwrap();
+    });
+    let post = Call::Post {
+        target: Target::New,
+        body: "x".to_owned(),
+    };
+    let dropped = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&post)
+        .unwrap_err();
+    server.join().unwrap();
+    assert!(dropped.may_have_landed(), "{dropped:?}");
+
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let refused = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&post)
+        .unwrap_err();
+    assert!(!refused.may_have_landed(), "{refused:?}");
 }

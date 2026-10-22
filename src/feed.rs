@@ -579,7 +579,7 @@ pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>
     lines
 }
 
-fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Vec<Span<'static>>>) {
+pub(crate) fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Vec<Span<'static>>>) {
     let mut line = Vec::new();
     let mut used = 0;
     for (text, style) in paragraph {

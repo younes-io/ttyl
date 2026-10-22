@@ -26,6 +26,7 @@ pub enum Action {
     Compose,
     Send,
     Editor,
+    Site,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,7 @@ pub enum Scope {
     Details,
     Composer,
     Secret,
+    Rules,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -67,6 +69,7 @@ pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
+pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -90,6 +93,7 @@ pub const UNIONS: &[&[Scope]] = &[
     DETAILS_SCOPES,
     COMPOSER_SCOPES,
     SECRET_SCOPES,
+    RULES_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
 ];
@@ -494,6 +498,27 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Secret,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Rules,
+        chords: &[&[Key::ch('O')]],
+        action: Action::Site,
+        hint: Some("O open dev-null.sh"),
+        help: "open dev-null.sh to read the commit rules",
+    },
+    Binding {
+        scope: Scope::Rules,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Back,
+        hint: Some("esc back to the draft"),
+        help: "back to the draft",
+    },
+    Binding {
+        scope: Scope::Rules,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::fmt;
+use std::io;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -111,7 +113,32 @@ pub enum Error {
 impl Error {
     /// The server does not know this device, or the user has not approved it yet.
     pub fn needs_sign_in(&self) -> bool {
-        matches!(self, Error::Api { code: Some(code), .. } if code == "device_not_approved")
+        self.is("device_not_approved")
+    }
+
+    pub fn is(&self, code: &str) -> bool {
+        matches!(self, Error::Api { code: Some(given), .. } if given == code)
+    }
+
+    /// The request left but no answer says what became of it: the connection dropped or timed
+    /// out, a gateway gave up waiting, or the server took it and sent back something unreadable.
+    pub fn may_have_landed(&self) -> bool {
+        match self {
+            Error::Http(
+                ureq::Error::HostNotFound
+                | ureq::Error::ConnectionFailed
+                | ureq::Error::Timeout(ureq::Timeout::Resolve | ureq::Timeout::Connect),
+            ) => false,
+            Error::Http(ureq::Error::Io(error)) => !matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::HostUnreachable
+                    | io::ErrorKind::NetworkUnreachable
+                    | io::ErrorKind::AddrNotAvailable
+            ),
+            Error::Http(_) | Error::WrongShape(_) | Error::Unexpected(502 | 504) => true,
+            Error::Api { .. } | Error::Unexpected(_) => false,
+        }
     }
 
     pub fn is_not_found(&self) -> bool {
@@ -163,6 +190,9 @@ impl Failure {
 struct Refusal {
     message: String,
     code: Option<String>,
+    /// Laravel's 422 lists each field's messages and folds them into `message` with a count.
+    #[serde(default)]
+    errors: HashMap<String, Vec<String>>,
 }
 
 impl Client {
@@ -356,8 +386,14 @@ impl Client {
             .map(Duration::from_secs);
         Err(Error::Api {
             status,
+            message: refusal
+                .errors
+                .values()
+                .flatten()
+                .find(|field| refusal.message.starts_with(field.as_str()))
+                .cloned()
+                .unwrap_or(refusal.message),
             code: refusal.code,
-            message: refusal.message,
             retry_after,
         })
     }

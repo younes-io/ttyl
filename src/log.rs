@@ -131,7 +131,8 @@ impl LogScreen {
             | Action::Commit(_)
             | Action::Compose
             | Action::Send
-            | Action::Editor => false,
+            | Action::Editor
+            | Action::Site => false,
         }
     }
 

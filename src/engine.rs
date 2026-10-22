@@ -10,16 +10,16 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use crate::api::{Account, Call, Error, Failure, Reply};
+use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::body;
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
-use crate::compose::Composer;
+use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES,
-    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope,
-    THREAD_SCOPES,
+    InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES,
+    SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log, Reason, Status};
@@ -39,6 +39,8 @@ const HINT_INDENT: &str = " ";
 const PENDING: &str = "Your commit is pending review. Everyone will see it once it is approved.";
 const EDITOR_FAILED: &str = "editor exited with an error. draft unchanged.";
 const EDITOR_FAILED_SHORT: &str = "editor failed. draft unchanged.";
+const NO_ANSWER: &str = "fatal: no answer from dev-null.sh. it may have gone through. check your log before sending again.";
+const VANISHED: &str = "That commit is no longer available to reply to.";
 
 pub enum Event {
     Key(KeyEvent),
@@ -177,16 +179,25 @@ impl Session {
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
-            None if self.composer.as_ref().is_some_and(Composer::asking) => SECRET_SCOPES,
-            None if self.composer.is_some() => COMPOSER_SCOPES,
-            None => self.screen_scopes(),
+            None => match self.composer.as_ref().map(Composer::prompt) {
+                Some(Some(Prompt::Secret)) => SECRET_SCOPES,
+                Some(Some(Prompt::Rules)) => RULES_SCOPES,
+                Some(None) => COMPOSER_SCOPES,
+                None => self.screen_scopes(),
+            },
         }
     }
 
     fn input_mode(&self) -> InputMode {
         match self.overlay {
             Some(Overlay::Delete(_) | Overlay::Details { .. }) => InputMode::Text,
-            None if self.composer.is_some() => InputMode::Text,
+            None if self
+                .composer
+                .as_ref()
+                .is_some_and(|composer| composer.prompt() != Some(Prompt::Rules)) =>
+            {
+                InputMode::Text
+            }
             Some(Overlay::Help | Overlay::Reason { .. }) | None => InputMode::Commands,
         }
     }
@@ -608,7 +619,7 @@ impl Engine {
                 if let Phase::Ready(session) = &mut self.phase {
                     match &mut session.composer {
                         None => session.typed(event),
-                        Some(composer) if composer.asking() => {
+                        Some(composer) if composer.prompt() == Some(Prompt::Secret) => {
                             composer.answered();
                             return Vec::new();
                         }
@@ -657,7 +668,7 @@ impl Engine {
                 if let Some(composer) = &mut session.composer {
                     match body::refusal(composer.text()) {
                         Some(refusal) => composer.note(refusal, theme::muted()),
-                        None if secret::detected(composer.text()) => composer.ask(),
+                        None if secret::detected(composer.text()) => composer.ask(Prompt::Secret),
                         None => post(&mut self.sched, composer),
                     }
                 }
@@ -672,6 +683,15 @@ impl Engine {
                     composer.answered();
                     post(&mut self.sched, composer);
                 }
+            }
+            (Phase::Ready(session), Action::Back) if session.composer.is_some() => {
+                if let Some(composer) = &mut session.composer {
+                    composer.answered();
+                }
+            }
+            (Phase::Ready(_), Action::Site) => {
+                self.toast("opened in the browser".to_owned(), now);
+                return vec![Effect::Open(format!("{}/", api::BASE))];
             }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
             (Phase::Ready(session), Action::Compose) => {
@@ -1013,12 +1033,23 @@ impl Engine {
 
     /// Tells the user why a commit did not go out. The draft stays and nothing is sent again.
     fn refused_post(&mut self, target: &Target, error: &Error, now: Instant) {
-        let text = error.to_string();
+        let rules = error.is("commit_rules_required");
+        let text = if error.may_have_landed() {
+            NO_ANSWER.to_owned()
+        } else if error.is_not_found() && *target != Target::New {
+            VANISHED.to_owned()
+        } else {
+            error.to_string()
+        };
         if let Phase::Ready(session) = &mut self.phase
             && let Some(composer) = &mut session.composer
             && composer.target() == target
         {
-            composer.note(text, Style::new().fg(theme::DESTRUCTIVE));
+            if rules {
+                composer.ask(Prompt::Rules);
+            } else {
+                composer.note(text, Style::new().fg(theme::DESTRUCTIVE));
+            }
             return;
         }
         self.toast(text, now);
