@@ -125,7 +125,6 @@ fn world() -> &'static serde_json::Value {
     WORLD.get_or_init(|| fixtures("world.json").remove(0))
 }
 
-/// The commit's page from the world or a fixture, or else a page with no ancestors built from its log row.
 pub fn commit(id: &CommitId) -> Option<CommitPage> {
     let page = world()["commits"]
         .get(&id.0)
@@ -145,7 +144,6 @@ pub fn commit(id: &CommitId) -> Option<CommitPage> {
     Some(CommitPage::parse(&page.to_string()).unwrap())
 }
 
-/// The page of replies the world or a fixture has for `id` at `cursor`, or else no replies.
 pub fn replies(id: &CommitId, cursor: Option<&str>) -> RepliesPage {
     let path = format!("/commits/{}/replies", id.0);
     let page = world()["replies"]
@@ -161,7 +159,6 @@ pub fn replies(id: &CommitId, cursor: Option<&str>) -> RepliesPage {
     RepliesPage::parse(&page.to_string()).unwrap()
 }
 
-/// A log page of the world's commits, in the order given, so a test can open any of them.
 pub fn world_log(ids: &[&str]) -> LogPage {
     let cards: Vec<_> = ids
         .iter()
@@ -170,7 +167,6 @@ pub fn world_log(ids: &[&str]) -> LogPage {
     log_of(&cards)
 }
 
-/// A log page whose rows are these commits, as a commit page's `data` gives them.
 pub fn log_of(cards: &[serde_json::Value]) -> LogPage {
     let rows: Vec<_> = cards
         .iter()
@@ -189,7 +185,6 @@ pub fn log_of(cards: &[serde_json::Value]) -> LogPage {
     LogPage::parse(&json.to_string()).unwrap()
 }
 
-/// What the world answers to a thread's call.
 pub fn from_world(call: &Call) -> Result<Reply, Error> {
     match call {
         Call::Commit(id) => commit(id)
@@ -267,7 +262,6 @@ pub fn serve_with(engine: &mut Engine, at: Instant, pages: fn(Log) -> LogPage) {
     answer_with(engine, Vec::new(), at, pages);
 }
 
-/// Answers `effects` from the fixtures, then every call they lead to.
 pub fn answer(engine: &mut Engine, effects: Vec<Effect>, at: Instant) {
     answer_with(engine, effects, at, page);
 }

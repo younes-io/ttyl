@@ -57,7 +57,6 @@ fn world(call: &Call) -> Result<Reply, Error> {
     }
 }
 
-/// Answers the poll's calls in `effects` and gives back the rest.
 fn answer_poll(engine: &mut Engine, effects: Vec<Effect>, at: Instant) -> Vec<Effect> {
     let mut rest = Vec::new();
     for effect in effects {
@@ -71,8 +70,6 @@ fn answer_poll(engine: &mut Engine, effects: Vec<Effect>, at: Instant) -> Vec<Ef
     rest
 }
 
-/// Answers `effects` from the world, drawing between pumps the way the main loop does,
-/// and gives every call it answered.
 fn settle(engine: &mut Engine, mut effects: Vec<Effect>, height: u16, at: Instant) -> Vec<Call> {
     let mut calls = Vec::new();
     loop {
@@ -92,7 +89,6 @@ fn settle(engine: &mut Engine, mut effects: Vec<Effect>, height: u16, at: Instan
     }
 }
 
-/// Answers the call in `effects` that matches `call` with `result`, and gives back the rest.
 fn reply(
     engine: &mut Engine,
     effects: Vec<Effect>,

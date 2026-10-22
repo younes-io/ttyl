@@ -34,8 +34,7 @@ pub struct Entry {
 }
 
 impl Feed {
-    /// The lines in `window`, with the selected commit's rail drawn in its lane color, or its one line lit when it
-    /// has no rail.
+    /// The lines in `window`, with the selected commit's rail drawn in its lane color.
     pub fn window(&self, selected: Option<usize>, window: Range<usize>) -> Vec<Line<'static>> {
         let mut lines = self.lines[window.clone()].to_vec();
         let Some(entry) = selected.and_then(|at| self.entries.get(at)) else {
@@ -144,7 +143,6 @@ pub fn layout<Tz: TimeZone>(
 pub(crate) struct Writer {
     pub lines: Vec<Line<'static>>,
     width: usize,
-    /// Blank columns before the rail, so a nested reply sits to the right of its parent.
     pub pad: usize,
 }
 
@@ -217,7 +215,6 @@ fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &Da
     }
 }
 
-/// The body, folded to its preview when `fold`, and what the web shows under it.
 pub(crate) fn content<Tz: TimeZone>(
     out: &mut Writer,
     rail: &Span<'static>,
@@ -461,7 +458,6 @@ fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> {
     line
 }
 
-/// `mark` follows the time, muted, as the thread marks a quote.
 pub(crate) fn header<Tz: TimeZone>(
     commit: &Commit,
     width: usize,
@@ -747,7 +743,6 @@ pub fn day_label<Tz: TimeZone>(day: NaiveDate, now: &DateTime<Tz>) -> String {
     }
 }
 
-/// The offset that keeps the selected entry's lines on screen, its header first when they do not all fit.
 pub(crate) fn scroll(
     feed: &Feed,
     total: usize,

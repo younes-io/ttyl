@@ -26,7 +26,6 @@ pub enum CallKey {
     Older(Log),
     Since(Log),
     Commit(CommitId),
-    /// A list's first page and its later pages share one key, so a list never has two calls in flight.
     Replies(CommitId),
 }
 
@@ -87,7 +86,6 @@ impl Scheduler {
         self.flying.values().any(|(call, _)| call.key() == *key)
     }
 
-    /// In flight, or waiting in either queue.
     pub fn pending(&self, key: &CallKey) -> bool {
         self.in_flight(key)
             || self

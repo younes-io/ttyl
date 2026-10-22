@@ -43,10 +43,8 @@ pub enum Chain {
     Unknown,
     Known {
         ancestors: Vec<CommitId>,
-        /// The parent of the first ancestor, when the server cut the chain there.
         earlier: Option<CommitId>,
     },
-    /// The server has no such commit, or it was deleted.
     Missing,
 }
 
@@ -60,9 +58,7 @@ pub enum Branch {
 pub struct Replies {
     pub ids: Vec<CommitId>,
     pub next_cursor: Option<String>,
-    /// A reload of the first page failed.
     pub reload: Option<Failure>,
-    /// The next page failed.
     pub more: Option<Failure>,
 }
 
@@ -213,7 +209,6 @@ impl Store {
         self.generation += 1;
     }
 
-    /// Keeps a live commit through `live`, or buries a deleted one.
     fn keep<T>(
         &mut self,
         shown: Shown<T>,
@@ -233,7 +228,6 @@ impl Store {
         }
     }
 
-    /// A card carries no replies count and no preview, so a copy the store already has keeps its own.
     fn keep_card(&mut self, card: Card) -> CommitId {
         self.keep_counted(card, None)
     }
@@ -339,7 +333,6 @@ impl Store {
         self.generation += 1;
     }
 
-    /// `more` says the failed call asked for the next page rather than the first.
     pub fn fail_replies(&mut self, id: &CommitId, more: bool, failure: Failure) {
         match self.replies.get_mut(id) {
             Some(Branch::Listed(replies)) if more => replies.more = Some(failure),
@@ -352,7 +345,6 @@ impl Store {
         self.generation += 1;
     }
 
-    /// The server has no replies list for `id`. After a first page that ends the list where it stands.
     pub fn no_replies(&mut self, id: &CommitId, more: bool) {
         match self.replies.get_mut(id) {
             Some(Branch::Listed(replies)) if more => {
@@ -383,7 +375,6 @@ impl Store {
         self.replies.get(id)
     }
 
-    /// A deleted commit shows as deleted on every screen, even one that still holds its old row.
     pub fn node(&self, id: &CommitId) -> Option<Node<'_>> {
         match self.gone.get(id) {
             Some(tombstone) => Some(Node::Gone(tombstone)),

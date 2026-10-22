@@ -18,8 +18,7 @@ use crate::sched::Priority;
 use crate::store::{Branch, Chain, Node, Store};
 use crate::theme;
 
-/// How long the focused commit's replies may take before the screen says they are loading.
-pub const PLACEHOLDER: Duration = Duration::from_millis(300);
+pub const LOADING_NOTE_DELAY: Duration = Duration::from_millis(300);
 const MAX_DEPTH: usize = 3;
 const INDENT: usize = 2;
 const ANCESTOR_LINES: usize = 2;
@@ -27,7 +26,6 @@ const ANCESTOR_LINES: usize = 2;
 pub struct ThreadScreen {
     focus: CommitId,
     selected: CommitId,
-    /// Where the selection was, for when its commit leaves the screen.
     at: usize,
     offset: usize,
     anchor: Option<Anchor>,
@@ -74,7 +72,6 @@ enum Piece {
     },
 }
 
-/// A line that stands in for replies not on screen yet. A failure carries the seconds until its retry.
 #[derive(Debug, Clone, PartialEq)]
 enum Note {
     Count(u32),
@@ -106,9 +103,8 @@ impl Piece {
     }
 }
 
-/// What the pieces need from outside the store: whether the wait for replies shows, and each retry's countdown.
 struct View<'a> {
-    waited: bool,
+    loading_note_due: bool,
     timers: Option<(&'a Timers, Instant)>,
 }
 
@@ -122,7 +118,7 @@ impl View<'_> {
 }
 
 const BARE: View<'static> = View {
-    waited: false,
+    loading_note_due: false,
     timers: None,
 };
 
@@ -161,11 +157,13 @@ impl ThreadScreen {
         let missing = matches!(chain, Some(Chain::Missing));
         let count = store.node(&self.focus).map(|node| node.replies_count());
         match store.replies(&self.focus) {
-            None if view.waited && !missing && count != Some(0) => pieces.push(Piece::Note {
-                owner: self.focus.clone(),
-                depth: 1,
-                note: Note::Loading,
-            }),
+            None if view.loading_note_due && !missing && count != Some(0) => {
+                pieces.push(Piece::Note {
+                    owner: self.focus.clone(),
+                    depth: 1,
+                    note: Note::Loading,
+                })
+            }
             None => {}
             Some(_) => {
                 let mut seen = HashSet::from([self.focus.clone()]);
@@ -207,7 +205,6 @@ impl ThreadScreen {
         }
     }
 
-    /// The thread Enter opens: the selected commit's, unless it is this thread's focus.
     pub fn opens(&self, store: &Store) -> Option<CommitId> {
         self.pieces(store, &BARE)
             .into_iter()
@@ -239,7 +236,6 @@ impl ThreadScreen {
         self.moved = true;
     }
 
-    /// Every list this thread has loaded or tried to, its own first.
     pub fn lists(&self, store: &Store) -> Vec<CommitId> {
         let mut lists = vec![self.focus.clone()];
         for piece in self.pieces(store, &BARE) {
@@ -252,7 +248,6 @@ impl ThreadScreen {
         lists
     }
 
-    /// The calls this screen wants now, each with the timer that holds it back after a failure.
     pub fn wants(&self, store: &Store) -> Vec<(Call, Priority, Timer)> {
         let mut wants = Vec::new();
         let thread = store.thread(&self.focus);
@@ -315,12 +310,11 @@ impl ThreadScreen {
         wants
     }
 
-    /// When the loading line is due, while the focused commit's replies have not landed.
     pub fn placeholder_at(&self, store: &Store) -> Option<Instant> {
         store
             .replies(&self.focus)
             .is_none()
-            .then_some(self.opened_at + PLACEHOLDER)
+            .then_some(self.opened_at + LOADING_NOTE_DELAY)
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -333,7 +327,7 @@ impl ThreadScreen {
         wall: &DateTime<Tz>,
     ) {
         let view = View {
-            waited: now >= self.opened_at + PLACEHOLDER,
+            loading_note_due: now >= self.opened_at + LOADING_NOTE_DELAY,
             timers: Some((timers, now)),
         };
         let pieces = self.pieces(store, &view);

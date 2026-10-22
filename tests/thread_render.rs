@@ -32,7 +32,6 @@ fn pages(id: &str) -> fn(Log) -> LogPage {
     }
 }
 
-/// Draws and answers until the screen wants nothing more, the way the main loop does.
 fn settle(engine: &mut Engine, effects: Vec<Effect>, width: u16, at: Instant) {
     answer(engine, effects, at);
     loop {

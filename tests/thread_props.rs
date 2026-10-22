@@ -38,7 +38,6 @@ struct Node {
     lines: usize,
 }
 
-/// A thread rooted at node 0, with every other node replying to or quoting an earlier one.
 #[derive(Debug, Clone)]
 struct Tree {
     nodes: Vec<Node>,
@@ -195,7 +194,6 @@ fn tree() -> impl Strategy<Value = Tree> {
         })
 }
 
-/// Answers every call the engine makes, drawing between pumps the way the main loop does.
 fn settle(
     engine: &mut Engine,
     tree: &Tree,
@@ -226,8 +224,6 @@ fn hit(engine: &mut Engine, key: &str, at: Instant) -> Vec<Effect> {
     }
 }
 
-/// Whether the selected commit's header is drawn below the top bar. A narrow header drops its hash, so a live
-/// commit is found by its first line of text.
 fn header_shown(rows: &[String], tree: &Tree, selected: &CommitId) -> bool {
     let index = Tree::index(&selected.0);
     if tree.nodes[index].kind == Kind::Deleted {

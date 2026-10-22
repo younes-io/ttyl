@@ -80,7 +80,6 @@ impl Session {
             }
     }
 
-    /// Acts on the top thread, and gives the id of a thread it opened.
     fn on_thread(&mut self, action: Action, now: Instant) -> Option<CommitId> {
         match action {
             Action::Back => {
@@ -118,7 +117,6 @@ impl Session {
     }
 }
 
-/// Asks for a thread the moment it opens, ahead of any retry timer left from an earlier visit.
 fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
     timers.clear(&Timer::Commit(id.clone()));
     timers.clear(&Timer::Replies(id.clone()));
@@ -273,7 +271,6 @@ impl Engine {
         }
     }
 
-    /// What the top thread wants loaded that no call or retry timer covers yet.
     fn thread_wants(&self) -> Vec<(Call, Priority)> {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();

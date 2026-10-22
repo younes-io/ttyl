@@ -320,7 +320,6 @@ pub struct CommitPage {
     pub commit: Card,
     pub replies_count: u32,
     pub ancestors: Vec<Shown<Card>>,
-    /// The parent of the first ancestor, there only when the server cut the chain.
     pub earlier: Option<Shown<Card>>,
 }
 
