@@ -7,7 +7,7 @@ use common::{
 };
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, Focus};
+use devnull::model::{CommitId, Focus, Reason};
 use devnull::sched::Ticket;
 use devnull::theme;
 use ratatui::crossterm::event::KeyCode;
@@ -562,4 +562,202 @@ fn the_delete_prompt_fits_a_narrow_terminal() {
     assert_eq!(rows[29].trim_end(), PROMPT, "{rows:#?}");
     let buffer = buffer(&mut engine, 44, 30, at);
     assert_eq!(buffer[(1, 29)].fg, theme::DESTRUCTIVE);
+}
+
+fn report(reason: Reason, details: Option<&str>) -> Call {
+    Call::Report {
+        id: grace(),
+        reason,
+        details: details.map(str::to_owned),
+    }
+}
+
+const PICK_HINT: &str = " 1-4 pick  enter next  esc cancel  Q quit";
+const DETAILS_HINT: &str = " enter send  esc cancel";
+
+#[test]
+fn report_is_offered_only_on_a_commit_that_is_not_yours() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    assert!(press(&mut engine, "!", at).is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " j/k move  enter open  ? help  Q quit"
+    );
+    let rows = helps(&mut engine, at);
+    assert!(!contains(&rows, "report"), "{rows:#?}");
+
+    let mut engine = on_grace(at);
+    assert!(contains(&helps(&mut engine, at), "!  report"));
+    press(&mut engine, "!", at);
+    assert_eq!(footer(&mut engine, at), PICK_HINT);
+}
+
+#[test]
+fn a_reason_picked_by_number_and_typed_details_send_one_report_and_thank_you() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    assert!(press(&mut engine, "!2", at).is_empty());
+    assert_eq!(footer(&mut engine, at), DETAILS_HINT);
+    assert!(
+        press(&mut engine, "Qjk links to a scam", at).is_empty(),
+        "keys typed in the details are text"
+    );
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "> Qjk links to a scam"), "{rows:#?}");
+    assert!(contains(&rows, "19/500"), "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(
+        runs(&effects),
+        [&report(Reason::Harassment, Some("Qjk links to a scam"))]
+    );
+    let (ticket, _) = one_run(&effects);
+    assert!(reply(&mut engine, ticket, Ok(Reply::Done), at).is_empty());
+    assert_eq!(footer(&mut engine, at), " reported 0000201. thanks.");
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        !contains(&rows, "report 0000201"),
+        "the dialog closed: {rows:#?}"
+    );
+}
+
+#[test]
+fn a_reason_picked_with_j_and_k_and_no_details_sends_none() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "!jjjjk", at);
+    tap(&mut engine, KeyCode::Enter, at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(runs(&effects), [&report(Reason::Unsafe, None)]);
+
+    let mut engine = on_grace(at);
+    press(&mut engine, "!kk4   ", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(
+        runs(&effects),
+        [&report(Reason::Other, None)],
+        "blank details are no details"
+    );
+}
+
+#[test]
+fn esc_on_the_report_dialog_sends_nothing() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "!j", at);
+    assert!(tap(&mut engine, KeyCode::Esc, at).is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " j/k move  enter open  s star  ? help  Q quit"
+    );
+    press(&mut engine, "!3spam", at);
+    assert!(tap(&mut engine, KeyCode::Esc, at).is_empty());
+    assert!(
+        engine.thread().is_none(),
+        "esc closed the dialog, not the log"
+    );
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "report 0000201"), "{rows:#?}");
+    assert_eq!(
+        footer(&mut engine, at),
+        " j/k move  enter open  s star  ? help  Q quit"
+    );
+}
+
+#[test]
+fn details_stop_at_500_characters_and_backspace_takes_one_back() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "!1", at);
+    press(&mut engine, &"x".repeat(503), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "500/500"), "{rows:#?}");
+    tap(&mut engine, KeyCode::Backspace, at);
+    press(&mut engine, "yz", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let text = format!("{}y", "x".repeat(499));
+    assert_eq!(runs(&effects), [&report(Reason::Spam, Some(&text))]);
+}
+
+#[test]
+fn a_refused_report_shows_what_the_server_said() {
+    for (status, code, message) in [
+        (403, "own_commit", "You cannot report your own commit."),
+        (404, "commit_unavailable", "This commit isn't available."),
+    ] {
+        let at = Instant::now();
+        let mut engine = on_grace(at);
+        press(&mut engine, "!1", at);
+        let (ticket, _) = one_run(&tap(&mut engine, KeyCode::Enter, at));
+        let error = Error::Api {
+            status,
+            code: Some(code.to_owned()),
+            message: message.to_owned(),
+            retry_after: None,
+        };
+        assert!(reply(&mut engine, ticket, Err(error), at).is_empty());
+        assert_eq!(footer(&mut engine, at), format!(" {message}"));
+    }
+}
+
+#[test]
+fn a_report_from_a_thread_goes_out_the_same_way() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, effects, at);
+    assert!(engine.thread().is_some());
+    press(&mut engine, "!4", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(runs(&effects), [&report(Reason::Other, None)]);
+    assert!(engine.thread().is_some(), "the thread stays open");
+}
+
+#[test]
+fn the_report_dialog_fits_wide_and_narrow_terminals() {
+    for width in [100, 44] {
+        let at = Instant::now();
+        let mut engine = on_grace(at);
+        press(&mut engine, "!j", at);
+        let rows = screen(&mut engine, width, 30, at);
+        for line in [
+            "report 0000201",
+            "› 2  Harassment or hate",
+            "3  Harmful or private information",
+            "details (optional)",
+            "0/500",
+        ] {
+            assert!(contains(&rows, line), "{width}: {line} {rows:#?}");
+        }
+        assert_eq!(rows[29], PICK_HINT, "{width}");
+        press(&mut engine, "2", at);
+        press(&mut engine, &"long words ".repeat(10), at);
+        let rows = screen(&mut engine, width, 30, at);
+        let field = rows
+            .iter()
+            .find_map(|row| row.split_once("│ > "))
+            .and_then(|(_, rest)| rest.split_once('│'))
+            .map(|(typed, _)| typed.trim_end())
+            .unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(
+            field.ends_with("words long words"),
+            "the field shows the end of what was typed: {field}"
+        );
+        assert!(contains(&rows, "110/500"), "{rows:#?}");
+        assert_eq!(rows[29], DETAILS_HINT, "{width}");
+    }
+}
+
+#[test]
+fn on_a_short_terminal_the_report_dialog_keeps_its_field_and_the_hint_line() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "!3why", at);
+    for height in [10, 11] {
+        let rows = screen(&mut engine, 44, height, at);
+        assert!(contains(&rows, "report 0000201"), "{rows:#?}");
+        assert!(contains(&rows, "4  Something else"), "{rows:#?}");
+        assert!(contains(&rows, "> why"), "{rows:#?}");
+        assert_eq!(rows[usize::from(height) - 1], DETAILS_HINT, "{rows:#?}");
+    }
 }

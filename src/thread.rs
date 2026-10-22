@@ -205,6 +205,7 @@ impl ThreadScreen {
             | Action::SignIn
             | Action::StartOver
             | Action::Confirm
+            | Action::Pick(_)
             | Action::Commit(_) => false,
         }
     }

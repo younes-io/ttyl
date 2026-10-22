@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
-use crate::model::Log;
+use crate::model::{Log, Reason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -22,6 +22,7 @@ pub enum Action {
     StartOver,
     Commit(Act),
     Confirm,
+    Pick(Reason),
 }
 
 /// What the user does to the selected commit, the same on the log and in a thread.
@@ -33,6 +34,7 @@ pub enum Act {
     Browse,
     Pastel,
     Delete,
+    Report,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,12 +49,17 @@ pub enum Scope {
     Commit,
     Global,
     Confirm,
+    Report,
+    Details,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
 pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
+pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
+/// Without `Always`, so that Q can be typed.
+pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -72,6 +79,8 @@ pub const UNIONS: &[&[Scope]] = &[
     GATE_SCOPES,
     HELP_SCOPES,
     CONFIRM_SCOPES,
+    REPORT_SCOPES,
+    DETAILS_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
 ];
@@ -322,11 +331,95 @@ pub const TABLE: &[Binding] = &[
         help: "delete",
     },
     Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('!')]],
+        action: Action::Commit(Act::Report),
+        hint: None,
+        help: "report",
+    },
+    Binding {
         scope: Scope::Confirm,
         chords: &[&[Key::ch('y')]],
         action: Action::Confirm,
         hint: None,
         help: "yes",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('1')]],
+        action: Action::Pick(Reason::Spam),
+        hint: Some("1-4 pick"),
+        help: "spam",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('2')]],
+        action: Action::Pick(Reason::Harassment),
+        hint: None,
+        help: "harassment",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('3')]],
+        action: Action::Pick(Reason::Unsafe),
+        hint: None,
+        help: "unsafe",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('4')]],
+        action: Action::Pick(Reason::Other),
+        hint: None,
+        help: "other",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('j')], &[Key::code(KeyCode::Down)]],
+        action: Action::Down,
+        hint: None,
+        help: "move down",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::ch('k')], &[Key::code(KeyCode::Up)]],
+        action: Action::Up,
+        hint: None,
+        help: "move up",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter next"),
+        help: "next",
+    },
+    Binding {
+        scope: Scope::Details,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter send"),
+        help: "send",
+    },
+    Binding {
+        scope: Scope::Report,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
+    },
+    Binding {
+        scope: Scope::Details,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
+    },
+    Binding {
+        scope: Scope::Details,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
     },
     Binding {
         scope: Scope::Global,

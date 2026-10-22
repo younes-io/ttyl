@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -14,11 +14,11 @@ use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::fatal;
 use crate::keys::{
-    self, Act, Action, CONFIRM_SCOPES, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES,
-    Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    self, Act, Action, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap,
+    LOG_SCOPES, REPORT_SCOPES, Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
-use crate::model::{CommitId, Log};
+use crate::model::{CommitId, Log, Reason};
 use crate::sched::{Priority, Scheduler, Ticket};
 use crate::signin::Callback;
 use crate::store::{Node, Slot, Store};
@@ -69,7 +69,19 @@ pub struct Session {
 enum Overlay {
     Help,
     Delete(CommitId),
+    Reason {
+        id: CommitId,
+        at: usize,
+    },
+    Details {
+        id: CommitId,
+        reason: Reason,
+        text: String,
+    },
 }
+
+/// The server's limit on a report's details.
+const DETAILS_MAX: usize = 500;
 
 impl Session {
     fn screen_scopes(&self) -> &'static [Scope] {
@@ -109,6 +121,7 @@ impl Session {
                 Act::Pastel => !own && self.store.me.pasteis_mode,
                 Act::Copy | Act::Browse => true,
                 Act::Delete => own,
+                Act::Report => !own,
             }
     }
 
@@ -140,18 +153,17 @@ impl Session {
         None
     }
 
+    /// An overlay's scopes hold only what it does.
     fn can(&self, action: Action) -> bool {
-        match self.overlay {
-            Some(Overlay::Help) => matches!(action, Action::Quit | Action::Close),
-            Some(Overlay::Delete(_)) => matches!(action, Action::Quit | Action::Confirm),
-            None => self.screen_allows(action),
-        }
+        self.overlay.is_some() || self.screen_allows(action)
     }
 
     fn scopes(&self) -> &'static [Scope] {
         match self.overlay {
             Some(Overlay::Help) => HELP_SCOPES,
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
+            Some(Overlay::Reason { .. }) => REPORT_SCOPES,
+            Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             None => self.screen_scopes(),
         }
     }
@@ -159,15 +171,88 @@ impl Session {
     /// The confirm reads every key so that anything but y is a no.
     fn input_mode(&self) -> InputMode {
         match self.overlay {
-            Some(Overlay::Delete(_)) => InputMode::Text,
-            Some(Overlay::Help) | None => InputMode::Commands,
+            Some(Overlay::Delete(_) | Overlay::Details { .. }) => InputMode::Text,
+            Some(Overlay::Help | Overlay::Reason { .. }) | None => InputMode::Commands,
         }
     }
 
-    fn typed(&mut self) {
-        if let Some(Overlay::Delete(_)) = self.overlay {
-            self.overlay = None;
+    fn typed(&mut self, event: KeyEvent) {
+        match &mut self.overlay {
+            Some(Overlay::Delete(_)) => self.overlay = None,
+            Some(Overlay::Details { text, .. }) => match event.code {
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(ch)
+                    if !event
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && text.chars().count() < DETAILS_MAX =>
+                {
+                    text.push(ch);
+                }
+                _ => {}
+            },
+            Some(Overlay::Help | Overlay::Reason { .. }) | None => {}
         }
+    }
+
+    /// Moves the open overlay along, and gives the call it sends when it is done.
+    fn on_overlay(&mut self, action: Action) -> Option<Call> {
+        let overlay = self.overlay.take()?;
+        let last = Reason::ALL.len() - 1;
+        let (next, call) = match (overlay, action) {
+            (_, Action::Close) => (None, None),
+            (Overlay::Delete(id), Action::Confirm) => {
+                self.store.start_delete(&id);
+                (None, Some(Call::Delete(id)))
+            }
+            (Overlay::Reason { id, at }, Action::Down) => (
+                Some(Overlay::Reason {
+                    id,
+                    at: (at + 1).min(last),
+                }),
+                None,
+            ),
+            (Overlay::Reason { id, at }, Action::Up) => (
+                Some(Overlay::Reason {
+                    id,
+                    at: at.saturating_sub(1),
+                }),
+                None,
+            ),
+            (Overlay::Reason { id, at }, Action::Confirm) => (
+                Some(Overlay::Details {
+                    id,
+                    reason: Reason::ALL[at],
+                    text: String::new(),
+                }),
+                None,
+            ),
+            (Overlay::Reason { id, .. }, Action::Pick(reason)) => (
+                Some(Overlay::Details {
+                    id,
+                    reason,
+                    text: String::new(),
+                }),
+                None,
+            ),
+            (Overlay::Details { id, reason, text }, Action::Confirm) => {
+                let details = text.trim();
+                let details = (!details.is_empty()).then(|| details.to_owned());
+                (
+                    None,
+                    Some(Call::Report {
+                        id,
+                        reason,
+                        details,
+                    }),
+                )
+            }
+            (overlay, _) => (Some(overlay), None),
+        };
+        self.overlay = next;
+        call
     }
 
     fn prompt(&self) -> Option<String> {
@@ -176,7 +261,7 @@ impl Session {
                 "delete {}? this can't be undone [y/N]",
                 id.short_hash()
             )),
-            Some(Overlay::Help) | None => None,
+            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Details { .. }) | None => None,
         }
     }
 }
@@ -433,9 +518,9 @@ impl Engine {
         let can = |action| can(phase, health.as_ref(), action);
         match keymap.resolve(event, mode, scopes, &can) {
             Resolve::Act(action) => self.act(action, now),
-            Resolve::Text(_) => {
+            Resolve::Text(event) => {
                 if let Phase::Ready(session) = &mut self.phase {
-                    session.typed();
+                    session.typed(event);
                 }
                 Vec::new()
             }
@@ -446,14 +531,12 @@ impl Engine {
     fn act(&mut self, action: Action, now: Instant) -> Vec<Effect> {
         match (&mut self.phase, action) {
             (_, Action::Quit) => return vec![Effect::Quit],
-            (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
-            (Phase::Ready(session), Action::Close) => session.overlay = None,
-            (Phase::Ready(session), Action::Confirm) => {
-                if let Some(Overlay::Delete(id)) = session.overlay.take() {
-                    session.store.start_delete(&id);
-                    self.sched.send(Call::Delete(id), Priority::Now);
+            (Phase::Ready(session), action) if session.overlay.is_some() => {
+                if let Some(call) = session.on_overlay(action) {
+                    self.sched.send(call, Priority::Now);
                 }
             }
+            (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(&Timer::Retry);
                 self.sched.send(Call::Me, Priority::Now);
@@ -546,6 +629,10 @@ impl Engine {
                 session.overlay = Some(Overlay::Delete(id));
                 (None, Vec::new())
             }
+            Act::Report => {
+                session.overlay = Some(Overlay::Reason { id, at: 0 });
+                (None, Vec::new())
+            }
         };
         if let Some(text) = toast {
             self.toast(text, now);
@@ -582,6 +669,9 @@ impl Engine {
                     commit.card.commit.author.username
                 )),
                 (Call::Delete(id), Reply::Done) => Some(format!("deleted {}", id.short_hash())),
+                (Call::Report { id, .. }, Reply::Done) => {
+                    Some(format!("reported {}. thanks.", id.short_hash()))
+                }
                 _ => None,
             };
             session.store.apply(call, reply);
@@ -774,8 +864,9 @@ impl Engine {
             .find(|hint| hint.starts_with("? "))
             .map(|hint| format!("  {hint}"))
             .unwrap_or_default();
+        let overlaid = matches!(&self.phase, Phase::Ready(session) if session.overlay.is_some());
         let bottom = match &self.toast {
-            Some(toast) if self.keymap.pending().is_empty() => toast.clone(),
+            Some(toast) if self.keymap.pending().is_empty() && !overlaid => toast.clone(),
             _ => hints,
         };
         let next_call = self.next_call(now);
@@ -870,8 +961,14 @@ impl Engine {
                         foot,
                     );
                 }
-                if let Some(Overlay::Help) = session.overlay {
-                    draw_help(frame, session);
+                match &session.overlay {
+                    Some(Overlay::Help) => draw_help(frame, session),
+                    Some(Overlay::Reason { id, at }) => draw_report(frame, id, *at, None),
+                    Some(Overlay::Details { id, reason, text }) => {
+                        let at = Reason::ALL.iter().position(|each| each == reason);
+                        draw_report(frame, id, at.unwrap_or(0), Some(text));
+                    }
+                    Some(Overlay::Delete(_)) | None => {}
                 }
             }
         }
@@ -951,6 +1048,76 @@ fn draw_help(frame: &mut Frame, session: &Session) {
         .map(|row| Line::raw(format!(" {row}")))
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The reasons to pick from, then the details field once `details` holds what has been typed. The box
+/// stays above the hint line, which says what the keys do.
+fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&String>) {
+    let area = frame.area();
+    let area = Rect {
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    let width = 48.min(area.width.saturating_sub(2));
+    let height = 10.min(area.height);
+    let box_area = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, box_area);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .title(format!(" report {} ", id.short_hash()))
+        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
+    let inner = block.inner(box_area);
+    frame.render_widget(block, box_area);
+    let picking = details.is_none();
+    let mut lines = vec![Line::raw("")];
+    lines.extend(Reason::ALL.iter().enumerate().map(|(each, reason)| {
+        let chosen = each == at;
+        let marker = if chosen { "›" } else { " " };
+        let style = if chosen || picking {
+            Style::new()
+        } else {
+            theme::muted()
+        };
+        Line::from(vec![
+            Span::styled(format!(" {marker} "), Style::new().fg(theme::PRIMARY)),
+            Span::styled(format!("{}  {}", each + 1, reason.label()), style),
+        ])
+    }));
+    lines.push(Line::raw(""));
+    let text = details.map_or("", String::as_str);
+    let label = " details (optional)";
+    let count = format!("{}/{DETAILS_MAX} ", text.chars().count());
+    let gap = usize::from(inner.width).saturating_sub(label.len() + count.len());
+    let field_style = if picking {
+        theme::muted()
+    } else {
+        Style::new()
+    };
+    lines.push(Line::styled(
+        format!("{label}{}{count}", " ".repeat(gap)),
+        field_style,
+    ));
+    let room = usize::from(inner.width).saturating_sub(4);
+    let shown: String = {
+        let skip = text.chars().count().saturating_sub(room);
+        text.chars().skip(skip).collect()
+    };
+    let field = format!(" > {shown}");
+    let cursor = u16::try_from(field.chars().count()).unwrap_or(u16::MAX);
+    lines.push(Line::styled(field, field_style));
+    if lines.len() > usize::from(inner.height) {
+        lines.remove(0);
+    }
+    let row = u16::try_from(lines.len() - 1).unwrap_or(u16::MAX);
+    frame.render_widget(Paragraph::new(lines), inner);
+    if !picking && row < inner.height {
+        frame.set_cursor_position((inner.x + cursor.min(inner.width), inner.y + row));
+    }
 }
 
 fn inset(area: Rect) -> Rect {
