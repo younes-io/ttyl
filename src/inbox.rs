@@ -1,18 +1,45 @@
+use std::time::Instant;
+
 use chrono::{DateTime, TimeZone, Utc};
+use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Wrap};
 
+use crate::api::Failure;
+use crate::engine::AHEAD;
+use crate::fatal;
 use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::Action;
-use crate::model::{Event, Filter, Group, Kind, Shown};
+use crate::log::Retry;
+use crate::model::{Event, Filter, Group, Kind, NotificationPage, Shown};
 use crate::store::Store;
 use crate::theme;
+use crate::thread::LOADING_NOTE_DELAY;
 
 pub const TITLE: &str = "notifications";
 
 #[derive(Default)]
 pub struct Inbox {
     filter: Filter,
+    lists: [List; Filter::ALL.len()],
+}
+
+/// One filter's list for this run, kept while other filters are shown.
+#[derive(Default)]
+struct List {
+    loaded: Option<Loaded>,
+    failure: Option<Failure>,
+    asked_at: Option<Instant>,
+    selected: usize,
+    offset: usize,
+}
+
+struct Loaded {
+    groups: Vec<Group>,
+    read_at: DateTime<Utc>,
+    next_cursor: Option<String>,
 }
 
 fn index(filter: Filter) -> usize {
@@ -27,21 +54,167 @@ impl Inbox {
         self.filter
     }
 
+    fn list(&self) -> &List {
+        &self.lists[index(self.filter)]
+    }
+
+    fn groups(&self) -> &[Group] {
+        self.list()
+            .loaded
+            .as_ref()
+            .map_or(&[], |loaded| loaded.groups.as_slice())
+    }
+
+    /// A failed reload over rows still shown, for the hint line.
+    pub fn failure(&self) -> Option<&Failure> {
+        let list = self.list();
+        list.loaded.as_ref()?;
+        list.failure.as_ref()
+    }
+
     pub fn can(&self, action: Action, _store: &Store) -> bool {
-        matches!(
-            action,
-            Action::Back | Action::NextFilter | Action::PreviousFilter
-        )
+        match action {
+            Action::Down | Action::Up | Action::Top | Action::Bottom => !self.groups().is_empty(),
+            Action::Back | Action::NextFilter | Action::PreviousFilter | Action::Refresh => true,
+            _ => false,
+        }
     }
 
     pub fn act(&mut self, action: Action, _store: &Store) {
         let at = index(self.filter);
         let count = Filter::ALL.len();
+        let last = self.groups().len().saturating_sub(1);
+        let list = &mut self.lists[at];
         match action {
+            Action::Down => list.selected = (list.selected + 1).min(last),
+            Action::Up => list.selected = list.selected.saturating_sub(1),
+            Action::Top => list.selected = 0,
+            Action::Bottom => list.selected = last,
             Action::NextFilter => self.filter = Filter::ALL[(at + 1) % count],
             Action::PreviousFilter => self.filter = Filter::ALL[(at + count - 1) % count],
             _ => {}
         }
+    }
+
+    /// Notes when the active list was asked for, so its loading line can wait.
+    pub fn asked(&mut self, now: Instant) {
+        let list = &mut self.lists[index(self.filter)];
+        if list.loaded.is_none() && list.asked_at.is_none() {
+            list.asked_at = Some(now);
+        }
+    }
+
+    pub fn placeholder_at(&self) -> Option<Instant> {
+        let list = self.list();
+        if list.loaded.is_some() || list.failure.is_some() {
+            return None;
+        }
+        list.asked_at.map(|at| at + LOADING_NOTE_DELAY)
+    }
+
+    /// The cursor of the active list's next page, once the selection nears its end.
+    pub fn wants_older(&self) -> Option<(Filter, String)> {
+        let list = self.list();
+        let loaded = list.loaded.as_ref()?;
+        let cursor = loaded.next_cursor.as_ref()?;
+        let left = loaded.groups.len().saturating_sub(list.selected + 1);
+        (left <= AHEAD).then(|| (self.filter, cursor.clone()))
+    }
+
+    /// A first page replaces the list and keeps the selection on its group.
+    pub fn land(&mut self, page: NotificationPage) {
+        let list = &mut self.lists[index(page.filter)];
+        let kept = list
+            .loaded
+            .as_ref()
+            .and_then(|loaded| loaded.groups.get(list.selected))
+            .map(|group| group.event.id.clone());
+        list.selected = kept
+            .and_then(|id| page.groups.iter().position(|group| group.event.id == id))
+            .unwrap_or(0);
+        list.failure = None;
+        list.loaded = Some(Loaded {
+            groups: page.groups,
+            read_at: page.read_at,
+            next_cursor: page.next_cursor,
+        });
+    }
+
+    /// An older page appends what is new, and ends the list when it adds nothing.
+    pub fn append(&mut self, cursor: &str, page: NotificationPage) {
+        let list = &mut self.lists[index(page.filter)];
+        let Some(loaded) = &mut list.loaded else {
+            return;
+        };
+        if loaded.next_cursor.as_deref() != Some(cursor) {
+            return;
+        }
+        let before = loaded.groups.len();
+        for group in page.groups {
+            if !loaded
+                .groups
+                .iter()
+                .any(|each| each.event.id == group.event.id)
+            {
+                loaded.groups.push(group);
+            }
+        }
+        loaded.next_cursor = page.next_cursor.filter(|_| loaded.groups.len() > before);
+    }
+
+    pub fn fail(&mut self, filter: Filter, failure: Failure) {
+        self.lists[index(filter)].failure = Some(failure);
+    }
+
+    pub fn draw<Tz: TimeZone>(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        retry: Retry,
+        now: Instant,
+        wall: &DateTime<Tz>,
+    ) {
+        let filter = self.filter;
+        let placeholder = self.placeholder_at();
+        let list = &mut self.lists[index(filter)];
+        let Some(loaded) = &list.loaded else {
+            if let Some(failure) = &list.failure {
+                frame.render_widget(
+                    Paragraph::new(fatal::screen(failure, retry.page)).wrap(Wrap { trim: false }),
+                    area,
+                );
+            } else if placeholder.is_some_and(|at| now >= at) {
+                frame.render_widget(Line::styled("loading notifications", theme::muted()), area);
+            }
+            return;
+        };
+        let more = loaded.next_cursor.is_some();
+        let feed = layout(
+            filter,
+            &loaded.groups,
+            loaded.read_at,
+            more,
+            area.width,
+            wall,
+        );
+        let tail = retry
+            .older
+            .map(|retry| feed::older_failed("notifications", retry));
+        let total = feed.lines.len() + tail.as_ref().map_or(0, |tail| tail.len());
+        list.selected = list.selected.min(loaded.groups.len().saturating_sub(1));
+        let selected = (!loaded.groups.is_empty()).then_some(list.selected);
+        let height = usize::from(area.height);
+        list.offset = feed::scroll(&feed, total, list.selected, list.offset, height);
+        let end = (list.offset + height).min(total);
+        let shown = list.offset.min(feed.lines.len())..end.min(feed.lines.len());
+        let mut lines = feed.window(selected, shown);
+        if let Some(tail) = tail
+            && end > feed.lines.len()
+        {
+            let from = list.offset.saturating_sub(feed.lines.len());
+            lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
+        }
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
     /// The filters under the top line, the active one bold, with single gaps when narrow.

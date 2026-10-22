@@ -58,13 +58,13 @@ impl Feed {
     }
 }
 
-pub fn older_failed(retry: Duration) -> [Line<'static>; 2] {
+pub fn older_failed(what: &str, retry: Duration) -> [Line<'static>; 2] {
     [
         Line::from(Span::styled("│", Style::new().fg(theme::RAIL))),
         Line::from(vec![
             Span::raw("  "),
             Span::styled(
-                "fatal: could not load older commits",
+                format!("fatal: could not load older {what}"),
                 Style::new().fg(theme::DESTRUCTIVE),
             ),
             Span::styled(

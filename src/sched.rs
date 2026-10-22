@@ -36,6 +36,7 @@ pub enum CallKey {
     Report(CommitId),
     Post(Target),
     Notifications(Filter),
+    OlderNotifications(Filter),
     Group(NotificationId),
 }
 
@@ -56,7 +57,11 @@ impl Call {
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
             Call::Post { target, .. } => CallKey::Post(target.clone()),
-            Call::Notifications { filter, .. } => CallKey::Notifications(*filter),
+            Call::Notifications {
+                filter,
+                cursor: None,
+            } => CallKey::Notifications(*filter),
+            Call::Notifications { filter, .. } => CallKey::OlderNotifications(*filter),
             Call::Group { id, .. } => CallKey::Group(id.clone()),
         }
     }

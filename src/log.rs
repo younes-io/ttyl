@@ -270,7 +270,9 @@ impl LogScreen {
                     }
                 };
                 let feed = &place.laid_out.insert(laid_out).feed;
-                let tail = retry.older.map(feed::older_failed);
+                let tail = retry
+                    .older
+                    .map(|retry| feed::older_failed("commits", retry));
                 let total = feed.lines.len() + tail.as_ref().map_or(0, |tail| tail.len());
                 place.selected = place.selected.min(listing.ids.len().saturating_sub(1));
                 let selected = (!listing.ids.is_empty()).then_some(place.selected);

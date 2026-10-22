@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::model::{CommitId, Log};
+use crate::model::{CommitId, Filter, Log};
 
 pub const POLL: Duration = Duration::from_secs(30);
 pub const RETRY: Duration = Duration::from_secs(30);
@@ -21,6 +21,8 @@ pub enum Timer {
     Commit(CommitId),
     Replies(CommitId),
     More(CommitId),
+    Inbox(Filter),
+    OlderInbox(Filter),
 }
 
 #[derive(Default)]

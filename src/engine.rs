@@ -339,6 +339,19 @@ fn fetch_thread(sched: &mut Scheduler, timers: &mut Timers, id: CommitId) {
     sched.send(Call::Replies { id, cursor: None }, Priority::Now);
 }
 
+fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, now: Instant) {
+    let filter = inbox.filter();
+    inbox.asked(now);
+    timers.clear(&Timer::Inbox(filter));
+    sched.send(
+        Call::Notifications {
+            filter,
+            cursor: None,
+        },
+        Priority::Now,
+    );
+}
+
 fn followed(username: &str, on: bool) -> String {
     let done = if on { "following" } else { "unfollowed" };
     format!("{done} @{username} · f to undo")
@@ -481,10 +494,23 @@ impl Engine {
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
-                Timer::Older(_) | Timer::Commit(_) | Timer::Replies(_) | Timer::More(_) => {}
+                Timer::Inbox(filter) => {
+                    if let Phase::Ready(session) = &mut self.phase
+                        && session.on_inbox()
+                        && session.inbox.filter() == filter
+                    {
+                        fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
+                    }
+                }
+                Timer::Older(_)
+                | Timer::Commit(_)
+                | Timer::Replies(_)
+                | Timer::More(_)
+                | Timer::OlderInbox(_) => {}
             }
         }
         self.load_older();
+        self.load_older_inbox();
         for (call, priority) in self.thread_wants() {
             self.sched.send(call, priority);
         }
@@ -535,6 +561,22 @@ impl Engine {
         }
     }
 
+    fn load_older_inbox(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        if !session.on_inbox() {
+            return;
+        }
+        if let Some((filter, cursor)) = session.inbox.wants_older()
+            && !self.timers.is_set(&Timer::OlderInbox(filter))
+        {
+            let cursor = Some(cursor);
+            self.sched
+                .send(Call::Notifications { filter, cursor }, Priority::Now);
+        }
+    }
+
     fn thread_wants(&self) -> Vec<(Call, Priority)> {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
@@ -556,7 +598,10 @@ impl Engine {
         let Phase::Ready(session) = &self.phase else {
             return None;
         };
-        session.thread()?.placeholder_at(&session.store)
+        match session.stack.last()? {
+            Screen::Thread(thread) => thread.placeholder_at(&session.store),
+            Screen::Inbox => session.inbox.placeholder_at(),
+        }
     }
 
     fn poll_new(&mut self) {
@@ -588,9 +633,16 @@ impl Engine {
             || LOGS.iter().any(|log| {
                 self.timers.is_set(&Timer::Reload(*log)) || self.timers.is_set(&Timer::Older(*log))
             })
-            || self
-                .timers
-                .any(|timer| matches!(timer, Timer::Commit(_) | Timer::Replies(_) | Timer::More(_)))
+            || self.timers.any(|timer| {
+                matches!(
+                    timer,
+                    Timer::Commit(_)
+                        | Timer::Replies(_)
+                        | Timer::More(_)
+                        | Timer::Inbox(_)
+                        | Timer::OlderInbox(_)
+                )
+            })
     }
 
     fn scopes(&self) -> &'static [Scope] {
@@ -722,7 +774,15 @@ impl Engine {
             (Phase::Ready(session), Action::Inbox) => {
                 if !session.on_inbox() {
                     session.stack.push(Screen::Inbox);
+                    fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
                 }
+            }
+            (
+                Phase::Ready(session),
+                Action::Refresh | Action::NextFilter | Action::PreviousFilter,
+            ) if session.on_inbox() => {
+                session.inbox.act(action, &session.store);
+                fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
             }
             (Phase::Ready(session), Action::Refresh) if session.thread().is_some() => {
                 let thread = session.thread().expect("a thread is open");
@@ -879,6 +939,22 @@ impl Engine {
                 id,
                 cursor: Some(_),
             } => self.timers.clear(&Timer::More(id.clone())),
+            Call::Notifications { filter, cursor } => {
+                if let Reply::Notifications(page) = reply {
+                    match cursor {
+                        None => {
+                            self.timers.clear(&Timer::Inbox(*filter));
+                            session.store.unread = 0;
+                            session.inbox.land(page);
+                        }
+                        Some(cursor) => {
+                            self.timers.clear(&Timer::OlderInbox(*filter));
+                            session.inbox.append(cursor, page);
+                        }
+                    }
+                }
+                return Vec::new();
+            }
             _ => {}
         }
         let Call::Page(log) = call else {
@@ -1012,7 +1088,19 @@ impl Engine {
                         }
                         false
                     }
-                    Call::Notifications { .. } | Call::Group { .. } => false,
+                    Call::Notifications {
+                        filter,
+                        cursor: None,
+                    } => {
+                        session.inbox.fail(filter, failure.clone());
+                        self.timers.set(Timer::Inbox(filter), now + RETRY);
+                        offline
+                    }
+                    Call::Notifications { filter, .. } => {
+                        self.timers.set(Timer::OlderInbox(filter), now + RETRY);
+                        false
+                    }
+                    Call::Group { .. } => false,
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
@@ -1173,7 +1261,14 @@ impl Engine {
                     older: self.timers.remaining(&Timer::Older(active), now),
                 };
                 let health = self.health.as_ref().map(|failure| (failure, next_call));
-                let failure = if on_log {
+                let filter = session.inbox.filter();
+                let failure = if session.on_inbox() {
+                    session
+                        .inbox
+                        .failure()
+                        .map(|failure| (failure, self.timers.remaining(&Timer::Inbox(filter), now)))
+                        .or(health)
+                } else if on_log {
                     loaded.and_then(|listing| match &listing.failure {
                         Some(failure) => Some((failure, retry.page)),
                         None => health,
@@ -1216,7 +1311,13 @@ impl Engine {
                     Some(Screen::Thread(thread)) => {
                         thread.draw(frame, inset(body), &session.store, &self.timers, now, wall)
                     }
-                    Some(Screen::Inbox) => {}
+                    Some(Screen::Inbox) => {
+                        let retry = Retry {
+                            page: self.timers.remaining(&Timer::Inbox(filter), now),
+                            older: self.timers.remaining(&Timer::OlderInbox(filter), now),
+                        };
+                        session.inbox.draw(frame, inset(body), retry, now, wall);
+                    }
                     None => session
                         .log
                         .draw(frame, inset(body), &session.store, retry, wall),
