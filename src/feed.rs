@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::bidi;
 use crate::code;
 use crate::model::{
     Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown,
@@ -189,7 +190,8 @@ impl Writer {
         }
     }
 
-    pub fn line(&mut self, rail: Span<'static>, mut spans: Vec<Span<'static>>) {
+    pub fn line(&mut self, rail: Span<'static>, spans: Vec<Span<'static>>) {
+        let mut spans = bidi::visual(spans);
         spans.insert(0, rail);
         if self.pad > 0 {
             spans.insert(0, Span::raw(" ".repeat(self.pad)));

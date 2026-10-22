@@ -205,10 +205,14 @@ proptest! {
     }
 
     #[test]
-    fn layout_keeps_every_visible_character_of_a_text_body_in_order(
+    fn layout_keeps_every_visible_character_of_a_left_to_right_body_in_order(
         body in body(),
         width in 10u16..160,
     ) {
+        prop_assume!(!body.chars().any(|ch| matches!(
+            u32::from(ch),
+            0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF
+        )));
         let mut row = fixture_row();
         row.commit.body_segments = vec![Segment::Text { text: body.clone() }];
         row.commit.preview_segments = None;
