@@ -57,6 +57,7 @@ pub enum Scope {
     Group,
     List,
     Commit,
+    People,
     Global,
     Confirm,
     Report,
@@ -103,6 +104,13 @@ pub const GROUP_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
+pub const PEOPLE_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Group,
+    Scope::People,
+    Scope::Global,
+    Scope::Always,
+];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -117,6 +125,7 @@ pub const UNIONS: &[&[Scope]] = &[
     THREAD_SCOPES,
     INBOX_SCOPES,
     GROUP_SCOPES,
+    PEOPLE_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +387,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: None,
         help: "reload this group",
+    },
+    Binding {
+        scope: Scope::People,
+        chords: &[&[Key::ch('f')]],
+        action: Action::Commit(Act::Follow),
+        hint: Some("f follow back"),
+        help: "follow back",
     },
     Binding {
         scope: Scope::Commit,

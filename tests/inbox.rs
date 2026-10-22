@@ -511,3 +511,50 @@ fn a_loaded_group_never_clears_the_count() {
     engine.update(Event::Reply(ticket, reply), at + secs(30));
     assert!(count_shown(&mut engine, at + secs(30)));
 }
+
+#[test]
+fn r_on_a_reply_opens_the_composer_on_it_and_y_copies_its_link() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let url = "https://dev-null.sh/@grace/commits/2c3d4e5f-0000-4000-8000-000000000201";
+    assert_eq!(press(&mut engine, "y", at), [Effect::Copy(url.to_owned())]);
+
+    press(&mut engine, "r", at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, " Reply to @grace ─"), "{rows:#?}");
+    assert!(
+        contains(&rows, "replied to your commit"),
+        "the row stays above: {rows:#?}"
+    );
+}
+
+#[test]
+fn s_does_nothing_on_a_notification_since_its_star_is_unknown() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let before = screen(&mut engine, 100, 30, at);
+    assert!(press(&mut engine, "s", at).is_empty());
+    assert_eq!(screen(&mut engine, 100, 30, at), before);
+}
+
+#[test]
+fn f_follows_back_from_a_follow_group() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    opened(&mut engine, at);
+    let (ticket, _, _) = group_call(&press(&mut engine, "jjo", at));
+    let mut page = group_page();
+    for event in &mut page.events {
+        event.kind = Kind::Followed;
+        event.commit = None;
+    }
+    engine.update(Event::Reply(ticket, Ok(Reply::Group(page))), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[29].contains("f follow back"), "{rows:#?}");
+    assert_eq!(
+        runs(&press(&mut engine, "f", at)),
+        [&Call::User("grace".to_owned())]
+    );
+}

@@ -75,6 +75,10 @@ impl Inbox {
         self.list().failure()
     }
 
+    pub fn selected(&self) -> Option<&Group> {
+        self.list().selected()
+    }
+
     /// A single event opens its commit's thread, a group or a follow opens the group list.
     pub fn opens(&self) -> Option<Opens> {
         let group = self.list().selected()?;
@@ -331,6 +335,15 @@ impl GroupList {
 
     pub fn failure(&self) -> Option<&Failure> {
         self.list.failure()
+    }
+
+    pub fn selected(&self) -> Option<&Event> {
+        self.list.selected().map(|group| &group.event)
+    }
+
+    /// A follow group lists people rather than commits.
+    pub fn people(&self) -> bool {
+        self.head.event.kind == Kind::Followed
     }
 
     /// The selected event's commit; people in a follow group open nothing until profiles exist.

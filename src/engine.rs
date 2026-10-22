@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
@@ -19,11 +20,13 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
-    SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, REPORT_SCOPES,
+    RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
-use crate::model::{CommitId, Log, NotificationId, Reason, Status};
+use crate::model::{
+    self, Commit, CommitId, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
+};
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
 use crate::signin::Callback;
@@ -139,6 +142,7 @@ impl Session {
             None => LOG_SCOPES,
             Some(Screen::Thread(_)) => THREAD_SCOPES,
             Some(Screen::Inbox) => INBOX_SCOPES,
+            Some(Screen::Group(group)) if group.people() => PEOPLE_SCOPES,
             Some(Screen::Group(_)) => GROUP_SCOPES,
         }
     }
@@ -157,28 +161,46 @@ impl Session {
             }
     }
 
-    fn selected(&self) -> Option<&CommitId> {
-        match self.stack.last() {
-            Some(Screen::Thread(thread)) => Some(thread.selected()),
-            Some(Screen::Inbox | Screen::Group(_)) => None,
-            None => self.log.selected_id(self.log.active(), &self.store),
+    fn selected(&self) -> Option<Selected<'_>> {
+        let id = match self.stack.last() {
+            Some(Screen::Thread(thread)) => thread.selected(),
+            Some(Screen::Inbox) => {
+                let group = self.inbox.selected()?;
+                return Selected::of(&group.event, group.actors_count == 1);
+            }
+            Some(Screen::Group(group)) => return Selected::of(group.selected()?, true),
+            None => self.log.selected_id(self.log.active(), &self.store)?,
+        };
+        match self.store.node(id)? {
+            Node::Live(row) => Some(Selected::Row(row)),
+            Node::Gone(_) => None,
         }
     }
 
     fn allows(&self, act: Act) -> bool {
-        let Some(Node::Live(row)) = self.selected().and_then(|id| self.store.node(id)) else {
-            return false;
-        };
-        let own = row.commit.author.username == self.store.me.username;
-        row.deletion.is_none()
-            && match act {
-                Act::Star | Act::Follow => !own,
-                Act::Pastel => !own && self.store.me.pasteis_mode,
-                Act::Copy | Act::Browse => true,
-                Act::Delete => own,
-                Act::Report => !own,
-                Act::Reply | Act::Quote => true,
+        let me = &self.store.me.username;
+        match self.selected() {
+            Some(Selected::Row(row)) => {
+                let own = row.commit.author.username == *me;
+                row.deletion.is_none()
+                    && match act {
+                        Act::Star | Act::Follow => !own,
+                        Act::Pastel => !own && self.store.me.pasteis_mode,
+                        Act::Copy | Act::Browse => true,
+                        Act::Delete => own,
+                        Act::Report => !own,
+                        Act::Reply | Act::Quote => true,
+                    }
             }
+            // A notification's commit carries no star state, so its star and pastel wait for the thread.
+            Some(Selected::Note(commit)) => match act {
+                Act::Follow => commit.author.username != *me,
+                Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
+                Act::Star | Act::Pastel | Act::Delete | Act::Report => false,
+            },
+            Some(Selected::Person(user)) => act == Act::Follow && user.username != *me,
+            None => false,
+        }
     }
 
     fn on_screen(&mut self, action: Action, now: Instant) -> Option<CommitId> {
@@ -385,6 +407,23 @@ fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
         cursor: None,
     };
     sched.send(call, Priority::Now);
+}
+
+/// What the commit keys act on: a log or thread row, a notification's commit, or a person who followed.
+enum Selected<'a> {
+    Row(Box<Cow<'a, Row>>),
+    Note(&'a Commit),
+    Person(&'a User),
+}
+
+impl<'a> Selected<'a> {
+    fn of(event: &'a model::Event, alone: bool) -> Option<Self> {
+        match (&event.kind, &event.commit) {
+            (Kind::Followed, _) => alone.then_some(Selected::Person(&event.actor)),
+            (_, Some(Shown::Live(commit))) => Some(Selected::Note(commit)),
+            _ => None,
+        }
+    }
 }
 
 fn followed(username: &str, on: bool) -> String {
@@ -911,14 +950,19 @@ impl Engine {
         let Phase::Ready(session) = &mut self.phase else {
             return Vec::new();
         };
-        let Some(id) = session.selected().cloned() else {
-            return Vec::new();
+        let commit = match session.selected() {
+            Some(Selected::Row(row)) => row.commit.clone(),
+            Some(Selected::Note(commit)) => commit.clone(),
+            Some(Selected::Person(user)) => {
+                let author = user.username.clone();
+                if let Some(on) = session.store.follow(&author) {
+                    self.toast(followed(&author, on), now);
+                }
+                return Vec::new();
+            }
+            None => return Vec::new(),
         };
-        let Some(Node::Live(row)) = session.store.node(&id) else {
-            return Vec::new();
-        };
-        let author = row.commit.author.username.clone();
-        let url = row.commit.html_url.clone();
+        let (id, author, url) = (commit.id, commit.author.username, commit.html_url);
         let (toast, effects) = match act {
             Act::Star => {
                 session.store.star(&id);
