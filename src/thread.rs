@@ -34,6 +34,7 @@ pub struct ThreadScreen {
     opened_at: Instant,
     near: Vec<CommitId>,
     laid_out: Option<LaidOut>,
+    peek: bool,
 }
 
 struct Anchor {
@@ -135,6 +136,15 @@ impl ThreadScreen {
             opened_at: now,
             near: Vec::new(),
             laid_out: None,
+            peek: false,
+        }
+    }
+
+    /// A thread shown beside the feed, which marks no reply as selected.
+    pub fn peek(focus: CommitId, now: Instant) -> Self {
+        ThreadScreen {
+            peek: true,
+            ..ThreadScreen::new(focus, now)
         }
     }
 
@@ -401,7 +411,11 @@ impl ThreadScreen {
             .map(|(id, _)| id.clone())
             .collect();
         let end = (self.offset + height).min(total);
-        let lines = feed.window(Some(at), self.offset.min(end)..end);
+        let lines = feed.window(
+            (!self.peek).then_some(at),
+            self.offset.min(end)..end,
+            area.width,
+        );
         frame.render_widget(Paragraph::new(lines), area);
         self.laid_out = Some(laid_out);
     }

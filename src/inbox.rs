@@ -300,7 +300,7 @@ impl List {
         self.offset = feed::scroll(&feed, total, self.selected, self.offset, height);
         let end = (self.offset + height).min(total);
         let shown = self.offset.min(feed.lines.len())..end.min(feed.lines.len());
-        let mut lines = feed.window(selected, shown);
+        let mut lines = feed.window(selected, shown, area.width);
         if let Some(tail) = tail
             && end > feed.lines.len()
         {

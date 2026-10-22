@@ -13,7 +13,6 @@ pub const MUTED_FOREGROUND: Color = Color::Rgb(0xa1, 0xa1, 0xa6);
 pub const DESTRUCTIVE: Color = Color::Rgb(0xff, 0x6b, 0x6b);
 pub const RAIL: Color = Color::Rgb(0x36, 0x36, 0x3a);
 pub const FAINT: Color = Color::Rgb(0x6b, 0x6b, 0x72);
-pub const SELECTED: Color = Color::Rgb(0x22, 0x27, 0x38);
 pub const BRAND: Color = Color::Rgb(0xff, 0x2d, 0x20);
 
 const LANES: [Color; 6] = [
@@ -32,6 +31,20 @@ pub fn lane(lane: Lane) -> Color {
         Lane::Palette(index) => LANES[usize::from(index)],
         Lane::Custom { r, g, b } => Color::Rgb(r, g, b),
     }
+}
+
+/// `lane` washed faintly over the background, for the selected card.
+pub fn tint(lane: Lane) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(under_r, under_g, under_b)) =
+        (self::lane(lane), BACKGROUND)
+    else {
+        unreachable!("lanes and the background are RGB");
+    };
+    let mix = |over: u8, under: u8| {
+        u8::try_from((u16::from(over) * 3 + u16::from(under) * 22) / 25)
+            .expect("a mix of bytes fits")
+    };
+    Color::Rgb(mix(r, under_r), mix(g, under_g), mix(b, under_b))
 }
 
 pub fn muted() -> Style {

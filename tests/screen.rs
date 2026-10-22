@@ -10,6 +10,7 @@ use devnull::engine::{Engine, Event};
 use devnull::feed;
 use devnull::model::{Log, LogPage};
 use devnull::theme;
+use ratatui::style::Color;
 
 fn app() -> (Engine, Instant) {
     let at = Instant::now();
@@ -529,5 +530,41 @@ fn a_wide_terminal_fetches_the_selected_commits_thread_into_a_pane_once_the_sele
         thread_calls(&engine.pump(rested + secs(1))),
         0,
         "a narrow terminal has no pane to fetch for"
+    );
+}
+
+#[test]
+fn the_selected_commit_is_a_card_of_even_rows_with_padding_above_and_below() {
+    let mut app = app();
+    press(&mut app, "2");
+    let buffer = common::buffer(&mut app.0, 80, 30, app.1);
+    let tinted: Vec<(u16, u16, u16)> = (1..29)
+        .filter_map(|y| {
+            let xs: Vec<u16> = (0..80)
+                .filter(|&x| {
+                    ![Color::Reset, theme::BACKGROUND, theme::MUTED].contains(&buffer[(x, y)].bg)
+                })
+                .collect();
+            Some((y, *xs.first()?, *xs.last()?))
+        })
+        .collect();
+    let row = |y: u16| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+    let header = tinted
+        .iter()
+        .position(|&(y, _, _)| row(y).contains("@ada"))
+        .expect("the header is on the card");
+    assert_eq!(header, 1, "one padding row above the header: {tinted:?}");
+    assert!(
+        row(tinted[tinted.len() - 1].0).trim().starts_with('│'),
+        "the gap below pads the card"
+    );
+    let (_, left, right) = tinted[0];
+    assert!(
+        tinted.iter().all(|&(_, l, r)| (l, r) == (left, right)),
+        "every card row spans the same width: {tinted:?}"
+    );
+    assert!(
+        usize::from(right) + 1 >= row(tinted[header].0).trim_end().chars().count(),
+        "the card reaches past the text"
     );
 }

@@ -373,7 +373,7 @@ impl LogScreen {
                 });
                 let end = (place.offset + height).min(total);
                 let shown = place.offset.min(feed.lines.len())..end.min(feed.lines.len());
-                let mut lines = feed.window(selected, shown);
+                let mut lines = feed.window(selected, shown, area.width);
                 if let Some(tail) = tail
                     && end > feed.lines.len()
                 {
@@ -404,7 +404,7 @@ impl LogScreen {
         let inner = draw_box(frame, pane, "thread", false);
         let peek = match self.peek.take() {
             Some(peek) if *peek.focus() == id => peek,
-            _ => ThreadScreen::new(id, at),
+            _ => ThreadScreen::peek(id, at),
         };
         self.peek
             .insert(peek)

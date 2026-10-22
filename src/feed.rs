@@ -36,15 +36,29 @@ pub struct Entry {
 }
 
 impl Feed {
-    /// The lines in `window`, with the selected commit's rail drawn in its lane color.
-    pub fn window(&self, selected: Option<usize>, window: Range<usize>) -> Vec<Line<'static>> {
+    /// The lines in `window`, with the selected commit lifted onto a card `width` wide, tinted in its lane
+    /// color with the gap above and below as padding, and its rail drawn in that color.
+    pub fn window(
+        &self,
+        selected: Option<usize>,
+        window: Range<usize>,
+        width: u16,
+    ) -> Vec<Line<'static>> {
         let mut lines = self.lines[window.clone()].to_vec();
         let Some(entry) = selected.and_then(|at| self.entries.get(at)) else {
             return lines;
         };
-        for at in entry.lines.clone().filter(|at| window.contains(at)) {
+        let above = entry.header.checked_sub(1);
+        let below = (entry.lines.end < self.lines.len()).then_some(entry.lines.end);
+        let card = above
+            .into_iter()
+            .chain(entry.header..entry.lines.end)
+            .chain(below);
+        for at in card.filter(|at| window.contains(at)) {
             let line = &mut lines[at - window.start];
-            line.style = line.style.bg(theme::SELECTED);
+            let fill = usize::from(width).saturating_sub(line.width());
+            line.spans.push(Span::raw(" ".repeat(fill)));
+            line.style = line.style.bg(theme::tint(entry.lane));
         }
         if entry.header + 1 == entry.lines.end {
             if window.contains(&entry.header) {
