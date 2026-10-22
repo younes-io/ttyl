@@ -126,6 +126,15 @@ impl Session {
         }
     }
 
+    /// The thread on screen, opened or peeked beside the log.
+    fn shown_thread(&self, now: Instant) -> Option<&ThreadScreen> {
+        match self.stack.last() {
+            Some(Screen::Thread(thread)) => Some(thread),
+            Some(Screen::Inbox | Screen::Group(_)) => None,
+            None => self.log.peek(&self.store, now),
+        }
+    }
+
     fn group(&self) -> Option<&GroupList> {
         match self.stack.last() {
             Some(Screen::Group(group)) => Some(group),
@@ -712,12 +721,7 @@ impl Engine {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
         };
-        let thread = match session.stack.last() {
-            Some(Screen::Thread(thread)) => Some(thread.as_ref()),
-            Some(Screen::Inbox | Screen::Group(_)) => None,
-            None => session.log.peek(&session.store, now),
-        };
-        let Some(thread) = thread else {
+        let Some(thread) = session.shown_thread(now) else {
             return Vec::new();
         };
         thread
@@ -1148,6 +1152,10 @@ impl Engine {
             session.store.apply(call, reply);
             if session.store.unread > unread {
                 self.timers.set(Timer::Glow, now + GLOW);
+                // A new notification may be a reply in the thread on screen.
+                if let Some(thread) = session.shown_thread(now) {
+                    refresh_thread(&mut self.sched, &mut self.timers, thread, &session.store);
+                }
             }
             let toast = said.or_else(|| {
                 let (username, server) = answered?;

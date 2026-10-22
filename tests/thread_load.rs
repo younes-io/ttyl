@@ -8,6 +8,7 @@ use common::{
     world_log,
 };
 use devnull::api::{Call, Error, Reply};
+use devnull::clock::POLL;
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::{CommitId, Log, LogPage, Shown};
 use ratatui::crossterm::event::KeyCode;
@@ -402,6 +403,42 @@ fn refreshing_the_log_reloads_every_list_in_the_peeked_thread() {
     let effects = press(&mut engine, "R", later);
     let calls = settle_at(&mut engine, effects, WIDE, HEIGHT, later);
     assert!(calls.contains(&Call::Page(Log::Following)), "{calls:?}");
+    assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");
+    for owner in lists {
+        let call = Call::Replies {
+            id: owner,
+            cursor: None,
+        };
+        assert!(calls.contains(&call), "{call:?} in {calls:?}");
+    }
+}
+
+#[test]
+fn a_new_notification_reloads_every_list_in_the_peeked_thread() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, world_pages);
+    settle_at(&mut engine, Vec::new(), WIDE, HEIGHT, at);
+    let later = at + Duration::from_secs(5);
+    let lists: HashSet<CommitId> = settle_at(&mut engine, Vec::new(), WIDE, HEIGHT, later)
+        .into_iter()
+        .filter_map(|call| match call {
+            Call::Replies { id, cursor: None } => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert!(lists.len() > 1, "{lists:?}");
+    let polled = later + POLL;
+    let mut effects = Vec::new();
+    for effect in engine.pump(polled) {
+        match effect {
+            Effect::Run(ticket, Call::Me) => {
+                let reply = Ok(Reply::Account(account(4)));
+                effects.extend(engine.update(Event::Reply(ticket, reply), polled));
+            }
+            other => effects.push(other),
+        }
+    }
+    let calls = settle_at(&mut engine, effects, WIDE, HEIGHT, polled);
     assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");
     for owner in lists {
         let call = Call::Replies {
