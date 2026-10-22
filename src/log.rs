@@ -96,6 +96,15 @@ impl LogScreen {
         }
     }
 
+    /// The commit to keep selected while commits land above it. `None` at the head of the log, so
+    /// a reader there stays at the head and sees what landed.
+    pub fn anchor(&self, log: Log, store: &Store) -> Option<CommitId> {
+        if self.places[index(log)].selected == 0 {
+            return None;
+        }
+        self.selected_id(log, store).cloned()
+    }
+
     pub fn reselect(&mut self, log: Log, id: Option<&CommitId>, store: &Store) {
         if let (Some(id), Slot::Loaded(listing)) = (id, store.slot(log)) {
             let place = &mut self.places[index(log)];

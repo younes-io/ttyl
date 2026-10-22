@@ -833,14 +833,8 @@ impl Engine {
             {
                 session.composer = None;
             }
-            let selected = session
-                .log
-                .selected_id(Log::Latest, &session.store)
-                .cloned();
-            let following = session
-                .log
-                .selected_id(Log::Following, &session.store)
-                .cloned();
+            let selected = session.log.anchor(Log::Latest, &session.store);
+            let following = session.log.anchor(Log::Following, &session.store);
             session.store.apply(call, reply);
             session
                 .log

@@ -255,6 +255,25 @@ fn a_reply_counts_on_its_parent_and_joins_the_end_of_its_loaded_replies() {
 }
 
 #[test]
+fn a_reader_at_the_head_of_latest_lands_on_the_new_commit() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2chello", at);
+    let (ticket, _) = one_post(&send(&mut engine, at));
+    reply(
+        &mut engine,
+        ticket,
+        Ok(posted("hello", Status::Approved, None)),
+        at,
+    );
+    assert_eq!(engine.log().unwrap().selected(), 0);
+    for width in WIDTHS {
+        let rows = screen(&mut engine, width, HEIGHT, at);
+        assert!(contains(&rows, " ┃ hello"), "{rows:#?}");
+    }
+}
+
+#[test]
 fn a_quote_goes_on_top_of_latest() {
     let at = Instant::now();
     let mut engine = on_grace(at);
