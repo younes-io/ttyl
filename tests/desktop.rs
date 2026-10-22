@@ -9,6 +9,6 @@ fn the_clipboard_sequence_carries_the_link_and_survives_tmux() {
     assert_eq!(osc52(URL, false), format!("\x1b]52;c;{encoded}\x07"));
     assert_eq!(
         osc52(URL, true),
-        format!("\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\")
+        format!("\x1b]52;c;{encoded}\x07\x1bPtmux;\x1b\x1b]52;c;{encoded}\x07\x1b\\")
     );
 }

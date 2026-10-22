@@ -8,7 +8,9 @@ use base64ct::{Base64, Encoding};
 pub fn osc52(text: &str, tmux: bool) -> String {
     let set = format!("\x1b]52;c;{}\x07", Base64::encode_string(text.as_bytes()));
     if tmux {
-        format!("\x1bPtmux;{}\x1b\\", set.replace('\x1b', "\x1b\x1b"))
+        // tmux takes the bare sequence when set-clipboard is on and the wrapped one when
+        // allow-passthrough is on. Both are off by default, so send both.
+        format!("{set}\x1bPtmux;{}\x1b\\", set.replace('\x1b', "\x1b\x1b"))
     } else {
         set
     }
