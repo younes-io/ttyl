@@ -2,16 +2,16 @@ mod common;
 
 use std::time::Instant;
 
-use common::{account, log_of, not_found, press, screen, tap};
+use common::{account, contains, log_of, not_found, press, screen, tap};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, CommitPage, LogPage, RepliesPage};
+use devnull::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
 use proptest::prelude::*;
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
 
 const MAX_DEPTH: usize = 6;
-const KEYS: [&str; 10] = [
+const KEYS: [&str; 18] = [
     "j",
     "k",
     "gg",
@@ -22,6 +22,14 @@ const KEYS: [&str; 10] = [
     "esc",
     "backspace",
     "R",
+    "s",
+    "f",
+    "P",
+    "y",
+    "O",
+    "D",
+    "!",
+    "2",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -143,6 +151,19 @@ impl Tree {
             Call::Replies { id, cursor } => Ok(Reply::Replies(
                 self.replies(Tree::index(&id.0), cursor.as_deref()),
             )),
+            Call::Star { id, on } => {
+                let page = self.commit(Tree::index(&id.0)).ok_or_else(not_found)?;
+                let mut card = page.commit;
+                card.starred = *on;
+                Ok(Reply::Commit(Box::new(Focus {
+                    card,
+                    replies_count: page.replies_count,
+                })))
+            }
+            Call::User(_) => Ok(Reply::User {
+                is_following: false,
+            }),
+            Call::Follow { .. } | Call::Report { .. } => Ok(Reply::Done),
             other => panic!("not a call the log or a thread makes: {other:?}"),
         }
     }
@@ -242,6 +263,12 @@ fn header_shown(rows: &[String], tree: &Tree, selected: &CommitId) -> bool {
     header >= 2 && rows[header].contains('●')
 }
 
+/// The report dialog covers the screen while it is open, and its hint line says so.
+fn reporting(rows: &[String]) -> bool {
+    rows.last()
+        .is_some_and(|hints| hints.contains("esc cancel"))
+}
+
 fn above_the_hints(rows: &[String]) -> Vec<String> {
     rows[..rows.len() - 1].to_vec()
 }
@@ -269,6 +296,9 @@ proptest! {
             settle(&mut engine, &tree, effects, size, at);
             let rows = screen(&mut engine, width, height, at);
             match engine.thread() {
+                _ if reporting(&rows) => {
+                    prop_assert!(contains(&rows, " report "), "{key:?}: {rows:#?}");
+                }
                 Some(thread) => {
                     let selected = thread.selected();
                     prop_assert!(
