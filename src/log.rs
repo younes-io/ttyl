@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Wrap};
 
 use crate::clock::{Timer, Timers};
 use crate::keys::Action;
@@ -46,6 +46,7 @@ struct LaidOut {
 
 /// From this width the selected commit's thread gets a pane of its own beside the feed.
 const WIDE: u16 = 110;
+const TALL: u16 = 8;
 /// How long the selection rests on a commit before the pane fetches its thread, so scrolling past
 /// commits sends nothing.
 const DWELL: Duration = LOADING_NOTE_DELAY;
@@ -235,7 +236,7 @@ impl LogScreen {
         let bold = Style::new()
             .fg(theme::FOREGROUND)
             .add_modifier(Modifier::BOLD);
-        let lead = |index| {
+        let lead = |index: usize| {
             if index == 0 && !kept(Cut::Brand) {
                 " "
             } else {
@@ -245,15 +246,21 @@ impl LogScreen {
         if let Some(title) = title {
             left.push(Span::styled(format!("{}{title}", lead(0)), bold));
         }
+        if title.is_none() {
+            left.push(Span::raw(&lead(0)[1..]));
+        }
+        let pill = Style::new()
+            .fg(theme::BACKGROUND)
+            .bg(theme::PRIMARY)
+            .add_modifier(Modifier::BOLD);
         for (index, log) in LOGS.iter().enumerate().filter(|_| title.is_none()) {
-            let gap = lead(index);
             let label = if kept(Cut::Slugs) {
-                format!("{gap}{} {}", index + 1, log.slug())
+                format!(" {} {} ", index + 1, log.slug())
             } else {
-                format!("{gap}{}", index + 1)
+                format!(" {} ", index + 1)
             };
             let style = if *log == self.active {
-                bold
+                pill
             } else {
                 theme::muted()
             };
@@ -281,12 +288,12 @@ impl LogScreen {
         (Line::from(left), Line::from(right))
     }
 
-    /// Whether a feed this wide shows the selected commit's thread beside it.
-    pub fn has_pane(&self, width: u16, store: &Store) -> bool {
-        width >= WIDE && !self.ids(store).is_empty()
+    /// Whether a feed in this area shows the selected commit's thread beside it.
+    pub fn has_pane(&self, area: Rect, store: &Store) -> bool {
+        area.width >= WIDE && area.height >= TALL && !self.ids(store).is_empty()
     }
 
-    /// Returns the area beside the feed left for a thread, on a wide terminal.
+    /// On a wide terminal, returns the feed's box and the box beside it left for a thread.
     pub fn draw<Tz: TimeZone>(
         &mut self,
         frame: &mut Frame,
@@ -295,7 +302,7 @@ impl LogScreen {
         timers: &Timers,
         at: Instant,
         now: &DateTime<Tz>,
-    ) -> Option<Rect> {
+    ) -> Option<Panes> {
         let retry = Retry {
             page: timers.remaining(&Timer::Reload(self.active), at),
             older: timers.remaining(&Timer::Older(self.active), at),
@@ -313,14 +320,14 @@ impl LogScreen {
                 None
             }
             Slot::Loaded(listing) => {
-                let wide = self.has_pane(area.width, store);
+                let wide = self.has_pane(area, store);
                 let (area, pane) = if wide {
                     let feed = area.width * 3 / 5;
                     let [feed, pane] =
                         Layout::horizontal([Constraint::Length(feed), Constraint::Fill(1)])
                             .spacing(1)
                             .areas(area);
-                    (feed, Some(pane))
+                    (boxed(feed), Some(Panes { feed, pane }))
                 } else {
                     (area, None)
                 };
@@ -394,7 +401,7 @@ impl LogScreen {
         let Some(id) = self.selected_id(self.active, store).cloned() else {
             return;
         };
-        let inner = draw_pane(frame, pane, false);
+        let inner = draw_box(frame, pane, "thread", false);
         let peek = match self.peek.take() {
             Some(peek) if *peek.focus() == id => peek,
             _ => ThreadScreen::new(id, at),
@@ -405,14 +412,35 @@ impl LogScreen {
     }
 }
 
-/// The pane's rail lights up while the keys go to its thread.
-pub fn draw_pane(frame: &mut Frame, pane: Rect, focused: bool) -> Rect {
-    let rail = if focused { theme::PRIMARY } else { theme::RAIL };
-    let block = Block::new()
-        .borders(Borders::LEFT)
-        .border_style(Style::new().fg(rail))
-        .padding(Padding::horizontal(1));
-    let inner = block.inner(pane);
-    frame.render_widget(block, pane);
+pub struct Panes {
+    pub feed: Rect,
+    pub pane: Rect,
+}
+
+fn frame_block(title: &str, focused: bool) -> Block<'static> {
+    let (border, label) = if focused {
+        (
+            theme::PRIMARY,
+            Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (theme::RAIL, Style::new().fg(theme::FAINT))
+    };
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(border))
+        .title(Span::styled(format!(" {title} "), label))
+        .padding(Padding::horizontal(1))
+}
+
+fn boxed(area: Rect) -> Rect {
+    frame_block("", false).inner(area)
+}
+
+/// The box whose border is lit holds the keys.
+pub fn draw_box(frame: &mut Frame, area: Rect, title: &str, focused: bool) -> Rect {
+    let block = frame_block(title, focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
     inner
 }

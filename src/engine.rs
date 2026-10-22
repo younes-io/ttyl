@@ -1353,10 +1353,13 @@ impl Engine {
             .map(|hint| format!("  {hint}"))
             .unwrap_or_default();
         let overlaid = matches!(&self.phase, Phase::Ready(session) if session.overlay.is_some());
-        let bottom = match &self.toast {
-            Some(toast) if self.keymap.pending().is_empty() && !overlaid => fatal::cut(toast, room),
-            _ => hints,
+        let toast = match &self.toast {
+            Some(toast) if self.keymap.pending().is_empty() && !overlaid => {
+                Some(fatal::cut(toast, room))
+            }
+            _ => None,
         };
+        let bottom = toast.clone().unwrap_or_else(|| hints.clone());
         let next_call = self.next_call(now);
         match &mut self.phase {
             Phase::Splash => self.draw_splash(frame, now, &bottom),
@@ -1382,6 +1385,9 @@ impl Engine {
                 let title =
                     (session.on_inbox() || session.group().is_some()).then_some(inbox::TITLE);
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
+                let bar = Block::new().style(Style::new().bg(theme::MUTED));
+                frame.render_widget(bar.clone(), top);
+                frame.render_widget(bar, foot);
                 frame.render_widget(
                     session.log.top_bar(&session.store, title, glow, top.width),
                     top,
@@ -1455,13 +1461,18 @@ impl Engine {
                         ),
                         Span::styled(help, theme::muted()),
                     ]),
-                    (None, None) => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
+                    (None, None) => match &toast {
+                        Some(toast) => {
+                            Line::styled(format!("{HINT_INDENT}{toast}"), theme::muted())
+                        }
+                        None => keyed(&hints),
+                    },
                 };
                 let beside_feed = session
                     .stack
                     .iter()
                     .all(|screen| matches!(screen, Screen::Thread(_)))
-                    && session.log.has_pane(inset(body).width, &session.store);
+                    && session.log.has_pane(inset(body), &session.store);
                 match session.stack.last_mut() {
                     Some(Screen::Thread(thread)) if beside_feed => {
                         let pane = session.log.draw(
@@ -1472,8 +1483,9 @@ impl Engine {
                             now,
                             wall,
                         );
-                        if let Some(pane) = pane {
-                            let inner = log::draw_pane(frame, pane, true);
+                        if let Some(panes) = pane {
+                            log::draw_box(frame, panes.feed, active.slug(), false);
+                            let inner = log::draw_box(frame, panes.pane, "thread", true);
                             thread.draw(frame, inner, &session.store, &self.timers, now, wall);
                         }
                     }
@@ -1497,10 +1509,11 @@ impl Engine {
                             now,
                             wall,
                         );
-                        if let Some(pane) = pane {
+                        if let Some(panes) = pane {
+                            log::draw_box(frame, panes.feed, active.slug(), true);
                             session.log.draw_peek(
                                 frame,
-                                pane,
+                                panes.pane,
                                 &session.store,
                                 &self.timers,
                                 now,
@@ -1680,6 +1693,25 @@ fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&str
     if !picking && row < inner.height {
         frame.set_cursor_position((inner.x + cursor.min(inner.width), inner.y + row));
     }
+}
+
+/// Each hint's key stands out from what it does.
+fn keyed(hints: &str) -> Line<'static> {
+    let mut spans = vec![Span::raw(HINT_INDENT)];
+    for (index, hint) in hints.split("  ").enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let (key, label) = hint.split_once(' ').unwrap_or((hint, ""));
+        spans.push(Span::styled(
+            key.to_owned(),
+            Style::new().fg(theme::FOREGROUND),
+        ));
+        if !label.is_empty() {
+            spans.push(Span::styled(format!(" {label}"), theme::muted()));
+        }
+    }
+    Line::from(spans)
 }
 
 fn inset(area: Rect) -> Rect {

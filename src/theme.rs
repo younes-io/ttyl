@@ -13,7 +13,7 @@ pub const MUTED_FOREGROUND: Color = Color::Rgb(0xa1, 0xa1, 0xa6);
 pub const DESTRUCTIVE: Color = Color::Rgb(0xff, 0x6b, 0x6b);
 pub const RAIL: Color = Color::Rgb(0x36, 0x36, 0x3a);
 pub const FAINT: Color = Color::Rgb(0x6b, 0x6b, 0x72);
-pub const SELECTED: Color = Color::Rgb(0x1b, 0x1d, 0x26);
+pub const SELECTED: Color = Color::Rgb(0x22, 0x27, 0x38);
 pub const BRAND: Color = Color::Rgb(0xff, 0x2d, 0x20);
 
 const LANES: [Color; 6] = [

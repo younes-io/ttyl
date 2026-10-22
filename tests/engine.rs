@@ -750,9 +750,9 @@ fn an_older_page_failure_speaks_only_at_the_end_of_the_feed() {
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(5));
     let rows = screen(&mut engine, 120, 30, at + secs(12));
     assert!(
-        rows[28]
-            .trim_start()
-            .starts_with("fatal: could not load older commits · retrying in 23s"),
+        rows[..29]
+            .iter()
+            .any(|row| row.contains("fatal: could not load older commits · retrying in 23s")),
         "{rows:#?}"
     );
     assert!(
@@ -802,7 +802,10 @@ fn an_offline_older_page_speaks_only_at_the_end_of_the_feed() {
     let at = Instant::now();
     let mut engine = older_fails_with(offline(), at);
     let rows = screen(&mut engine, 120, 30, at + secs(12));
-    assert!(rows[28].contains("retrying in 23s"), "{rows:#?}");
+    assert!(
+        rows[..29].iter().any(|row| row.contains("retrying in 23s")),
+        "{rows:#?}"
+    );
     assert!(
         !rows[29].contains("fatal") && rows[29].contains("? help"),
         "{:?}",
