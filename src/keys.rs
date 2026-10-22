@@ -21,6 +21,7 @@ pub enum Action {
     SignIn,
     StartOver,
     Commit(Act),
+    Confirm,
 }
 
 /// What the user does to the selected commit, the same on the log and in a thread.
@@ -31,6 +32,7 @@ pub enum Act {
     Copy,
     Browse,
     Pastel,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,11 +46,13 @@ pub enum Scope {
     List,
     Commit,
     Global,
+    Confirm,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
 pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
+pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -67,6 +71,7 @@ pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
     HELP_SCOPES,
+    CONFIRM_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
 ];
@@ -308,6 +313,20 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Pastel),
         hint: None,
         help: "give a pastel",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('D')]],
+        action: Action::Commit(Act::Delete),
+        hint: None,
+        help: "delete",
+    },
+    Binding {
+        scope: Scope::Confirm,
+        chords: &[&[Key::ch('y')]],
+        action: Action::Confirm,
+        hint: None,
+        help: "yes",
     },
     Binding {
         scope: Scope::Global,

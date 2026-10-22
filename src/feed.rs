@@ -14,7 +14,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::code;
 use crate::model::{
-    Commit, CommitId, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown, Status,
+    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown,
+    Status,
 };
 use crate::theme;
 
@@ -196,6 +197,14 @@ pub(crate) fn rail() -> Span<'static> {
 
 fn row_lines<Tz: TimeZone>(out: &mut Writer, row: &Row, expanded: bool, now: &DateTime<Tz>) {
     let commit = &row.commit;
+    if row.deletion == Some(Deletion::Done) {
+        out.node(
+            Span::styled("○ ", Style::new().fg(theme::RAIL)),
+            rail(),
+            vec![Span::styled(bad_object(&commit.short_hash), theme::muted())],
+        );
+        return;
+    }
     let lane = Style::new().fg(theme::lane(commit.author.lane));
     let rail = rail();
     let header = header(commit, out.content(), now, None);
@@ -250,6 +259,13 @@ pub(crate) fn content<Tz: TimeZone>(
 }
 
 pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
+    if row.deletion == Some(Deletion::Running) {
+        out.push(
+            rail.clone(),
+            vec![Span::styled("deleting…", theme::muted())],
+        );
+        return;
+    }
     let star = if row.starred {
         Style::new().fg(theme::AMBER)
     } else {

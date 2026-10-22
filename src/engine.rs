@@ -14,8 +14,8 @@ use crate::api::{Account, Call, Error, Failure, Reply};
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::fatal;
 use crate::keys::{
-    self, Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve,
-    SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    self, Act, Action, CONFIRM_SCOPES, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES,
+    Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
 use crate::model::{CommitId, Log};
@@ -61,8 +61,14 @@ pub struct Session {
     pub store: Store,
     pub log: LogScreen,
     threads: Vec<ThreadScreen>,
-    help: bool,
+    overlay: Option<Overlay>,
     asked_to_refresh: HashSet<Log>,
+}
+
+/// What sits over the screen and takes the keys until it closes.
+enum Overlay {
+    Help,
+    Delete(CommitId),
 }
 
 impl Session {
@@ -102,6 +108,7 @@ impl Session {
                 Act::Star | Act::Follow => !own,
                 Act::Pastel => !own && self.store.me.pasteis_mode,
                 Act::Copy | Act::Browse => true,
+                Act::Delete => own,
             }
     }
 
@@ -134,10 +141,42 @@ impl Session {
     }
 
     fn can(&self, action: Action) -> bool {
-        if self.help {
-            matches!(action, Action::Quit | Action::Close)
-        } else {
-            self.screen_allows(action)
+        match self.overlay {
+            Some(Overlay::Help) => matches!(action, Action::Quit | Action::Close),
+            Some(Overlay::Delete(_)) => matches!(action, Action::Quit | Action::Confirm),
+            None => self.screen_allows(action),
+        }
+    }
+
+    fn scopes(&self) -> &'static [Scope] {
+        match self.overlay {
+            Some(Overlay::Help) => HELP_SCOPES,
+            Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
+            None => self.screen_scopes(),
+        }
+    }
+
+    /// The confirm reads every key so that anything but y is a no.
+    fn input_mode(&self) -> InputMode {
+        match self.overlay {
+            Some(Overlay::Delete(_)) => InputMode::Text,
+            Some(Overlay::Help) | None => InputMode::Commands,
+        }
+    }
+
+    fn typed(&mut self) {
+        if let Some(Overlay::Delete(_)) = self.overlay {
+            self.overlay = None;
+        }
+    }
+
+    fn prompt(&self) -> Option<String> {
+        match &self.overlay {
+            Some(Overlay::Delete(id)) => Some(format!(
+                "delete {}? this can't be undone [y/N]",
+                id.short_hash()
+            )),
+            Some(Overlay::Help) | None => None,
         }
     }
 }
@@ -371,14 +410,13 @@ impl Engine {
         match &self.phase {
             Phase::Splash => SPLASH_SCOPES,
             Phase::SignIn(_) => GATE_SCOPES,
-            Phase::Ready(session) if session.help => HELP_SCOPES,
-            Phase::Ready(session) => session.screen_scopes(),
+            Phase::Ready(session) => session.scopes(),
         }
     }
 
     fn input_mode(&self) -> InputMode {
         match &self.phase {
-            Phase::Ready(session) => session.log.input_mode(),
+            Phase::Ready(session) => session.input_mode(),
             Phase::Splash | Phase::SignIn(_) => InputMode::Commands,
         }
     }
@@ -395,15 +433,27 @@ impl Engine {
         let can = |action| can(phase, health.as_ref(), action);
         match keymap.resolve(event, mode, scopes, &can) {
             Resolve::Act(action) => self.act(action, now),
-            Resolve::Pending | Resolve::Text(_) | Resolve::Ignored => Vec::new(),
+            Resolve::Text(_) => {
+                if let Phase::Ready(session) = &mut self.phase {
+                    session.typed();
+                }
+                Vec::new()
+            }
+            Resolve::Pending | Resolve::Ignored => Vec::new(),
         }
     }
 
     fn act(&mut self, action: Action, now: Instant) -> Vec<Effect> {
         match (&mut self.phase, action) {
             (_, Action::Quit) => return vec![Effect::Quit],
-            (Phase::Ready(session), Action::Help) => session.help = true,
-            (Phase::Ready(session), Action::Close) => session.help = false,
+            (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
+            (Phase::Ready(session), Action::Close) => session.overlay = None,
+            (Phase::Ready(session), Action::Confirm) => {
+                if let Some(Overlay::Delete(id)) = session.overlay.take() {
+                    session.store.start_delete(&id);
+                    self.sched.send(Call::Delete(id), Priority::Now);
+                }
+            }
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(&Timer::Retry);
                 self.sched.send(Call::Me, Priority::Now);
@@ -492,6 +542,10 @@ impl Engine {
                 Some("opened in the browser".to_owned()),
                 vec![Effect::Open(url)],
             ),
+            Act::Delete => {
+                session.overlay = Some(Overlay::Delete(id));
+                (None, Vec::new())
+            }
         };
         if let Some(text) = toast {
             self.toast(text, now);
@@ -522,15 +576,16 @@ impl Engine {
                 }
                 _ => None,
             };
-            let gave = match &reply {
-                Reply::Pastel { commit, remaining } => Some(format!(
+            let said = match (call, &reply) {
+                (_, Reply::Pastel { commit, remaining }) => Some(format!(
                     "gave a pastel to @{} · {remaining} left today",
                     commit.card.commit.author.username
                 )),
+                (Call::Delete(id), Reply::Done) => Some(format!("deleted {}", id.short_hash())),
                 _ => None,
             };
             session.store.apply(call, reply);
-            let toast = gave.or_else(|| {
+            let toast = said.or_else(|| {
                 let (username, server) = answered?;
                 let want = session.store.following(username)?;
                 (want != server).then(|| followed(username, want))
@@ -556,7 +611,7 @@ impl Engine {
             store: Store::new(account),
             log: LogScreen::default(),
             threads: Vec::new(),
-            help: false,
+            overlay: None,
             asked_to_refresh: HashSet::new(),
         }));
         for log in LOGS {
@@ -780,15 +835,19 @@ impl Engine {
                     .and_then(|(failure, wait)| {
                         fatal::hint(failure, wait, room.saturating_sub(help.len()))
                     });
-                let hint = match error {
-                    Some(error) => Line::from(vec![
+                let hint = match (session.prompt(), error) {
+                    (Some(prompt), _) => Line::styled(
+                        format!("{HINT_INDENT}{prompt}"),
+                        Style::new().fg(theme::DESTRUCTIVE),
+                    ),
+                    (None, Some(error)) => Line::from(vec![
                         Span::styled(
                             format!("{HINT_INDENT}{error}"),
                             Style::new().fg(theme::DESTRUCTIVE),
                         ),
                         Span::styled(help, theme::muted()),
                     ]),
-                    None => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
+                    (None, None) => Line::styled(format!("{HINT_INDENT}{bottom}"), theme::muted()),
                 };
                 match session.threads.last_mut() {
                     Some(thread) => {
@@ -811,7 +870,7 @@ impl Engine {
                         foot,
                     );
                 }
-                if session.help {
+                if let Some(Overlay::Help) = session.overlay {
                     draw_help(frame, session);
                 }
             }

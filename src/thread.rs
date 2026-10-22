@@ -204,6 +204,7 @@ impl ThreadScreen {
             | Action::Close
             | Action::SignIn
             | Action::StartOver
+            | Action::Confirm
             | Action::Commit(_) => false,
         }
     }

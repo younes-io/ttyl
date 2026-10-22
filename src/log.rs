@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::keys::{Action, InputMode};
+use crate::keys::Action;
 use crate::model::{CommitId, Log};
 use crate::store::{Slot, Store};
 use crate::theme;
@@ -103,10 +103,6 @@ impl LogScreen {
         }
     }
 
-    pub fn input_mode(&self) -> InputMode {
-        InputMode::Commands
-    }
-
     fn ids<'a>(&self, store: &'a Store) -> &'a [CommitId] {
         match store.slot(self.active) {
             Slot::Loaded(listing) => &listing.ids,
@@ -130,6 +126,7 @@ impl LogScreen {
             | Action::Close
             | Action::SignIn
             | Action::StartOver
+            | Action::Confirm
             | Action::Commit(_) => false,
         }
     }

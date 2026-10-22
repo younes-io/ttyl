@@ -433,3 +433,133 @@ fn with_no_pasteis_left_the_server_says_so_and_the_rest_are_not_sent() {
         " you ran out of pastéis. wait until tomorrow."
     );
 }
+
+const ADA: &str = "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61";
+
+fn ada() -> CommitId {
+    CommitId(ADA.to_owned())
+}
+
+#[test]
+fn delete_is_offered_only_on_your_own_commit() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    assert!(press(&mut engine, "D", at).is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " j/k move  enter open  s star  ? help  Q quit"
+    );
+    assert!(!contains(&helps(&mut engine, at), "delete"));
+
+    let mut engine = boot(at);
+    assert!(contains(&helps(&mut engine, at), "D  delete"));
+    press(&mut engine, "D", at);
+    assert_eq!(
+        footer(&mut engine, at),
+        " delete e4f5a61? this can't be undone [y/N]"
+    );
+}
+
+const PROMPT: &str = " delete e4f5a61? this can't be undone [y/N]";
+
+#[test]
+fn any_key_but_y_on_the_delete_prompt_sends_nothing_and_closes_it() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    for no in ["n", "N", "j", "D", "s", "2"] {
+        assert!(press(&mut engine, &format!("D{no}"), at).is_empty(), "{no}");
+        assert_eq!(
+            footer(&mut engine, at),
+            " j/k move  enter open  ? help  Q quit",
+            "{no}"
+        );
+        press(&mut engine, "D", at);
+        assert_eq!(footer(&mut engine, at), PROMPT, "{no} moved nothing");
+        press(&mut engine, "n", at);
+    }
+    for no in [KeyCode::Esc, KeyCode::Enter, KeyCode::Backspace] {
+        press(&mut engine, "D", at);
+        assert!(tap(&mut engine, no, at).is_empty(), "{no:?}");
+        assert!(engine.thread().is_none(), "{no:?} opened nothing");
+        assert_eq!(
+            footer(&mut engine, at),
+            " j/k move  enter open  ? help  Q quit",
+            "{no:?}"
+        );
+    }
+}
+
+#[test]
+fn y_deletes_shows_deleting_then_the_bad_object_row() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "Dy", at);
+    assert_eq!(runs(&effects), [&Call::Delete(ada())]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "deleting…"), "{rows:#?}");
+    assert!(
+        press(&mut engine, "Dy", at).is_empty(),
+        "a commit being deleted offers no second delete"
+    );
+
+    let (ticket, _) = one_run(&effects);
+    assert!(reply(&mut engine, ticket, Ok(Reply::Done), at).is_empty());
+    assert_eq!(footer(&mut engine, at), " deleted e4f5a61");
+    for width in [100, 44] {
+        let rows = screen(&mut engine, width, 30, at);
+        assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
+        assert!(!contains(&rows, "deleting…"), "{rows:#?}");
+    }
+    assert!(press(&mut engine, "Dsy", at).is_empty());
+}
+
+#[test]
+fn delete_from_a_thread_marks_the_same_commit_gone_on_the_log() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, effects, at);
+    let effects = press(&mut engine, "Dy", at);
+    assert_eq!(runs(&effects), [&Call::Delete(ada())]);
+    let (ticket, _) = one_run(&effects);
+    reply(&mut engine, ticket, Ok(Reply::Done), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
+}
+
+#[test]
+fn a_refused_delete_puts_the_row_back_and_says_why() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let (ticket, _) = one_run(&press(&mut engine, "Dy", at));
+    let effects = reply(
+        &mut engine,
+        ticket,
+        Err(refused("you can only delete your own commits.")),
+        at,
+    );
+    assert!(effects.is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " you can only delete your own commits."
+    );
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "deleting…"), "{rows:#?}");
+    assert!(!contains(&rows, "bad object"), "{rows:#?}");
+    press(&mut engine, "D", at);
+    assert_eq!(footer(&mut engine, at), PROMPT, "it can be tried again");
+}
+
+#[test]
+fn the_delete_prompt_fits_a_narrow_terminal() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "D", at);
+    let rows = screen(&mut engine, 44, 30, at);
+    assert_eq!(rows[29].trim_end(), PROMPT, "{rows:#?}");
+    let buffer = buffer(&mut engine, 44, 30, at);
+    assert_eq!(buffer[(1, 29)].fg, theme::DESTRUCTIVE);
+}
