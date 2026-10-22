@@ -163,11 +163,20 @@ pub fn replies(id: &CommitId, cursor: Option<&str>) -> RepliesPage {
 
 /// A log page of the world's commits, in the order given, so a test can open any of them.
 pub fn world_log(ids: &[&str]) -> LogPage {
-    let rows: Vec<_> = ids
+    let cards: Vec<_> = ids
         .iter()
-        .map(|id| {
+        .map(|id| world()["commits"][*id]["data"].clone())
+        .collect();
+    log_of(&cards)
+}
+
+/// A log page whose rows are these commits, as a commit page's `data` gives them.
+pub fn log_of(cards: &[serde_json::Value]) -> LogPage {
+    let rows: Vec<_> = cards
+        .iter()
+        .map(|card| {
             let mut row = fixtures("log-latest")[0]["data"][0].clone();
-            for (field, value) in world()["commits"][*id]["data"].as_object().unwrap() {
+            for (field, value) in card.as_object().unwrap() {
                 row[field] = value.clone();
             }
             row["reply_preview"] = serde_json::json!({ "data": [], "next_cursor": null });
@@ -178,6 +187,17 @@ pub fn world_log(ids: &[&str]) -> LogPage {
     json["data"] = serde_json::Value::Array(rows);
     json["meta"]["next_cursor"] = serde_json::Value::Null;
     LogPage::parse(&json.to_string()).unwrap()
+}
+
+/// What the world answers to a thread's call.
+pub fn from_world(call: &Call) -> Result<Reply, Error> {
+    match call {
+        Call::Commit(id) => commit(id)
+            .map(|page| Reply::Thread(Box::new(page)))
+            .ok_or_else(not_found),
+        Call::Replies { id, cursor } => Ok(Reply::Replies(replies(id, cursor.as_deref()))),
+        other => panic!("not a thread call: {other:?}"),
+    }
 }
 
 pub fn not_found() -> Error {
@@ -267,14 +287,8 @@ fn answer_with(
             let reply = match effect {
                 Effect::Run(ticket, Call::Page(log)) => (ticket, Ok(Reply::Page(pages(log)))),
                 Effect::Run(ticket, Call::Me) => (ticket, Ok(Reply::Account(account(3)))),
-                Effect::Run(ticket, Call::Commit(id)) => (
-                    ticket,
-                    commit(&id)
-                        .map(|page| Reply::Thread(Box::new(page)))
-                        .ok_or_else(not_found),
-                ),
-                Effect::Run(ticket, Call::Replies { id, cursor }) => {
-                    (ticket, Ok(Reply::Replies(replies(&id, cursor.as_deref()))))
+                Effect::Run(ticket, call @ (Call::Commit(_) | Call::Replies { .. })) => {
+                    (ticket, from_world(&call))
                 }
                 other => panic!("unexpected effect while serving: {other:?}"),
             };
