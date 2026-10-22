@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{Account, Call, Error, Failure, Reply};
+use crate::body;
 use crate::clock::{FRAME, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
 use crate::compose::Composer;
 use crate::draft::{self, Drafts, Target};
@@ -20,8 +21,8 @@ use crate::keys::{
     InputMode, Keymap, LOG_SCOPES, REPORT_SCOPES, Resolve, SPLASH_SCOPES, Scope, THREAD_SCOPES,
 };
 use crate::log::{LOGS, LogScreen, Retry};
-use crate::model::{CommitId, Log, Reason};
-use crate::sched::{Priority, Scheduler, Ticket};
+use crate::model::{CommitId, Log, Reason, Status};
+use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::signin::Callback;
 use crate::store::{Node, Slot, Store};
 use crate::theme;
@@ -33,6 +34,7 @@ pub const AHEAD: usize = 5;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_CELLS: usize = 2;
 const HINT_INDENT: &str = " ";
+const PENDING: &str = "Your commit is pending review. Everyone will see it once it is approved.";
 
 pub enum Event {
     Key(KeyEvent),
@@ -298,9 +300,10 @@ fn followed(username: &str, on: bool) -> String {
     format!("{done} @{username} · f to undo")
 }
 
-fn can(phase: &Phase, health: Option<&Failure>, action: Action) -> bool {
+fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
+        (_, Action::Send) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -373,14 +376,15 @@ impl Engine {
                 self.edit(|composer| composer.paste(&text))
             }
             Event::Reply(ticket, result) => {
-                if let Some((call, priority)) = self.sched.finish(ticket) {
-                    match result {
-                        Ok(reply) => {
-                            self.health = None;
-                            self.arrived(&call, reply, now);
-                        }
-                        Err(error) => self.failed(call, priority, error, now),
+                let Some((call, priority)) = self.sched.finish(ticket) else {
+                    return Vec::new();
+                };
+                match result {
+                    Ok(reply) => {
+                        self.health = None;
+                        return self.arrived(&call, reply, now);
                     }
+                    Err(error) => self.failed(call, priority, error, now),
                 }
                 Vec::new()
             }
@@ -547,16 +551,28 @@ impl Engine {
         }
     }
 
+    /// Whether the open composer's commit is on its way, which locks the panel until it lands.
+    fn sending(&self) -> bool {
+        let Phase::Ready(session) = &self.phase else {
+            return false;
+        };
+        session.composer.as_ref().is_some_and(|composer| {
+            self.sched
+                .pending(&CallKey::Post(composer.target().clone()))
+        })
+    }
+
     fn key(&mut self, event: KeyEvent, now: Instant) -> Vec<Effect> {
         let scopes = self.scopes();
         let mode = self.input_mode();
+        let sending = self.sending();
         let Engine {
             keymap,
             phase,
             health,
             ..
         } = self;
-        let can = |action| can(phase, health.as_ref(), action);
+        let can = |action| can(phase, health.as_ref(), sending, action);
         match keymap.resolve(event, mode, scopes, &can) {
             Resolve::Act(action) => self.act(action, now),
             Resolve::Text(event) => {
@@ -573,6 +589,9 @@ impl Engine {
 
     /// Applies `edit` to the open composer and saves the draft when the text changed.
     fn edit(&mut self, edit: impl FnOnce(&mut Composer) -> bool) -> Vec<Effect> {
+        if self.sending() {
+            return Vec::new();
+        }
         let Phase::Ready(session) = &mut self.phase else {
             return Vec::new();
         };
@@ -599,6 +618,20 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Close) if session.composer.is_some() => {
                 session.composer = None;
+            }
+            (Phase::Ready(session), Action::Send) => {
+                if let Some(composer) = &mut session.composer {
+                    match body::refusal(composer.text()) {
+                        Some(refusal) => composer.note(refusal, theme::muted()),
+                        None => {
+                            let call = Call::Post {
+                                target: composer.target().clone(),
+                                body: composer.text().to_owned(),
+                            };
+                            self.sched.send(call, Priority::Now);
+                        }
+                    }
+                }
             }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
             (Phase::Ready(session), Action::Compose) => {
@@ -717,13 +750,52 @@ impl Engine {
         effects
     }
 
-    fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) {
+    fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) -> Vec<Effect> {
         let Phase::Ready(session) = &mut self.phase else {
             if let Reply::Account(account) = reply {
                 self.open(account, now);
             }
-            return;
+            return Vec::new();
         };
+        if let (Call::Post { target, .. }, Reply::Commit(focus)) = (call, &reply) {
+            let commit = &focus.card.commit;
+            let toast = match commit.status {
+                Status::Pending => PENDING.to_owned(),
+                Status::Approved | Status::Rejected => {
+                    let first = commit.body.lines().next().unwrap_or("");
+                    format!("[log {}] {first}", commit.short_hash)
+                }
+            };
+            if session
+                .composer
+                .as_ref()
+                .is_some_and(|composer| composer.target() == target)
+            {
+                session.composer = None;
+            }
+            let selected = session
+                .log
+                .selected_id(Log::Latest, &session.store)
+                .cloned();
+            let following = session
+                .log
+                .selected_id(Log::Following, &session.store)
+                .cloned();
+            session.store.apply(call, reply);
+            session
+                .log
+                .reselect(Log::Latest, selected.as_ref(), &session.store);
+            session
+                .log
+                .reselect(Log::Following, following.as_ref(), &session.store);
+            self.toast(toast, now);
+            return self
+                .drafts
+                .discard(target)
+                .map(Effect::Draft)
+                .into_iter()
+                .collect();
+        }
         match call {
             Call::Commit(id) => self.timers.clear(&Timer::Commit(id.clone())),
             Call::Replies { id, cursor: None } => self.timers.clear(&Timer::Replies(id.clone())),
@@ -760,7 +832,7 @@ impl Engine {
             if let Some(text) = toast {
                 self.toast(text, now);
             }
-            return;
+            return Vec::new();
         };
         let refreshed = session.asked_to_refresh.remove(log);
         let selected = session.log.selected_id(*log, &session.store).cloned();
@@ -771,6 +843,7 @@ impl Engine {
         if refreshed {
             self.toast(format!("{} refreshed", log.slug()), now);
         }
+        Vec::new()
     }
 
     fn open(&mut self, account: Account, now: Instant) {
@@ -791,6 +864,12 @@ impl Engine {
     }
 
     fn failed(&mut self, call: Call, priority: Priority, error: Error, now: Instant) {
+        if let Call::Post { target, .. } = &call
+            && !error.needs_sign_in()
+        {
+            self.refused_post(target, &error, now);
+            return;
+        }
         if let Error::Api {
             status: 429,
             retry_after,
@@ -883,12 +962,26 @@ impl Engine {
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
+                    Call::Post { .. } => false,
                 };
                 if connection {
                     self.health = Some(failure);
                 }
             }
         }
+    }
+
+    /// Tells the user why a commit did not go out. The draft stays and nothing is sent again.
+    fn refused_post(&mut self, target: &Target, error: &Error, now: Instant) {
+        let text = error.to_string();
+        if let Phase::Ready(session) = &mut self.phase
+            && let Some(composer) = &mut session.composer
+            && composer.target() == target
+        {
+            composer.note(text, Style::new().fg(theme::DESTRUCTIVE));
+            return;
+        }
+        self.toast(text, now);
     }
 
     fn sign_out(&mut self) {
@@ -931,8 +1024,9 @@ impl Engine {
     pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
         let room =
             usize::from(frame.area().width).saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
+        let sending = self.sending();
         let mut hints = keys::hints(self.scopes(), self.keymap.pending(), &|action| {
-            can(&self.phase, self.health.as_ref(), action)
+            can(&self.phase, self.health.as_ref(), sending, action)
         });
         if self.keymap.pending().is_empty() {
             hints = keys::fit(&hints, room);
@@ -1036,7 +1130,7 @@ impl Engine {
                         .draw(frame, inset(body), &session.store, retry, wall),
                 }
                 if let Some(composer) = &mut session.composer {
-                    composer.draw(frame, panel);
+                    composer.draw(frame, panel, sending);
                 }
                 frame.render_widget(hint, foot);
                 if self.sched.busy() {

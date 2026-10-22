@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::api::Call;
+use crate::draft::Target;
 use crate::model::{CommitId, Log};
 
 /// The server's signed throttle: this many requests in any sliding window.
@@ -33,6 +34,7 @@ pub enum CallKey {
     Delete(CommitId),
     Pastel(CommitId),
     Report(CommitId),
+    Post(Target),
 }
 
 impl Call {
@@ -51,6 +53,7 @@ impl Call {
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
+            Call::Post { target, .. } => CallKey::Post(target.clone()),
         }
     }
 }

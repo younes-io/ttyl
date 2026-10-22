@@ -24,6 +24,7 @@ pub enum Action {
     Confirm,
     Pick(Reason),
     Compose,
+    Send,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,6 +446,19 @@ pub const TABLE: &[Binding] = &[
         action: Action::Quit,
         hint: None,
         help: "quit",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[
+            &[Key::ctrl('s')],
+            &[Key {
+                code: KeyCode::Enter,
+                ctrl: true,
+            }],
+        ],
+        action: Action::Send,
+        hint: Some("ctrl-s commit"),
+        help: "commit",
     },
     Binding {
         scope: Scope::Composer,

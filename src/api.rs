@@ -8,6 +8,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::device::{DeviceKey, Nonce};
+use crate::draft::Target;
 use crate::model::{CommitId, CommitPage, Focus, Log, LogPage, Reason, RepliesPage};
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -73,6 +74,10 @@ pub enum Call {
         id: CommitId,
         reason: Reason,
         details: Option<String>,
+    },
+    Post {
+        target: Target,
+        body: String,
     },
 }
 
@@ -221,7 +226,28 @@ impl Client {
                     serde_json::json!({ "reason": reason.slug(), "details": details }).to_string();
                 self.send("POST", &path, body).map(|_| Reply::Done)
             }
+            Call::Post { target, body } => self
+                .post(target, body)
+                .map(|focus| Reply::Commit(Box::new(focus))),
         }
+    }
+
+    fn post(&self, target: &Target, body: &str) -> Result<Focus, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Focus,
+        }
+
+        let (parent, quoted) = match target {
+            Target::New => (None, None),
+            Target::Reply(id) => (Some(&id.0), None),
+            Target::Quote(id) => (None, Some(&id.0)),
+        };
+        let body =
+            serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted })
+                .to_string();
+        let (status, text) = self.send("POST", "/api/v1/commits", body)?;
+        parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
     fn star(&self, id: &CommitId, on: bool) -> Result<Focus, Error> {

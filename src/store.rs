@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 
 use crate::api::{Account, Call, Failure, Me, Reply};
+use crate::draft::Target;
 use crate::model::{
     Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, ReplyPreview, Row, Shown,
     Suggestion, Tombstone,
@@ -232,7 +233,8 @@ impl Store {
             | Call::Since { .. }
             | Call::Commit(_)
             | Call::Replies { .. }
-            | Call::Report { .. } => return,
+            | Call::Report { .. }
+            | Call::Post { .. } => return,
         }
         self.generation += 1;
     }
@@ -258,6 +260,11 @@ impl Store {
             }
             (Call::Star { .. }, Reply::Commit(focus)) => {
                 self.keep_counted(focus.card, Some(focus.replies_count));
+                self.generation += 1;
+            }
+            (Call::Post { target, .. }, Reply::Commit(focus)) => {
+                let id = self.keep_counted(focus.card, Some(focus.replies_count));
+                self.place(target, id);
                 self.generation += 1;
             }
             (Call::Pastel(_), Reply::Pastel { commit, remaining }) => {
@@ -305,6 +312,31 @@ impl Store {
                 | Reply::User { .. }
                 | Reply::Done,
             ) => {}
+        }
+    }
+
+    /// Puts a commit the user just sent where they would look for it, without a refresh.
+    fn place(&mut self, target: &Target, id: CommitId) {
+        match target {
+            Target::New | Target::Quote(_) => {
+                for log in [Log::Latest, Log::Following] {
+                    if let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log)
+                        && !listing.ids.contains(&id)
+                    {
+                        listing.ids.insert(0, id.clone());
+                    }
+                }
+            }
+            Target::Reply(parent) => {
+                if let Some(Branch::Listed(replies)) = self.replies.get_mut(parent)
+                    && !replies.ids.contains(&id)
+                {
+                    replies.ids.push(id);
+                }
+                if let Some(row) = self.rows.get_mut(parent) {
+                    row.replies_count += 1;
+                }
+            }
         }
     }
 

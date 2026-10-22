@@ -78,7 +78,11 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
                 grace_row.is_some_and(|row| row < panel),
                 "{key} at {width} keeps the target above the panel: {rows:#?}"
             );
-            assert_eq!(rows[usize::from(HEIGHT) - 1], " esc close", "{rows:#?}");
+            assert_eq!(
+                rows[usize::from(HEIGHT) - 1],
+                " ctrl-s commit  esc close",
+                "{rows:#?}"
+            );
         }
         assert_eq!(
             engine.log().unwrap().selected(),
