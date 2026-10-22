@@ -1,7 +1,7 @@
 mod common;
 
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use common::{boot, boot_serving, contains, following_nobody, now, page, secs};
 use devnull::api::{Call, Error};
@@ -589,12 +589,47 @@ fn z_covers_the_screen_with_a_drifting_wordmark_until_any_key() {
     let first = screen(&mut app, 80, 30);
     assert!(!contains(&first, "@ada"), "the feed is hidden: {first:#?}");
     assert!(!ink(&first).is_empty(), "the wordmark is drawn: {first:#?}");
-    let later = common::screen(&mut app.0, 80, 30, app.1 + secs(3));
+    let later = common::screen(&mut app.0, 80, 30, app.1 + secs(2));
     assert_ne!(ink(&first), ink(&later), "the wordmark drifts");
     press(&mut app, "j");
     assert_eq!(
         screen(&mut app, 80, 30),
         feed,
         "the first key only brings the feed back"
+    );
+}
+
+#[test]
+fn the_screensaver_wordmark_melts_into_life_and_forms_again() {
+    let mut app = app();
+    press(&mut app, "z");
+    let shape = |rows: &[String]| -> Vec<(usize, usize, char)> {
+        let ink: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .flat_map(|(y, row)| {
+                row.chars()
+                    .enumerate()
+                    .filter(|(_, ch)| "█▀▄".contains(*ch))
+                    .map(move |(x, ch)| (x, y, ch))
+            })
+            .collect();
+        let left = ink.iter().map(|(x, _, _)| *x).min().unwrap_or(0);
+        let top = ink.iter().map(|(_, y, _)| *y).min().unwrap_or(0);
+        ink.into_iter()
+            .map(|(x, y, ch)| (x - left, y - top, ch))
+            .collect()
+    };
+    let at = |ms: u64| app.1 + Duration::from_millis(ms);
+    let logos: Vec<_> = (0..2)
+        .map(|n| shape(&common::screen(&mut app.0, 80, 30, at(110 * n))))
+        .collect();
+    let melted = shape(&common::screen(&mut app.0, 80, 30, at(6_000)));
+    assert!(!melted.is_empty(), "life keeps cells on screen");
+    assert!(!logos.contains(&melted), "the letters break up");
+    let back = (7..400).map(|s| shape(&common::screen(&mut app.0, 80, 30, at(s * 1_000))));
+    assert!(
+        back.into_iter().any(|frame| logos.contains(&frame)),
+        "the wordmark forms again once life settles"
     );
 }

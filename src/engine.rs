@@ -462,7 +462,7 @@ pub struct Engine {
     device_name: String,
     start: Instant,
     drafts: Drafts,
-    saver: Option<Instant>,
+    saver: Option<saver::Saver>,
 }
 
 impl Engine {
@@ -623,7 +623,7 @@ impl Engine {
             self.counting_down().then(|| now + SECOND),
             (!self.thread_wants(now).is_empty()).then_some(now),
             self.placeholder_at().filter(|at| *at > now),
-            self.saver.map(|_| now + saver::STEP),
+            self.saver.as_ref().map(|_| now + saver::STEP),
         ]
         .into_iter()
         .flatten()
@@ -874,7 +874,7 @@ impl Engine {
                 return vec![Effect::Open(format!("{}/", api::BASE))];
             }
             (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
-            (Phase::Ready(_), Action::Saver) => self.saver = Some(now),
+            (Phase::Ready(_), Action::Saver) => self.saver = Some(saver::Saver::new(now)),
             (Phase::Ready(session), Action::Compose) => {
                 let draft = self.drafts.get(&Target::New);
                 session.composer = Some(Composer::open(Target::New, None, draft));
@@ -1362,8 +1362,8 @@ impl Engine {
     }
 
     pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
-        if let Some(since) = self.saver {
-            return saver::draw(frame, since, now);
+        if let Some(saver) = &mut self.saver {
+            return saver.draw(frame, now);
         }
         let room =
             usize::from(frame.area().width).saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);

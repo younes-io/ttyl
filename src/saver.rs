@@ -1,8 +1,12 @@
-//! The /dev/null wordmark drifting over a blank screen until a key brings the session back.
+//! The /dev/null wordmark drifting over a blank screen, then melting into the Game of Life,
+//! until a key brings the session back.
 //!
 //! Each glyph is a 10-pixel-high bitmap drawn two pixels to a cell with half blocks, so the
-//! pixels are about square and the wordmark moves half a row at a time.
+//! pixels are about square and the wordmark moves half a row at a time. Life runs on the same
+//! pixels, wrapping at the edges, and the wordmark forms again once the board settles.
 
+use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use ratatui::Frame;
@@ -13,8 +17,13 @@ use crate::theme;
 
 const WORD: &str = "/dev/null";
 const HEIGHT: usize = 10;
-/// One pixel each way per step, so the wordmark drifts diagonally.
+/// One pixel each way per step while the wordmark drifts, and one generation per step after.
 pub const STEP: Duration = Duration::from_millis(110);
+const DRIFT: Duration = Duration::from_secs(3);
+/// How long a settled board stays up before the wordmark forms again.
+const LINGER: Duration = Duration::from_secs(2);
+/// Gliders can circle a wrapping board for a very long time before it repeats.
+const GENERATIONS: u64 = 1500;
 
 #[rustfmt::skip]
 fn glyph(ch: char) -> [&'static str; HEIGHT] {
@@ -59,24 +68,151 @@ fn bounce(steps: u64, range: u16) -> u16 {
     u16::try_from(at.min(2 * range - at)).expect("within the range")
 }
 
-pub fn draw(frame: &mut Frame, since: Instant, now: Instant) {
+fn steps(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis() / STEP.as_millis()).unwrap_or(u64::MAX)
+}
+
+pub struct Saver {
+    cycle: Instant,
+    life: Option<Life>,
+}
+
+struct Life {
+    width: u16,
+    height: u16,
+    born: Instant,
+    generation: u64,
+    cells: Vec<Option<Color>>,
+    seen: HashSet<u64>,
+    settled: Option<Instant>,
+}
+
+impl Saver {
+    pub fn new(now: Instant) -> Saver {
+        Saver {
+            cycle: now,
+            life: None,
+        }
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame, now: Instant) {
+        let area = frame.area();
+        let (width, height) = (area.width, area.height * 2);
+        let restart = self.life.as_ref().is_some_and(|life| {
+            (life.width, life.height) != (width, height)
+                || life
+                    .settled
+                    .is_some_and(|at| now.duration_since(at) >= LINGER)
+        });
+        if restart {
+            *self = Saver::new(now);
+        }
+        let art = pixels();
+        let place = |steps: u64| {
+            let artw = u16::try_from(art[0].len()).expect("the wordmark fits a row");
+            let arth = HEIGHT as u16;
+            (
+                bounce(steps, width.saturating_sub(artw)),
+                bounce(steps, height.saturating_sub(arth)),
+            )
+        };
+        let logo = |(left, top): (u16, u16), x: u16, y: u16| {
+            let row = art.get(usize::from(y.checked_sub(top)?))?;
+            *row.get(usize::from(x.checked_sub(left)?))?
+        };
+        let elapsed = now.duration_since(self.cycle);
+        if self.life.is_none() && elapsed >= DRIFT {
+            let at = place(steps(DRIFT));
+            let cells = (0..height)
+                .flat_map(|y| (0..width).map(move |x| (x, y)))
+                .map(|(x, y)| logo(at, x, y))
+                .collect();
+            self.life = Some(Life::new(width, height, self.cycle + DRIFT, cells));
+        }
+        match &mut self.life {
+            None => {
+                let at = place(steps(elapsed));
+                paint(frame, |x, y| logo(at, x, y));
+            }
+            Some(life) => {
+                life.advance(now);
+                paint(frame, |x, y| {
+                    life.cells[usize::from(y) * usize::from(width) + usize::from(x)]
+                });
+            }
+        }
+    }
+}
+
+impl Life {
+    fn new(width: u16, height: u16, born: Instant, cells: Vec<Option<Color>>) -> Life {
+        let mut life = Life {
+            width,
+            height,
+            born,
+            generation: 0,
+            cells,
+            seen: HashSet::new(),
+            settled: None,
+        };
+        life.seen.insert(life.fingerprint());
+        life
+    }
+
+    fn fingerprint(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for cell in &self.cells {
+            cell.is_some().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn advance(&mut self, now: Instant) {
+        let target = steps(now.duration_since(self.born));
+        while self.generation < target && self.settled.is_none() {
+            self.step();
+            self.generation += 1;
+            if !self.seen.insert(self.fingerprint()) || self.generation >= GENERATIONS {
+                let after = STEP * u32::try_from(self.generation).unwrap_or(u32::MAX);
+                self.settled = Some(self.born + after);
+            }
+        }
+    }
+
+    /// A newborn takes the color most of its three parents share, so the slashes' accent and the
+    /// letters' ink spread into each other.
+    fn step(&mut self) {
+        let (width, height) = (usize::from(self.width), usize::from(self.height));
+        let at = |x: usize, y: usize| self.cells[y * width + x];
+        self.cells = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let parents: Vec<Color> = (0..3)
+                    .flat_map(|dy| (0..3).map(move |dx| (dx, dy)))
+                    .filter(|&offset| offset != (1, 1))
+                    .filter_map(|(dx, dy)| {
+                        at((x + width - 1 + dx) % width, (y + height - 1 + dy) % height)
+                    })
+                    .collect();
+                match (at(x, y), parents.len()) {
+                    (Some(color), 2 | 3) => Some(color),
+                    (None, 3) if parents[1] == parents[2] => Some(parents[1]),
+                    (None, 3) => Some(parents[0]),
+                    _ => None,
+                }
+            })
+            .collect();
+    }
+}
+
+/// Fills the screen, drawing each cell's upper and lower pixel with one half block.
+fn paint(frame: &mut Frame, pixel: impl Fn(u16, u16) -> Option<Color>) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(theme::BACKGROUND)), area);
-    let art = pixels();
-    let width = u16::try_from(art[0].len()).expect("the wordmark fits a row");
-    let steps =
-        u64::try_from(now.duration_since(since).as_millis() / STEP.as_millis()).unwrap_or(u64::MAX);
-    let left = bounce(steps, area.width.saturating_sub(width));
-    let top = bounce(steps, (area.height * 2).saturating_sub(HEIGHT as u16));
-    let pixel = |x: u16, y: u16| {
-        let row = art.get(usize::from(y.checked_sub(top)?))?;
-        *row.get(usize::from(x.checked_sub(left)?))?
-    };
     let buffer = frame.buffer_mut();
     for y in 0..area.height {
-        for x in left..(left + width).min(area.width) {
-            let (upper, lower) = (pixel(x, 2 * y), pixel(x, 2 * y + 1));
-            let (symbol, fg, bg) = match (upper, lower) {
+        for x in 0..area.width {
+            let (symbol, fg, bg) = match (pixel(x, 2 * y), pixel(x, 2 * y + 1)) {
                 (None, None) => continue,
                 (Some(upper), None) => ("▀", upper, theme::BACKGROUND),
                 (None, Some(lower)) => ("▄", lower, theme::BACKGROUND),
