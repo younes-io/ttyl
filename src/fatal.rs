@@ -64,7 +64,7 @@ pub fn hint(failure: &Failure, retry: Option<Duration>, width: usize) -> Option<
     (room >= 4).then(|| format!("fatal: {}", cut(cause, room)))
 }
 
-fn cut(text: &str, width: usize) -> String {
+pub fn cut(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
     }

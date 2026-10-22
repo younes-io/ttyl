@@ -866,7 +866,7 @@ impl Engine {
             .unwrap_or_default();
         let overlaid = matches!(&self.phase, Phase::Ready(session) if session.overlay.is_some());
         let bottom = match &self.toast {
-            Some(toast) if self.keymap.pending().is_empty() && !overlaid => toast.clone(),
+            Some(toast) if self.keymap.pending().is_empty() && !overlaid => fatal::cut(toast, room),
             _ => hints,
         };
         let next_call = self.next_call(now);

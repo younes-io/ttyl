@@ -337,6 +337,13 @@ fn y_copies_the_link_and_o_opens_it_on_any_commit() {
         [Effect::Copy(GRACE_URL.to_owned())]
     );
 
+    press(&mut engine, "y", at);
+    let rows = screen(&mut engine, 44, 30, at);
+    assert_eq!(
+        rows[29].trim_end(),
+        " copied https://dev-null.sh/@grace/commit…"
+    );
+
     let mut engine = boot(at);
     let effects = press(&mut engine, "y", at);
     let [Effect::Copy(own)] = effects.as_slice() else {
