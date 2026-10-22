@@ -5,7 +5,6 @@ use std::thread;
 
 use base64ct::{Base64, Encoding};
 
-/// OSC 52 reaches the clipboard of the terminal the user sits at, over ssh too. tmux passes it on only when wrapped.
 pub fn osc52(text: &str, tmux: bool) -> String {
     let set = format!("\x1b]52;c;{}\x07", Base64::encode_string(text.as_bytes()));
     if tmux {
@@ -19,8 +18,9 @@ pub fn copy(text: &str) {
     let mut out = io::stdout();
     let _ = out.write_all(osc52(text, env::var_os("TMUX").is_some()).as_bytes());
     let _ = out.flush();
-    let _ = spawn("wl-copy", &[], Some(text))
-        || spawn("xclip", &["-selection", "clipboard"], Some(text));
+    if !spawn("wl-copy", &[], Some(text)) {
+        spawn("xclip", &["-selection", "clipboard"], Some(text));
+    }
 }
 
 pub fn open(url: &str) {

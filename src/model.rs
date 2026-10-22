@@ -61,7 +61,6 @@ impl Reason {
         }
     }
 
-    /// The web's words for each reason.
     pub fn label(self) -> &'static str {
         match self {
             Reason::Spam => "Spam or misleading links",
@@ -359,7 +358,6 @@ impl LogPage {
     }
 }
 
-/// A commit as its own page shows it, which is also what a star or a pastel answers with.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Focus {
     #[serde(flatten)]

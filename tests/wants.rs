@@ -50,7 +50,6 @@ fn shown(store: &Store) -> (bool, u32) {
     (row.starred, row.stars_count)
 }
 
-/// What the server answers a star with: the commit as it now stands.
 fn answer(starred: bool, stars_count: u32) -> Reply {
     let json: serde_json::Value = serde_json::from_str(&fixture("log-latest")).unwrap();
     let mut card = json["data"]

@@ -18,26 +18,17 @@ pub struct Store {
     logs: HashMap<Log, Slot>,
     threads: HashMap<CommitId, Thread>,
     replies: HashMap<CommitId, Branch>,
-    /// Whether the user wants each commit starred, kept apart from the row so a reply carrying the new count never
-    /// counts the press twice.
-    stars: HashMap<CommitId, bool>,
+    star_wants: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
     deleting: HashSet<CommitId>,
-    /// Pastéis pressed and not yet sent. Each press is a gift, so presses are counted, not merged.
-    pastels: HashMap<CommitId, u32>,
+    unsent_pastels: HashMap<CommitId, u32>,
     generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Follow {
-    /// f was pressed before the client knew; `flip` is whether the presses since add up to a change.
-    Asking {
-        flip: bool,
-    },
-    Known {
-        server: bool,
-        want: bool,
-    },
+    Asking { odd_presses: bool },
+    Known { server: bool, want: bool },
 }
 
 pub enum Node<'a> {
@@ -118,10 +109,10 @@ impl Store {
             logs: HashMap::new(),
             threads: HashMap::new(),
             replies: HashMap::new(),
-            stars: HashMap::new(),
+            star_wants: HashMap::new(),
             follows: HashMap::new(),
             deleting: HashSet::new(),
-            pastels: HashMap::new(),
+            unsent_pastels: HashMap::new(),
             generation: 0,
         }
     }
@@ -129,8 +120,8 @@ impl Store {
     /// Flips the star the user sees and returns whether it is now starred.
     pub fn star(&mut self, id: &CommitId) -> Option<bool> {
         let row = self.rows.get(id)?;
-        let want = !self.stars.get(id).copied().unwrap_or(row.starred);
-        self.stars.insert(id.clone(), want);
+        let want = !self.star_wants.get(id).copied().unwrap_or(row.starred);
+        self.star_wants.insert(id.clone(), want);
         self.generation += 1;
         Some(want)
     }
@@ -138,8 +129,10 @@ impl Store {
     /// Flips the follow the user sees and returns it, or `None` while the client still asks the server.
     pub fn follow(&mut self, username: &str) -> Option<bool> {
         let next = match self.follows.get(username) {
-            None => Follow::Asking { flip: true },
-            Some(Follow::Asking { flip }) => Follow::Asking { flip: !flip },
+            None => Follow::Asking { odd_presses: true },
+            Some(Follow::Asking { odd_presses }) => Follow::Asking {
+                odd_presses: !odd_presses,
+            },
             Some(Follow::Known { server, want }) => Follow::Known {
                 server: *server,
                 want: !want,
@@ -160,7 +153,7 @@ impl Store {
     }
 
     pub fn give_pastel(&mut self, id: &CommitId) {
-        *self.pastels.entry(id.clone()).or_default() += 1;
+        *self.unsent_pastels.entry(id.clone()).or_default() += 1;
     }
 
     pub fn start_delete(&mut self, id: &CommitId) {
@@ -168,12 +161,10 @@ impl Store {
         self.generation += 1;
     }
 
-    /// The calls that bring the server to what the user wants, one per subject that has none pending. A want the
-    /// server already matches is forgotten, so a change made elsewhere is not undone later.
     pub fn writes(&mut self, pending: impl Fn(&CallKey) -> bool) -> Vec<Call> {
         let mut calls = Vec::new();
         let rows = &self.rows;
-        self.stars.retain(|id, want| {
+        self.star_wants.retain(|id, want| {
             if pending(&CallKey::Star(id.clone())) {
                 return true;
             }
@@ -204,7 +195,7 @@ impl Store {
                 Follow::Asking { .. } | Follow::Known { .. } => {}
             }
         }
-        self.pastels.retain(|id, left| {
+        self.unsent_pastels.retain(|id, left| {
             if !pending(&CallKey::Pastel(id.clone())) {
                 calls.push(Call::Pastel(id.clone()));
                 *left -= 1;
@@ -214,11 +205,10 @@ impl Store {
         calls
     }
 
-    /// The server said no to a write, so what the user sees goes back to what the server has.
     pub fn refused(&mut self, call: &Call) {
         match call {
             Call::Star { id, .. } => {
-                self.stars.remove(id);
+                self.star_wants.remove(id);
             }
             Call::Follow { username, .. } => {
                 if let Some(Follow::Known { server, want }) = self.follows.get_mut(username) {
@@ -232,7 +222,7 @@ impl Store {
                 self.deleting.remove(id);
             }
             Call::Pastel(id) => {
-                self.pastels.remove(id);
+                self.unsent_pastels.remove(id);
                 return;
             }
             Call::Me
@@ -277,7 +267,7 @@ impl Store {
             }
             (Call::User(username), Reply::User { is_following }) => {
                 let want = match self.follows.get(username) {
-                    Some(Follow::Asking { flip }) => is_following ^ flip,
+                    Some(Follow::Asking { odd_presses }) => is_following ^ odd_presses,
                     Some(Follow::Known { want, .. }) => *want,
                     None => is_following,
                 };
@@ -318,11 +308,10 @@ impl Store {
         }
     }
 
-    /// The row as the user sees it, with their star and a delete still running.
     fn shown<'a>(&self, row: &'a Row) -> Cow<'a, Row> {
         let id = &row.commit.id;
         let want = self
-            .stars
+            .star_wants
             .get(id)
             .copied()
             .filter(|want| *want != row.starred);

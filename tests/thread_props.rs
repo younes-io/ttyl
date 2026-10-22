@@ -263,7 +263,6 @@ fn header_shown(rows: &[String], tree: &Tree, selected: &CommitId) -> bool {
     header >= 2 && rows[header].contains('●')
 }
 
-/// The report dialog covers the screen while it is open, and its hint line says so.
 fn reporting(rows: &[String]) -> bool {
     rows.last()
         .is_some_and(|hints| hints.contains("esc cancel"))

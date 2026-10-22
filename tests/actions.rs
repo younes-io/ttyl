@@ -18,7 +18,6 @@ fn grace() -> CommitId {
     CommitId(GRACE.to_owned())
 }
 
-/// Latest, with grace's commit selected: 27 stars, not starred, not ada's.
 fn on_grace(at: Instant) -> Engine {
     let mut engine = boot(at);
     press(&mut engine, "2jj", at);
@@ -36,7 +35,6 @@ fn follow(on: bool) -> Call {
     }
 }
 
-/// What the server answers a star with: the commit as it now stands.
 fn starred(on: bool, stars_count: u32) -> Reply {
     let page = commit(&grace()).unwrap();
     let mut card = page.commit;
@@ -75,7 +73,6 @@ fn reply(
     effects
 }
 
-/// The hint line without the spinner a call in flight draws at its end.
 fn footer(engine: &mut Engine, at: Instant) -> String {
     let rows = screen(engine, 100, 30, at);
     rows[29]
@@ -84,7 +81,6 @@ fn footer(engine: &mut Engine, at: Instant) -> String {
         .to_owned()
 }
 
-/// The star of grace's row as drawn: its count and whether it is amber.
 fn drawn_star(engine: &mut Engine, width: u16, height: u16, at: Instant) -> (String, bool) {
     let buffer = buffer(engine, width, height, at);
     let rows = screen(engine, width, height, at);
@@ -355,7 +351,6 @@ fn y_copies_the_link_and_o_opens_it_on_any_commit() {
     );
 }
 
-/// Latest as someone with pastéis mode on, with grace's commit selected.
 fn giving_pasteis(at: Instant) -> Engine {
     let mut me = account(0);
     me.me.pasteis_mode = true;

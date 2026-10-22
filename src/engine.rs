@@ -65,7 +65,6 @@ pub struct Session {
     asked_to_refresh: HashSet<Log>,
 }
 
-/// What sits over the screen and takes the keys until it closes.
 enum Overlay {
     Help,
     Delete(CommitId),
@@ -80,8 +79,7 @@ enum Overlay {
     },
 }
 
-/// The server's limit on a report's details.
-const DETAILS_MAX: usize = 500;
+const SERVER_DETAILS_MAX: usize = 500;
 
 impl Session {
     fn screen_scopes(&self) -> &'static [Scope] {
@@ -153,7 +151,6 @@ impl Session {
         None
     }
 
-    /// An overlay's scopes hold only what it does.
     fn can(&self, action: Action) -> bool {
         self.overlay.is_some() || self.screen_allows(action)
     }
@@ -168,7 +165,6 @@ impl Session {
         }
     }
 
-    /// The confirm reads every key so that anything but y is a no.
     fn input_mode(&self) -> InputMode {
         match self.overlay {
             Some(Overlay::Delete(_) | Overlay::Details { .. }) => InputMode::Text,
@@ -187,7 +183,7 @@ impl Session {
                     if !event
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                        && text.chars().count() < DETAILS_MAX =>
+                        && text.chars().count() < SERVER_DETAILS_MAX =>
                 {
                     text.push(ch);
                 }
@@ -197,7 +193,6 @@ impl Session {
         }
     }
 
-    /// Moves the open overlay along, and gives the call it sends when it is done.
     fn on_overlay(&mut self, action: Action) -> Option<Call> {
         let overlay = self.overlay.take()?;
         let last = Reason::ALL.len() - 1;
@@ -971,7 +966,7 @@ impl Engine {
                     Some(Overlay::Reason { id, at }) => draw_report(frame, id, *at, None),
                     Some(Overlay::Details { id, reason, text }) => {
                         let at = Reason::ALL.iter().position(|each| each == reason);
-                        draw_report(frame, id, at.unwrap_or(0), Some(text));
+                        draw_report(frame, id, at.unwrap_or(0), Some(text.as_str()));
                     }
                     Some(Overlay::Delete(_)) | None => {}
                 }
@@ -1055,9 +1050,7 @@ fn draw_help(frame: &mut Frame, session: &Session) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The reasons to pick from, then the details field once `details` holds what has been typed. The box
-/// stays above the hint line, which says what the keys do.
-fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&String>) {
+fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&str>) {
     let area = frame.area();
     let area = Rect {
         height: area.height.saturating_sub(1),
@@ -1094,9 +1087,9 @@ fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&Str
         ])
     }));
     lines.push(Line::raw(""));
-    let text = details.map_or("", String::as_str);
+    let text = details.unwrap_or("");
     let label = " details (optional)";
-    let count = format!("{}/{DETAILS_MAX} ", text.chars().count());
+    let count = format!("{}/{SERVER_DETAILS_MAX} ", text.chars().count());
     let gap = usize::from(inner.width).saturating_sub(label.len() + count.len());
     let field_style = if picking {
         theme::muted()

@@ -25,7 +25,6 @@ pub enum Action {
     Pick(Reason),
 }
 
-/// What the user does to the selected commit, the same on the log and in a thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
     Star,
@@ -58,7 +57,6 @@ pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
-/// Without `Always`, so that Q can be typed.
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
