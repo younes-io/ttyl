@@ -532,21 +532,19 @@ impl Store {
     }
 
     fn append(&mut self, log: Log, cursor: &str, page: LogPage) {
-        let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log) else {
-            return;
-        };
-        if !listing.ends_at(cursor) {
+        if !matches!(self.logs.get(&log), Some(Slot::Loaded(listing)) if listing.ends_at(cursor)) {
             return;
         }
         self.generation += 1;
+        let ids = self.absorb(page.rows);
+        let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log) else {
+            unreachable!("the listing was just checked");
+        };
         let before = listing.ids.len();
-        for row in page.rows {
-            let id = row.commit.id.clone();
+        for id in ids {
             if !listing.ids.contains(&id) {
-                listing.ids.push(id.clone());
+                listing.ids.push(id);
             }
-            self.gone.remove(&id);
-            self.rows.insert(id, row);
         }
         // A page that adds nothing leaves the reader as near the end as before, so following its
         // cursor would ask again on every pump.
@@ -554,14 +552,23 @@ impl Store {
     }
 
     fn absorb(&mut self, rows: Vec<Row>) -> Vec<CommitId> {
-        rows.into_iter()
-            .map(|row| {
-                let id = row.commit.id.clone();
-                self.gone.remove(&id);
-                self.rows.insert(id.clone(), row);
-                id
-            })
-            .collect()
+        rows.into_iter().map(|row| self.land_row(row)).collect()
+    }
+
+    /// A row whose reply count moved since its replies were listed drops that list, so an open
+    /// thread fetches the replies that came in, or left, since.
+    fn land_row(&mut self, row: Row) -> CommitId {
+        let id = row.commit.id.clone();
+        if self
+            .rows
+            .get(&id)
+            .is_some_and(|old| old.replies_count != row.replies_count)
+        {
+            self.replies.remove(&id);
+        }
+        self.gone.remove(&id);
+        self.rows.insert(id.clone(), row);
+        id
     }
 
     pub fn fail(&mut self, log: Log, failure: Failure) {

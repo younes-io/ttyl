@@ -249,3 +249,35 @@ fn a_count_of_new_commits_holds_only_for_the_newest_commit_it_was_asked_about() 
     store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
     assert_eq!(listed(&store, Log::Latest).2, 0);
 }
+
+#[test]
+fn a_page_with_more_replies_than_were_listed_makes_the_thread_ask_again() {
+    let mut store = store();
+    let latest = page("log-latest");
+    let id = latest.rows[0].commit.id.clone();
+    store.apply(&Call::Page(Log::Latest), Reply::Page(latest));
+    store.no_replies(&id, false);
+    let asks = |store: &Store| {
+        devnull::thread::ThreadScreen::new(id.clone(), std::time::Instant::now())
+            .wants(store)
+            .into_iter()
+            .any(|(call, ..)| matches!(call, Call::Replies { id: owner, cursor: None } if owner == id))
+    };
+    assert!(
+        !asks(&store),
+        "an empty list just fetched is not asked again"
+    );
+
+    let mut answered = page("log-latest");
+    answered.rows[0].replies_count += 1;
+    store.apply(&Call::Page(Log::Latest), Reply::Page(answered));
+    assert!(asks(&store), "a reply that came in since is fetched");
+
+    store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
+    store.no_replies(&id, false);
+    store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
+    assert!(
+        !asks(&store),
+        "a refresh with the same count keeps the list"
+    );
+}
