@@ -2,7 +2,9 @@ mod common;
 
 use std::time::Instant;
 
-use common::{answer, boot, buffer, commit, contains, press, runs, screen, secs, tap};
+use common::{
+    account, answer, boot, boot_as, buffer, commit, contains, page, press, runs, screen, secs, tap,
+};
 use devnull::api::{Call, Error, Reply};
 use devnull::engine::{Effect, Engine, Event};
 use devnull::model::{CommitId, Focus};
@@ -343,5 +345,91 @@ fn y_copies_the_link_and_o_opens_it_on_any_commit() {
     assert!(
         own.starts_with("https://dev-null.sh/@ada/commits/"),
         "{own}"
+    );
+}
+
+/// Latest as someone with pastéis mode on, with grace's commit selected.
+fn giving_pasteis(at: Instant) -> Engine {
+    let mut me = account(0);
+    me.me.pasteis_mode = true;
+    me.me.pasteis_remaining = Some(8);
+    let mut engine = boot_as(at, me, page);
+    press(&mut engine, "2jj", at);
+    engine
+}
+
+fn gave(remaining: u32) -> Reply {
+    let page = commit(&grace()).unwrap();
+    Reply::Pastel {
+        commit: Box::new(Focus {
+            card: page.commit,
+            replies_count: page.replies_count,
+        }),
+        remaining,
+    }
+}
+
+fn helps(engine: &mut Engine, at: Instant) -> Vec<String> {
+    press(engine, "?", at);
+    let rows = screen(engine, 100, 40, at);
+    press(engine, "?", at);
+    rows
+}
+
+#[test]
+fn a_pastel_is_offered_only_in_pasteis_mode_and_never_on_your_own_commit() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    assert!(press(&mut engine, "P", at).is_empty());
+    assert!(!contains(&helps(&mut engine, at), "give a pastel"));
+
+    let mut engine = giving_pasteis(at);
+    assert!(contains(&helps(&mut engine, at), "P  give a pastel"));
+    press(&mut engine, "gg", at);
+    assert!(press(&mut engine, "P", at).is_empty(), "row 0 is ada's own");
+    assert!(!contains(&helps(&mut engine, at), "give a pastel"));
+}
+
+#[test]
+fn every_pastel_pressed_is_sent_one_at_a_time_and_says_how_many_are_left() {
+    let at = Instant::now();
+    let mut engine = giving_pasteis(at);
+    let effects = press(&mut engine, "PP", at);
+    assert_eq!(runs(&effects), [&Call::Pastel(grace())]);
+    let (ticket, _) = one_run(&effects);
+
+    let effects = reply(&mut engine, ticket, Ok(gave(7)), at);
+    assert_eq!(
+        runs(&effects),
+        [&Call::Pastel(grace())],
+        "the second press is a second gift"
+    );
+    assert_eq!(
+        footer(&mut engine, at),
+        " gave a pastel to @grace · 7 left today"
+    );
+    let (ticket, _) = one_run(&effects);
+    assert!(reply(&mut engine, ticket, Ok(gave(6)), at).is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " gave a pastel to @grace · 6 left today"
+    );
+}
+
+#[test]
+fn with_no_pasteis_left_the_server_says_so_and_the_rest_are_not_sent() {
+    let at = Instant::now();
+    let mut engine = giving_pasteis(at);
+    let (ticket, _) = one_run(&press(&mut engine, "PP", at));
+    let exhausted = Err(Error::Api {
+        status: 422,
+        code: Some("pasteis_exhausted".to_owned()),
+        message: "you ran out of pastéis. wait until tomorrow.".to_owned(),
+        retry_after: None,
+    });
+    assert!(reply(&mut engine, ticket, exhausted, at).is_empty());
+    assert_eq!(
+        footer(&mut engine, at),
+        " you ran out of pastéis. wait until tomorrow."
     );
 }

@@ -30,6 +30,7 @@ pub enum Act {
     Follow,
     Copy,
     Browse,
+    Pastel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +301,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Browse),
         hint: None,
         help: "open in the browser",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('P')]],
+        action: Action::Commit(Act::Pastel),
+        hint: None,
+        help: "give a pastel",
     },
     Binding {
         scope: Scope::Global,

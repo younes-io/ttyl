@@ -23,6 +23,8 @@ pub struct Store {
     stars: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
     deleting: HashSet<CommitId>,
+    /// Pastéis pressed and not yet sent. Each press is a gift, so presses are counted, not merged.
+    pastels: HashMap<CommitId, u32>,
     generation: u64,
 }
 
@@ -119,6 +121,7 @@ impl Store {
             stars: HashMap::new(),
             follows: HashMap::new(),
             deleting: HashSet::new(),
+            pastels: HashMap::new(),
             generation: 0,
         }
     }
@@ -154,6 +157,10 @@ impl Store {
             Follow::Asking { .. } => None,
             Follow::Known { want, .. } => Some(*want),
         }
+    }
+
+    pub fn give_pastel(&mut self, id: &CommitId) {
+        *self.pastels.entry(id.clone()).or_default() += 1;
     }
 
     pub fn start_delete(&mut self, id: &CommitId) {
@@ -197,6 +204,13 @@ impl Store {
                 Follow::Asking { .. } | Follow::Known { .. } => {}
             }
         }
+        self.pastels.retain(|id, left| {
+            if !pending(&CallKey::Pastel(id.clone())) {
+                calls.push(Call::Pastel(id.clone()));
+                *left -= 1;
+            }
+            *left > 0
+        });
         calls
     }
 
@@ -217,6 +231,10 @@ impl Store {
             Call::Delete(id) => {
                 self.deleting.remove(id);
             }
+            Call::Pastel(id) => {
+                self.pastels.remove(id);
+                return;
+            }
             Call::Me
             | Call::Redeem { .. }
             | Call::Page(_)
@@ -224,7 +242,6 @@ impl Store {
             | Call::Since { .. }
             | Call::Commit(_)
             | Call::Replies { .. }
-            | Call::Pastel(_)
             | Call::Report { .. } => return,
         }
         self.generation += 1;

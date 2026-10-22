@@ -248,12 +248,16 @@ pub fn boot(at: Instant) -> Engine {
 }
 
 pub fn boot_serving(at: Instant, pages: fn(Log) -> LogPage) -> Engine {
+    boot_as(at, account(3), pages)
+}
+
+pub fn boot_as(at: Instant, me: Account, pages: fn(Log) -> LogPage) -> Engine {
     let mut engine = Engine::new("devnull-tui".to_owned(), at);
     let effects = engine.pump(at);
     let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
         panic!("the engine asks for /me first: {effects:?}");
     };
-    engine.update(Event::Reply(*ticket, Ok(Reply::Account(account(3)))), at);
+    engine.update(Event::Reply(*ticket, Ok(Reply::Account(me))), at);
     serve_with(&mut engine, at, pages);
     engine
 }

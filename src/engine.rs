@@ -100,6 +100,7 @@ impl Session {
         row.deletion.is_none()
             && match act {
                 Act::Star | Act::Follow => !own,
+                Act::Pastel => !own && self.store.me.pasteis_mode,
                 Act::Copy | Act::Browse => true,
             }
     }
@@ -475,6 +476,10 @@ impl Engine {
                 session.store.star(&id);
                 (None, Vec::new())
             }
+            Act::Pastel => {
+                session.store.give_pastel(&id);
+                (None, Vec::new())
+            }
             Act::Follow => (
                 session
                     .store
@@ -517,12 +522,21 @@ impl Engine {
                 }
                 _ => None,
             };
+            let gave = match &reply {
+                Reply::Pastel { commit, remaining } => Some(format!(
+                    "gave a pastel to @{} · {remaining} left today",
+                    commit.card.commit.author.username
+                )),
+                _ => None,
+            };
             session.store.apply(call, reply);
-            if let Some((username, server)) = answered
-                && let Some(want) = session.store.following(username)
-                && want != server
-            {
-                self.toast(followed(username, want), now);
+            let toast = gave.or_else(|| {
+                let (username, server) = answered?;
+                let want = session.store.following(username)?;
+                (want != server).then(|| followed(username, want))
+            });
+            if let Some(text) = toast {
+                self.toast(text, now);
             }
             return;
         };
