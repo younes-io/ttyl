@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 use common::{openssh_accepts, scratch};
-use devnull::device::{DeviceKey, Nonce};
+use ttyl::device::{DeviceKey, Nonce};
 
 #[test]
 fn openssh_verifies_the_request_the_server_rebuilds() {
@@ -126,7 +126,7 @@ fn a_saved_key_is_private_and_loads_back() {
 
 #[test]
 fn the_first_run_makes_a_private_key_and_later_runs_reuse_it() {
-    let path = scratch("open").join("devnull-tui/device_ed25519");
+    let path = scratch("open").join("ttyl/device_ed25519");
     let first = DeviceKey::open(&path).unwrap();
 
     assert_eq!(

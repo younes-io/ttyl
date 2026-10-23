@@ -7,13 +7,13 @@ use common::{
     account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press, runs,
     screen, secs, serve,
 };
-use devnull::api::{Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::Log;
+use ttyl::api::{Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::Log;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-fn fresh(at: Instant) -> (Engine, devnull::sched::Ticket) {
-    let mut engine = Engine::new("devnull-tui".to_owned(), at);
+fn fresh(at: Instant) -> (Engine, ttyl::sched::Ticket) {
+    let mut engine = Engine::new("ttyl".to_owned(), at);
     let effects = engine.pump(at);
     let [Effect::Run(ticket, Call::Me)] = effects.as_slice() else {
         panic!("{effects:?}");
@@ -424,7 +424,7 @@ fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
     );
 }
 
-fn revoked_mid_flight(at: Instant) -> (Engine, devnull::sched::Ticket) {
+fn revoked_mid_flight(at: Instant) -> (Engine, ttyl::sched::Ticket) {
     let mut engine = boot(at);
     let effects = engine.pump(at + secs(30));
     let [
@@ -852,7 +852,7 @@ fn a_failing_footer_keeps_help_wherever_a_working_one_does() {
 
 #[test]
 fn a_cached_feed_matches_a_fresh_one_at_the_same_instant() {
-    fn seconds_page(log: Log) -> devnull::model::LogPage {
+    fn seconds_page(log: Log) -> ttyl::model::LogPage {
         let mut page = page(log);
         for row in &mut page.rows {
             row.commit.created_at = "2026-10-21T09:58:30Z".parse().unwrap();

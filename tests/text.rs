@@ -1,4 +1,4 @@
-use devnull::text::Buffer;
+use ttyl::text::Buffer;
 use proptest::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 

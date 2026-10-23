@@ -3,11 +3,11 @@ mod common;
 use std::time::Instant;
 
 use common::{answer, boot, contains, press, runs, screen, secs, tap};
-use devnull::api::{Call, Error};
-use devnull::draft::Target;
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::CommitId;
-use devnull::sched::Ticket;
+use ttyl::api::{Call, Error};
+use ttyl::draft::Target;
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::CommitId;
+use ttyl::sched::Ticket;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";

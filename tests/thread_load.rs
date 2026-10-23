@@ -7,10 +7,10 @@ use common::{
     account, boot_serving, contains, from_world, older, press, replies, runs, screen, tap,
     world_log,
 };
-use devnull::api::{Call, Error, Reply};
-use devnull::clock::POLL;
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, Log, LogPage, Shown};
+use ttyl::api::{Call, Error, Reply};
+use ttyl::clock::POLL;
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{CommitId, Log, LogPage, Shown};
 use ratatui::crossterm::event::KeyCode;
 
 const ADA: &str = "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61";

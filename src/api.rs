@@ -212,7 +212,7 @@ impl Client {
         let agent = Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(30)))
-            .user_agent(concat!("devnull-tui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("ttyl/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
         Client {

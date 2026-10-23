@@ -3,8 +3,8 @@ mod common;
 use std::time::Instant;
 
 use common::{answer, boot, contains, page, press, screen, tap};
-use devnull::engine::Engine;
-use devnull::model::Log;
+use ttyl::engine::Engine;
+use ttyl::model::Log;
 use ratatui::crossterm::event::KeyCode;
 
 fn on_latest(at: Instant) -> Engine {

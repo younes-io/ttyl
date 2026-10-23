@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use common::{account, boot, contains, page, press, screen, sign_in, tap};
-use devnull::draft::{Drafts, Target, Write};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::keys;
-use devnull::model::CommitId;
+use ttyl::draft::{Drafts, Target, Write};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::keys;
+use ttyl::model::CommitId;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
@@ -216,7 +216,7 @@ fn esc_keeps_the_draft_and_reopening_restores_it_with_the_stash_line() {
 fn a_draft_saved_on_disk_comes_back_on_its_target() {
     let at = Instant::now();
     let saved = HashMap::from([(Target::Quote(grace()), "from last time".to_owned())]);
-    let engine = Engine::new("devnull-tui".to_owned(), at).with_drafts(Drafts::new(saved));
+    let engine = Engine::new("ttyl".to_owned(), at).with_drafts(Drafts::new(saved));
     let mut engine = sign_in(engine, at, account(3), page);
     press(&mut engine, "2jjq", at);
     let rows = screen(&mut engine, 100, HEIGHT, at);

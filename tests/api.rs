@@ -6,10 +6,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use common::openssh_accepts;
-use devnull::api::{Call, Client, Error, Reply};
-use devnull::device::DeviceKey;
-use devnull::draft::Target;
-use devnull::model::{CommitId, Filter, Log, NotificationId};
+use ttyl::api::{Call, Client, Error, Reply};
+use ttyl::device::DeviceKey;
+use ttyl::draft::Target;
+use ttyl::model::{CommitId, Filter, Log, NotificationId};
 
 struct Seen {
     head: String,

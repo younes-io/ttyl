@@ -3,9 +3,9 @@ mod common;
 use std::time::Instant;
 
 use common::{account, contains, log_of, not_found, press, screen, tap};
-use devnull::api::{Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
+use ttyl::api::{Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
 use proptest::prelude::*;
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
@@ -284,7 +284,7 @@ proptest! {
     ) {
         let at = Instant::now();
         let size = (width, height);
-        let mut engine = Engine::new("devnull-tui".to_owned(), at);
+        let mut engine = Engine::new("ttyl".to_owned(), at);
         settle(&mut engine, &tree, Vec::new(), size, at);
         let log = above_the_hints(&screen(&mut engine, width, height, at));
 

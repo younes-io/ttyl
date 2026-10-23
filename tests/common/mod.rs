@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use devnull::device::DeviceKey;
+use ttyl::device::DeviceKey;
 
 pub fn scratch(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
@@ -63,11 +63,11 @@ pub fn openssh_accepts(
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
-use devnull::api::{Account, Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, CommitPage, Log, LogPage, RepliesPage};
-use devnull::signin::{Attempt, REDIRECT_URI};
-use devnull::welcome::Wait;
+use ttyl::api::{Account, Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{CommitId, CommitPage, Log, LogPage, RepliesPage};
+use ttyl::signin::{Attempt, REDIRECT_URI};
+use ttyl::welcome::Wait;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -254,7 +254,7 @@ pub fn boot_serving(at: Instant, pages: fn(Log) -> LogPage) -> Engine {
 }
 
 pub fn boot_as(at: Instant, me: Account, pages: fn(Log) -> LogPage) -> Engine {
-    sign_in(Engine::new("devnull-tui".to_owned(), at), at, me, pages)
+    sign_in(Engine::new("ttyl".to_owned(), at), at, me, pages)
 }
 
 pub fn sign_in(mut engine: Engine, at: Instant, me: Account, pages: fn(Log) -> LogPage) -> Engine {
@@ -326,7 +326,7 @@ pub fn open_browser(engine: &mut Engine, at: Instant) -> Browser {
         state: attempt.state.clone(),
         verifier: attempt.verifier.clone(),
     };
-    let url = attempt.authorize_url("https://dev-null.sh", "SHA256:test", "devnull-tui");
+    let url = attempt.authorize_url("https://dev-null.sh", "SHA256:test", "ttyl");
     engine.update(Event::SignIn(Ok(Wait::without_listener(attempt, url))), at);
     browser
 }

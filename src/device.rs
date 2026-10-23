@@ -82,12 +82,12 @@ impl DeviceKey {
     }
 }
 
-/// `$XDG_CONFIG_HOME/devnull-tui/device_ed25519`, falling back to `~/.config`.
+/// `$XDG_CONFIG_HOME/ttyl/device_ed25519`, falling back to `~/.config`.
 pub fn key_path() -> io::Result<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|config| config.join("devnull-tui/device_ed25519"))
+        .map(|config| config.join("ttyl/device_ed25519"))
         .ok_or_else(|| io::Error::other("no home directory"))
 }
 

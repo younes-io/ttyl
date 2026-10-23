@@ -9,12 +9,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use devnull::api::{self, Call, Client};
-use devnull::device::{self, DeviceKey};
-use devnull::draft::{self, Drafts};
-use devnull::engine::{Effect, Engine, Event, WORKERS};
-use devnull::sched::Ticket;
-use devnull::{desktop, editor, signin, welcome};
+use ttyl::api::{self, Call, Client};
+use ttyl::device::{self, DeviceKey};
+use ttyl::draft::{self, Drafts};
+use ttyl::engine::{Effect, Engine, Event, WORKERS};
+use ttyl::sched::Ticket;
+use ttyl::{desktop, editor, signin, welcome};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self as input, DisableBracketedPaste, EnableBracketedPaste, Event as Input,
@@ -38,7 +38,7 @@ fn report(result: Result<(), String>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("devnull: {message}");
+            eprintln!("ttyl: {message}");
             ExitCode::FAILURE
         }
     }

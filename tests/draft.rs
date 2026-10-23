@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use devnull::draft::{self, Drafts, Target, Write};
-use devnull::model::CommitId;
+use ttyl::draft::{self, Drafts, Target, Write};
+use ttyl::model::CommitId;
 
 fn reply() -> Target {
     Target::Reply(CommitId("9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61".to_owned()))
@@ -44,7 +44,7 @@ fn targets_keep_their_own_drafts() {
 
 #[test]
 fn drafts_survive_on_disk_and_come_back() {
-    let dir = common::scratch("drafts").join("devnull-tui/drafts");
+    let dir = common::scratch("drafts").join("ttyl/drafts");
     draft::store(&dir, &Write::Save(Target::New, "first\nsecond".to_owned())).unwrap();
     draft::store(&dir, &Write::Save(reply(), "a reply".to_owned())).unwrap();
     draft::store(&dir, &Write::Save(reply(), "a better reply".to_owned())).unwrap();
@@ -83,7 +83,7 @@ fn drafts_survive_on_disk_and_come_back() {
 #[test]
 fn the_engine_starts_with_the_saved_drafts() {
     let at = std::time::Instant::now();
-    let engine = devnull::engine::Engine::new("devnull-tui".to_owned(), at).with_drafts(
+    let engine = ttyl::engine::Engine::new("ttyl".to_owned(), at).with_drafts(
         Drafts::new(HashMap::from([(Target::New, "unsent".to_owned())])),
     );
     assert_eq!(engine.draft(&Target::New), Some("unsent"));

@@ -4,12 +4,12 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use common::{boot, boot_serving, contains, following_nobody, now, page, secs};
-use devnull::api::{Call, Error};
-use devnull::engine::Effect;
-use devnull::engine::{Engine, Event};
-use devnull::feed;
-use devnull::model::{Log, LogPage};
-use devnull::theme;
+use ttyl::api::{Call, Error};
+use ttyl::engine::Effect;
+use ttyl::engine::{Engine, Event};
+use ttyl::feed;
+use ttyl::model::{Log, LogPage};
+use ttyl::theme;
 use ratatui::style::Color;
 
 fn app() -> (Engine, Instant) {

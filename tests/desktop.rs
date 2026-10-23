@@ -1,5 +1,5 @@
 use base64ct::{Base64, Encoding};
-use devnull::desktop::osc52;
+use ttyl::desktop::osc52;
 
 const URL: &str = "https://dev-null.sh/@grace/commits/2c3d4e5f-0000-4000-8000-000000000201";
 

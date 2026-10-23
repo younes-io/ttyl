@@ -3,9 +3,9 @@ mod common;
 use std::time::Instant;
 
 use common::{boot, contains, press, screen, tap};
-use devnull::api::Call;
-use devnull::draft::Target;
-use devnull::engine::{Effect, Engine, Event};
+use ttyl::api::Call;
+use ttyl::draft::Target;
+use ttyl::engine::{Effect, Engine, Event};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const BODY: &str = "deploy with ghp_aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY3zA5";

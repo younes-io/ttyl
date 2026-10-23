@@ -96,8 +96,8 @@ pub fn start(client: &Client, device_name: &str, events: Sender<Event>) -> io::R
 pub fn device_name() -> String {
     let host = fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
     match host.trim() {
-        "" => "devnull-tui".to_owned(),
-        host => format!("devnull-tui on {host}").chars().take(100).collect(),
+        "" => "ttyl".to_owned(),
+        host => format!("ttyl on {host}").chars().take(100).collect(),
     }
 }
 

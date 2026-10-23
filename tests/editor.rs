@@ -3,8 +3,8 @@ mod common;
 use std::time::Instant;
 
 use common::{boot, contains, press, screen};
-use devnull::draft::{Target, Write};
-use devnull::engine::{Effect, Engine, Event};
+use ttyl::draft::{Target, Write};
+use ttyl::engine::{Effect, Engine, Event};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const HEIGHT: u16 = 30;

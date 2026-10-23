@@ -14,7 +14,7 @@ use crate::device::Nonce;
 
 pub const REDIRECT_URI: &str = "devnull://signed-in";
 const MIME: &str = "x-scheme-handler/devnull";
-const DESKTOP_FILE: &str = "devnull-tui.desktop";
+const DESKTOP_FILE: &str = "ttyl.desktop";
 
 /// One trip through the browser. The verifier stays here and only its challenge leaves, and the state ties the
 /// redirect back to this attempt.
@@ -123,7 +123,7 @@ pub fn socket_path() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir)
-        .join("devnull-tui.sock")
+        .join("ttyl.sock")
 }
 
 /// What the desktop runs when the browser opens a `devnull://` link: hand the link to the waiting app and exit.
@@ -196,7 +196,7 @@ impl Handler {
         fs::write(
             &desktop_file,
             format!(
-                "[Desktop Entry]\nType=Application\nName=devnull-tui sign-in\nExec={} --redirect %u\nMimeType={MIME};\nNoDisplay=true\nTerminal=false\n",
+                "[Desktop Entry]\nType=Application\nName=ttyl sign-in\nExec={} --redirect %u\nMimeType={MIME};\nNoDisplay=true\nTerminal=false\n",
                 exe.display()
             ),
         )?;

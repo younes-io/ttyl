@@ -1,4 +1,4 @@
-use devnull::code::{Hl, Span, block_lines};
+use ttyl::code::{Hl, Span, block_lines};
 
 fn span(text: &str, hl: Option<Hl>) -> Span {
     Span {

@@ -1,4 +1,4 @@
-use devnull::model::{
+use ttyl::model::{
     CommitPage, Filter, GroupPage, Kind, Lane, Log, LogPage, NotificationPage, RepliesPage, Row,
     Segment, Shown, Status, Suggestion,
 };
@@ -201,7 +201,7 @@ fn lane_outside_palette_is_rejected() {
             r#"{{"id":"u","username":"x","name":"X","avatar_url":null,"html_url":"h","lane":{lane}}}"#
         );
         assert!(
-            serde_json::from_str::<devnull::model::User>(&json).is_err(),
+            serde_json::from_str::<ttyl::model::User>(&json).is_err(),
             "accepted lane {lane}"
         );
     }
@@ -345,8 +345,8 @@ fn a_group_page_lists_its_events_without_counts() {
 
 #[test]
 fn a_dark_custom_lane_is_lifted_until_it_reads_and_a_bright_one_is_kept() {
-    use devnull::model::Lane;
-    use devnull::theme;
+    use ttyl::model::Lane;
+    use ttyl::theme;
     use ratatui::style::Color;
     for (r, g, b) in [
         (0, 0, 0),

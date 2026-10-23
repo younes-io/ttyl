@@ -1,7 +1,7 @@
-use devnull::api::{Account, Call, Me, Reply};
-use devnull::model::{CommitId, Deletion, Focus, Log, LogPage, Row};
-use devnull::sched::CallKey;
-use devnull::store::{Node, Store};
+use ttyl::api::{Account, Call, Me, Reply};
+use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row};
+use ttyl::sched::CallKey;
+use ttyl::store::{Node, Store};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
 

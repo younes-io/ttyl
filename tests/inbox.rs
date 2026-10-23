@@ -3,10 +3,10 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{account, boot, contains, press, runs, screen, secs, tap};
-use devnull::api::{Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{Filter, GroupPage, Kind, NotificationId, NotificationPage};
-use devnull::sched::Ticket;
+use ttyl::api::{Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{Filter, GroupPage, Kind, NotificationId, NotificationPage};
+use ttyl::sched::Ticket;
 use ratatui::crossterm::event::KeyCode;
 
 #[test]
@@ -55,7 +55,7 @@ fn tab_and_shift_tab_cycle_the_filters_and_wrap() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "gn", at);
-    let bold = |engine: &mut devnull::engine::Engine| {
+    let bold = |engine: &mut ttyl::engine::Engine| {
         let buffer = common::buffer(engine, 100, 30, at);
         (0..100u16)
             .filter(|x| {
@@ -84,17 +84,17 @@ fn the_narrow_filter_bar_and_hints_fit_44_columns() {
     assert!(contains(&rows[19..], "? help"), "{rows:#?}");
 }
 
-fn notifications() -> devnull::model::NotificationPage {
+fn notifications() -> ttyl::model::NotificationPage {
     let json = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/fixtures/notifications.json"
     ))
     .unwrap();
-    devnull::model::NotificationPage::parse(&json, devnull::model::Filter::All).unwrap()
+    ttyl::model::NotificationPage::parse(&json, ttyl::model::Filter::All).unwrap()
 }
 
-fn laid_out(page: &devnull::model::NotificationPage, more: bool, width: u16) -> Vec<String> {
-    let feed = devnull::inbox::layout(
+fn laid_out(page: &ttyl::model::NotificationPage, more: bool, width: u16) -> Vec<String> {
+    let feed = ttyl::inbox::layout(
         page.filter,
         &page.groups,
         page.read_at,
@@ -190,7 +190,7 @@ fn rows_fit_44_columns_and_keep_the_time() {
 fn an_empty_list_reads_as_the_web_empty_copy_for_its_filter() {
     let mut page = notifications();
     page.groups.clear();
-    page.filter = devnull::model::Filter::Stars;
+    page.filter = ttyl::model::Filter::Stars;
     assert_eq!(
         laid_out(&page, false, 100),
         [

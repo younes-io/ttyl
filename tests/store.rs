@@ -1,6 +1,6 @@
-use devnull::api::{Account, Call, Failure, Me, Reply};
-use devnull::model::{CommitId, Log, LogPage};
-use devnull::store::{Slot, Store};
+use ttyl::api::{Account, Call, Failure, Me, Reply};
+use ttyl::model::{CommitId, Log, LogPage};
+use ttyl::store::{Slot, Store};
 
 fn page(name: &str) -> LogPage {
     let json = std::fs::read_to_string(format!(
@@ -258,7 +258,7 @@ fn a_page_with_more_replies_than_were_listed_makes_the_thread_ask_again() {
     store.apply(&Call::Page(Log::Latest), Reply::Page(latest));
     store.no_replies(&id, false);
     let asks = |store: &Store| {
-        devnull::thread::ThreadScreen::new(id.clone(), std::time::Instant::now())
+        ttyl::thread::ThreadScreen::new(id.clone(), std::time::Instant::now())
             .wants(store)
             .into_iter()
             .any(|(call, ..)| matches!(call, Call::Replies { id: owner, cursor: None } if owner == id))

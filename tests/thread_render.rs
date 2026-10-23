@@ -3,9 +3,9 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{answer, boot_serving, buffer, contains, older, press, screen, tap, world_log};
-use devnull::engine::{Effect, Engine};
-use devnull::model::{Log, LogPage};
-use devnull::theme;
+use ttyl::engine::{Effect, Engine};
+use ttyl::model::{Log, LogPage};
+use ttyl::theme;
 use ratatui::crossterm::event::KeyCode;
 
 const ADA: &str = "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61";

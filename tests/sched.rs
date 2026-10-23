@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
-use devnull::api::Call;
-use devnull::clock::{Timer, Timers};
-use devnull::model::Log;
-use devnull::sched::{LIMIT, Priority, RESERVE, Scheduler, WINDOW};
+use ttyl::api::Call;
+use ttyl::clock::{Timer, Timers};
+use ttyl::model::Log;
+use ttyl::sched::{LIMIT, Priority, RESERVE, Scheduler, WINDOW};
 
-fn calls(released: &[(devnull::sched::Ticket, Call)]) -> Vec<&Call> {
+fn calls(released: &[(ttyl::sched::Ticket, Call)]) -> Vec<&Call> {
     released.iter().map(|(_, call)| call).collect()
 }
 

@@ -87,7 +87,7 @@ pub fn dir() -> Option<PathBuf> {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .map(|state| state.join("devnull-tui/drafts"))
+        .map(|state| state.join("ttyl/drafts"))
 }
 
 pub fn load(dir: &Path) -> HashMap<Target, String> {

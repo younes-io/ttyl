@@ -4,10 +4,10 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset};
-use devnull::code;
-use devnull::engine::Engine;
-use devnull::feed;
-use devnull::model::{Log, LogPage, Row, Segment, Status, Suggestion};
+use ttyl::code;
+use ttyl::engine::Engine;
+use ttyl::feed;
+use ttyl::model::{Log, LogPage, Row, Segment, Status, Suggestion};
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

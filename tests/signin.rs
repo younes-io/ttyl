@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use devnull::signin::{Attempt, Callback, Inbox, REDIRECT_URI};
+use ttyl::signin::{Attempt, Callback, Inbox, REDIRECT_URI};
 
 fn attempt() -> Attempt {
     Attempt {
@@ -60,7 +60,7 @@ fn the_authorize_url_carries_every_parameter_intact() {
     let url = attempt().authorize_url(
         "https://dev-null.sh",
         fingerprint,
-        "devnull-tui on my box & co",
+        "ttyl on my box & co",
     );
 
     assert!(url.starts_with("https://dev-null.sh/mobile/authorize?"));
@@ -68,7 +68,7 @@ fn the_authorize_url_carries_every_parameter_intact() {
         query(&url),
         [
             ("fingerprint", fingerprint),
-            ("device_name", "devnull-tui on my box & co"),
+            ("device_name", "ttyl on my box & co"),
             (
                 "code_challenge",
                 "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
@@ -118,7 +118,7 @@ fn the_redirect_handler_hands_the_link_to_the_waiting_app() {
     let link = format!("{REDIRECT_URI}?code=abc&state=0123456789abcdef0123456789abcdef");
     assert_eq!(inbox.poll().unwrap(), None);
 
-    let handler = Command::new(env!("CARGO_BIN_EXE_devnull"))
+    let handler = Command::new(env!("CARGO_BIN_EXE_ttyl"))
         .args(["--redirect", &link])
         .env("XDG_RUNTIME_DIR", &runtime)
         .status()

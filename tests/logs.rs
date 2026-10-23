@@ -3,10 +3,10 @@ mod common;
 use std::time::Instant;
 
 use common::{account, boot, contains, cursor, older, page, press, runs, screen, secs};
-use devnull::api::{Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{Log, LogPage};
-use devnull::sched::Ticket;
+use ttyl::api::{Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{Log, LogPage};
+use ttyl::sched::Ticket;
 
 fn older_of(effects: &[Effect]) -> (Ticket, String) {
     let [

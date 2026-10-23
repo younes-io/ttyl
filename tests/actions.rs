@@ -5,11 +5,11 @@ use std::time::Instant;
 use common::{
     account, answer, boot, boot_as, buffer, commit, contains, page, press, runs, screen, secs, tap,
 };
-use devnull::api::{Call, Error, Reply};
-use devnull::engine::{Effect, Engine, Event};
-use devnull::model::{CommitId, Focus, Reason};
-use devnull::sched::Ticket;
-use devnull::theme;
+use ttyl::api::{Call, Error, Reply};
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{CommitId, Focus, Reason};
+use ttyl::sched::Ticket;
+use ttyl::theme;
 use ratatui::crossterm::event::KeyCode;
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";

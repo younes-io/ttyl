@@ -26,7 +26,7 @@ pub fn edit(editor: &str, text: &str) -> Option<String> {
 fn temp_path() -> PathBuf {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let next = NEXT.fetch_add(1, Ordering::Relaxed);
-    env::temp_dir().join(format!("devnull-commit-{}-{next}.md", std::process::id()))
+    env::temp_dir().join(format!("ttyl-commit-{}-{next}.md", std::process::id()))
 }
 
 fn create_private(path: &Path, text: &str) -> io::Result<()> {
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn the_file_is_private_and_gone_afterwards() {
-        let record = env::temp_dir().join(format!("devnull-editor-test-{}", std::process::id()));
+        let record = env::temp_dir().join(format!("ttyl-editor-test-{}", std::process::id()));
         let editor = format!("stat -c '%a %n' \"$1\" >'{}'; true", record.display());
         assert_eq!(edit(&editor, "x").as_deref(), Some("x\n"));
         let seen = fs::read_to_string(&record).unwrap();

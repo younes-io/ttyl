@@ -1,8 +1,8 @@
-use devnull::keys::{
+use ttyl::keys::{
     Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, Scope, TABLE,
     UNIONS, help, hints,
 };
-use devnull::model::Log;
+use ttyl::model::Log;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn key(code: KeyCode) -> KeyEvent {
