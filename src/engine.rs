@@ -7,9 +7,10 @@ use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::body;
@@ -1936,13 +1937,11 @@ fn news_of(count: u32) -> String {
 
 fn draw_help(frame: &mut Frame, session: &Session) {
     let allows = |action| session.screen_allows(action);
-    let rows: Vec<String> = keys::help(session.screen_scopes(), &allows)
-        .into_iter()
-        .map(|(key, help)| format!("{key:>8}  {help}"))
-        .collect();
+    let rows = keys::help(session.screen_scopes(), &allows);
+    let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
     let width = rows
         .iter()
-        .map(|row| row.chars().count())
+        .map(|(_, help, _)| key_width + 2 + help.width())
         .max()
         .unwrap_or(0)
         + 4;
@@ -1957,15 +1956,36 @@ fn draw_help(frame: &mut Frame, session: &Session) {
         height,
     };
     frame.render_widget(Clear, box_area);
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .title(" keys ")
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(theme::PRIMARY))
+        .title(Span::styled(
+            " keys ",
+            Style::new()
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::horizontal(1))
         .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
     let inner = block.inner(box_area);
     frame.render_widget(block, box_area);
     let lines: Vec<Line> = rows
         .into_iter()
-        .map(|row| Line::raw(format!(" {row}")))
+        .map(|(key, help, live)| {
+            let (key_style, help_style) = if live {
+                (
+                    Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new().fg(theme::FOREGROUND),
+                )
+            } else {
+                (Style::new().fg(theme::FAINT), Style::new().fg(theme::FAINT))
+            };
+            Line::from(vec![
+                Span::styled(format!("{key:>key_width$}"), key_style),
+                Span::raw("  "),
+                Span::styled(help, help_style),
+            ])
+        })
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
 }

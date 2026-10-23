@@ -405,3 +405,24 @@ pub fn profile(username: &str, is_following: bool) -> Reply {
         ttyl::model::Profile::parse(&json.to_string()).unwrap(),
     ))
 }
+
+/// Opens help and finds `needle` in it: `None` when it isn't listed, otherwise whether it
+/// is live rather than dimmed. Help closes again before this returns.
+pub fn help_entry(engine: &mut Engine, at: Instant, needle: &str) -> Option<bool> {
+    press(engine, "?", at);
+    let (width, height) = (100, 50);
+    let buffer = buffer(engine, width, height, at);
+    press(engine, "?", at);
+    (0..height).find_map(|y| {
+        let cells: Vec<(u16, &str)> = (0..width).map(|x| (x, buffer[(x, y)].symbol())).collect();
+        let row: String = cells.iter().map(|(_, symbol)| *symbol).collect();
+        let at = row.find(needle)?;
+        let mut offset = 0;
+        let (x, _) = cells.iter().find(|(_, symbol)| {
+            let here = offset;
+            offset += symbol.len();
+            here >= at
+        })?;
+        Some(buffer[(*x, y)].fg != ttyl::theme::FAINT)
+    })
+}

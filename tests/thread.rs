@@ -2,10 +2,10 @@ mod common;
 
 use std::time::Instant;
 
-use common::{answer, boot, contains, page, press, screen, tap};
+use common::{answer, boot, contains, help_entry, page, press, screen, tap};
+use ratatui::crossterm::event::KeyCode;
 use ttyl::engine::Engine;
 use ttyl::model::Log;
-use ratatui::crossterm::event::KeyCode;
 
 fn on_latest(at: Instant) -> Engine {
     let mut engine = boot(at);
@@ -74,14 +74,15 @@ fn help_on_a_thread_lists_the_thread_keys() {
     ] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
-    for hidden in [
-        "open the thread",
-        "open this commit's thread",
-        "refresh this log",
-    ] {
+    for hidden in ["open the thread", "refresh this log"] {
         assert!(!contains(&rows, hidden), "{hidden}: {rows:#?}");
     }
     press(&mut engine, "?", at);
+    assert_eq!(
+        help_entry(&mut engine, at, "open this commit's thread"),
+        Some(false),
+        "the root is already open"
+    );
     assert!(engine.thread().is_some(), "closing help keeps the thread");
 }
 

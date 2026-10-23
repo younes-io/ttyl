@@ -1,9 +1,9 @@
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::keys::{
     Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, Scope, TABLE,
     UNIONS, help, hints,
 };
 use ttyl::model::Log;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -110,12 +110,10 @@ fn a_binding_the_screen_cannot_do_is_not_dispatched_listed_or_hinted() {
     );
     assert!(!hints(LOG_SCOPES, &[], &no_star).contains("s star"));
     assert!(hints(LOG_SCOPES, &[], &all).contains("s star"));
-    let listed: Vec<&str> = help(LOG_SCOPES, &no_star)
-        .into_iter()
-        .map(|(_, what)| what)
-        .collect();
-    assert!(!listed.contains(&"star or unstar"));
-    assert!(listed.contains(&"follow or unfollow the author"));
+    let listed = help(LOG_SCOPES, &no_star);
+    let live = |what: &str| listed.iter().find(|row| row.1 == what).map(|row| row.2);
+    assert_eq!(live("star or unstar"), Some(false));
+    assert_eq!(live("follow or unfollow the author"), Some(true));
 }
 
 #[test]

@@ -928,11 +928,28 @@ pub fn fit(hints: &str, width: usize) -> String {
     hints.join("  ")
 }
 
-pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str)> {
-    bindings(scopes, can)
+/// Every key in `scopes`, each with whether it works right now, so help can show a key
+/// like `v` dimmed instead of hiding it until a poll is selected.
+pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str, bool)> {
+    let listed: Vec<(String, &'static str, bool)> = TABLE
+        .iter()
+        .filter(|binding| scopes.contains(&binding.scope))
         .map(|binding| {
             let keys: Vec<String> = binding.chords.iter().map(|chord| label(chord)).collect();
-            (keys.join("/"), binding.help)
+            (keys.join("/"), binding.help, can(binding.action))
         })
+        .collect();
+    let mut shown: Vec<&'static str> = Vec::new();
+    listed
+        .iter()
+        .filter(|(_, help, live)| {
+            let twin = listed.iter().any(|(_, other, on)| other == help && *on);
+            let keep = *live || (!twin && !shown.contains(help));
+            if keep && !*live {
+                shown.push(help);
+            }
+            keep
+        })
+        .cloned()
         .collect()
 }

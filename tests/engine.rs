@@ -4,8 +4,8 @@ use std::io;
 use std::time::Instant;
 
 use common::{
-    account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press, runs,
-    screen, secs, serve,
+    account, boot, boot_serving, contains, following_nobody, help_entry, key, open_browser, page,
+    press, runs, screen, secs, serve,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
@@ -109,23 +109,29 @@ fn g_twice_goes_to_the_top_and_g_then_an_unbound_key_does_nothing() {
 }
 
 #[test]
-fn help_lists_exactly_the_keys_that_work_now() {
+fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     let at = Instant::now();
     let mut engine = boot_serving(at, |log| match log {
         Log::Following => following_nobody(),
         other => page(other),
     });
+    for dimmed in [
+        "move down",
+        "expand the selected commit",
+        "open the thread",
+        "vote in the poll",
+    ] {
+        assert_eq!(
+            help_entry(&mut engine, at, dimmed),
+            Some(false),
+            "{dimmed} live for an empty log"
+        );
+    }
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");
     for shown in ["following", "refresh this log", "quit", "these keys"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
-    }
-    for hidden in ["move down", "expand the selected commit", "open the thread"] {
-        assert!(
-            !contains(&rows, hidden),
-            "{hidden} shown for an empty log: {rows:#?}"
-        );
     }
     assert!(contains(&rows, "? close"), "{rows:#?}");
 
@@ -135,16 +141,19 @@ fn help_lists_exactly_the_keys_that_work_now() {
     let rows = screen(&mut engine, 80, 30, at);
     assert!(!contains(&rows, " keys "), "{rows:#?}");
 
-    press(&mut engine, "2?", at);
-    let rows = screen(&mut engine, 80, 30, at);
-    assert!(contains(&rows, "move down"), "{rows:#?}");
-    assert!(
-        !contains(&rows, "expand the selected commit"),
-        "the first commit is short: {rows:#?}"
+    press(&mut engine, "2", at);
+    assert_eq!(help_entry(&mut engine, at, "move down"), Some(true));
+    assert_eq!(
+        help_entry(&mut engine, at, "expand the selected commit"),
+        Some(false),
+        "the first commit is short"
     );
-    press(&mut engine, "?jjjj?", at);
-    let rows = screen(&mut engine, 80, 30, at);
-    assert!(contains(&rows, "expand the selected commit"), "{rows:#?}");
+    press(&mut engine, "jjjj", at);
+    assert_eq!(
+        help_entry(&mut engine, at, "expand the selected commit"),
+        Some(true)
+    );
+    press(&mut engine, "?", at);
     engine.update(
         Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         at,

@@ -3,8 +3,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    account, answer, boot, boot_as, buffer, commit, contains, page, press, profile, runs, screen,
-    secs, tap,
+    account, answer, boot, boot_as, buffer, commit, contains, help_entry, page, press, profile,
+    runs, screen, secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
@@ -346,18 +346,20 @@ fn star_and_follow_are_not_offered_on_your_own_commit() {
     assert!(press(&mut engine, "sf", at).is_empty());
     let rows = screen(&mut engine, 100, 30, at);
     assert_eq!(rows[29], " j/k move  enter open  c commit  ? help  Q quit");
-    press(&mut engine, "?", at);
-    let rows = screen(&mut engine, 100, 40, at);
-    assert!(!contains(&rows, "star or unstar"), "{rows:#?}");
-    assert!(!contains(&rows, "follow or unfollow"), "{rows:#?}");
+    assert_eq!(
+        help_entry(&mut engine, at, "s  star or unstar"),
+        Some(false)
+    );
+    assert_eq!(
+        help_entry(&mut engine, at, "f  follow or unfollow"),
+        Some(false)
+    );
 
     let mut engine = on_grace(at);
-    press(&mut engine, "?", at);
-    let rows = screen(&mut engine, 100, 40, at);
-    assert!(contains(&rows, "s  star or unstar"), "{rows:#?}");
-    assert!(
-        contains(&rows, "f  follow or unfollow the author"),
-        "{rows:#?}"
+    assert_eq!(help_entry(&mut engine, at, "s  star or unstar"), Some(true));
+    assert_eq!(
+        help_entry(&mut engine, at, "f  follow or unfollow"),
+        Some(true)
     );
 }
 
@@ -440,25 +442,18 @@ fn gave(remaining: u32) -> Reply {
     }
 }
 
-fn helps(engine: &mut Engine, at: Instant) -> Vec<String> {
-    press(engine, "?", at);
-    let rows = screen(engine, 100, 40, at);
-    press(engine, "?", at);
-    rows
-}
-
 #[test]
 fn a_pastel_is_offered_only_in_pasteis_mode_and_never_on_your_own_commit() {
     let at = Instant::now();
     let mut engine = on_grace(at);
     assert!(press(&mut engine, "P", at).is_empty());
-    assert!(!contains(&helps(&mut engine, at), "give a pastel"));
+    assert_eq!(help_entry(&mut engine, at, "P  give a pastel"), Some(false));
 
     let mut engine = giving_pasteis(at);
-    assert!(contains(&helps(&mut engine, at), "P  give a pastel"));
+    assert_eq!(help_entry(&mut engine, at, "P  give a pastel"), Some(true));
     press(&mut engine, "gg", at);
     assert!(press(&mut engine, "P", at).is_empty(), "row 0 is ada's own");
-    assert!(!contains(&helps(&mut engine, at), "give a pastel"));
+    assert_eq!(help_entry(&mut engine, at, "P  give a pastel"), Some(false));
 }
 
 #[test]
@@ -550,10 +545,10 @@ fn delete_is_offered_only_on_your_own_commit() {
         footer(&mut engine, at),
         " j/k move  enter open  s star  c commit  ? help  Q quit"
     );
-    assert!(!contains(&helps(&mut engine, at), "delete"));
+    assert_eq!(help_entry(&mut engine, at, "D  delete"), Some(false));
 
     let mut engine = boot(at);
-    assert!(contains(&helps(&mut engine, at), "D  delete"));
+    assert_eq!(help_entry(&mut engine, at, "D  delete"), Some(true));
     press(&mut engine, "D", at);
     assert_eq!(
         footer(&mut engine, at),
@@ -685,11 +680,10 @@ fn report_is_offered_only_on_a_commit_that_is_not_yours() {
         footer(&mut engine, at),
         " j/k move  enter open  c commit  ? help  Q quit"
     );
-    let rows = helps(&mut engine, at);
-    assert!(!contains(&rows, "report"), "{rows:#?}");
+    assert_eq!(help_entry(&mut engine, at, "!  report"), Some(false));
 
     let mut engine = on_grace(at);
-    assert!(contains(&helps(&mut engine, at), "!  report"));
+    assert_eq!(help_entry(&mut engine, at, "!  report"), Some(true));
     press(&mut engine, "!", at);
     assert_eq!(footer(&mut engine, at), PICK_HINT);
 }
