@@ -1,6 +1,7 @@
 //! The web's dark theme tokens from `resources/css/app.css`.
 
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
 
 use crate::code::Hl;
 use crate::model::Lane;
@@ -107,6 +108,30 @@ pub fn tint(lane: Lane) -> Color {
             .expect("a mix of bytes fits")
     };
     Color::Rgb(mix(r, under_r), mix(g, under_g), mix(b, under_b))
+}
+
+/// The brand mark, two slashes with the second in the accent, as on the web's logo.
+pub fn mark() -> [Span<'static>; 2] {
+    let ink = Style::new().fg(FOREGROUND).add_modifier(Modifier::BOLD);
+    [Span::styled("/", ink), Span::styled("/", ink.fg(ACCENT))]
+}
+
+/// The brand wordmark, /dev/null with its second slash in the accent.
+pub fn wordmark() -> [Span<'static>; 3] {
+    let ink = Style::new().fg(FOREGROUND).add_modifier(Modifier::BOLD);
+    [
+        Span::styled("/dev", ink),
+        Span::styled("/", ink.fg(ACCENT)),
+        Span::styled("null", ink),
+    ]
+}
+
+/// The mark beside the wordmark, as the web's header shows them.
+pub fn logo() -> Vec<Span<'static>> {
+    let mut spans = mark().to_vec();
+    spans.push(Span::raw(" "));
+    spans.extend(wordmark());
+    spans
 }
 
 pub fn muted() -> Style {

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
@@ -107,13 +107,7 @@ pub fn draw(frame: &mut Frame, step: &Step, device_name: &str, keys: &str) {
         Block::new().style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND)),
         area,
     );
-    let mut lines = vec![
-        Line::styled(
-            "/dev/null",
-            Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
-        ),
-        Line::default(),
-    ];
+    let mut lines = vec![Line::from(theme::logo()), Line::default()];
     match step {
         Step::Ready(notice) => {
             lines.push(Line::raw("Sign in to read your logs."));

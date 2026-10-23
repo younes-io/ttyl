@@ -42,11 +42,11 @@ fn glyph(ch: char) -> [&'static str; HEIGHT] {
     }
 }
 
-/// The wordmark as rows of pixels, the slashes in the accent and the letters in ink.
+/// The wordmark as rows of pixels, in ink with its second slash in the accent, as on the web.
 fn pixels() -> Vec<Vec<Option<Color>>> {
     let mut rows = vec![Vec::new(); HEIGHT];
     for (at, ch) in WORD.chars().enumerate() {
-        let color = if ch == '/' {
+        let color = if at == WORD.rfind('/').expect("the wordmark has a slash") {
             theme::ACCENT
         } else {
             theme::FOREGROUND

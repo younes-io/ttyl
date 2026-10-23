@@ -64,16 +64,24 @@ struct Anchor {
     line: usize,
 }
 
-/// What the top bar gives up, in order, when the row is too short.
+/// What the top bar gives up, in order, when the row is too short. The wordmark goes first and
+/// the mark last, so the brand stays on screen as long as it can.
 #[derive(Clone, Copy, PartialEq)]
 enum Cut {
-    Brand,
+    Wordmark,
     Handle,
     Number,
     Slugs,
+    Mark,
 }
 
-const CUTS: [Cut; 4] = [Cut::Brand, Cut::Handle, Cut::Number, Cut::Slugs];
+const CUTS: [Cut; 5] = [
+    Cut::Wordmark,
+    Cut::Handle,
+    Cut::Number,
+    Cut::Slugs,
+    Cut::Mark,
+];
 
 impl Default for LogScreen {
     fn default() -> Self {
@@ -228,17 +236,22 @@ impl LogScreen {
     ) -> (Line<'static>, Line<'static>) {
         let kept = |cut| !cuts.contains(&cut);
         let mut left = Vec::new();
-        if kept(Cut::Brand) {
-            left.push(Span::styled(
-                " /dev/null ",
-                Style::new().fg(theme::BRAND).add_modifier(Modifier::BOLD),
-            ));
+        if kept(Cut::Mark) {
+            left.push(Span::raw(" "));
+            left.extend(theme::mark());
+        }
+        if kept(Cut::Wordmark) {
+            left.push(Span::raw(" "));
+            left.extend(theme::wordmark());
+        }
+        if kept(Cut::Mark) {
+            left.push(Span::raw(" "));
         }
         let bold = Style::new()
             .fg(theme::FOREGROUND)
             .add_modifier(Modifier::BOLD);
         let lead = |index: usize| {
-            if index == 0 && !kept(Cut::Brand) {
+            if index == 0 && !kept(Cut::Mark) {
                 " "
             } else {
                 "  "
