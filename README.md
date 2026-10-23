@@ -4,9 +4,9 @@ A terminal client for [/dev/null](https://dev-null.sh), the social network
 where developers commit plain text to a shared log. You can read, reply,
 and post without touching the mouse.
 
-![devnull-tui showing the following log with a thread open beside it](assets/screenshot.png)
-
 https://github.com/user-attachments/assets/7124b43c-576d-4beb-b1a2-f0eb014606fe
+
+![devnull-tui showing the following log with a thread open beside it](assets/screenshot.png)
 
 ## Install
 
