@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use common::openssh_accepts;
 use ttyl::api::{Call, Client, Error, Reply};
+use ttyl::attach::{self, Attachment, Poll};
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{CommitId, Filter, Log, NotificationId};
@@ -312,6 +313,7 @@ fn a_422_names_the_first_field_message_without_the_count() {
     let post = Call::Post {
         target: Target::New,
         body: "x".to_owned(),
+        attachment: Attachment::None,
     };
     let error = Client::new(base, DeviceKey::generate().unwrap())
         .call(&post)
@@ -322,6 +324,32 @@ fn a_422_names_the_first_field_message_without_the_count() {
         "The body field must not be greater than 4000 characters."
     );
     assert!(!error.may_have_landed());
+}
+
+#[test]
+fn a_poll_goes_with_the_body_and_lasts_in_minutes() {
+    let (base, server) = serve(
+        "422 Unprocessable Content",
+        r#"{"message":"no","errors":{"body":["no"]}}"#,
+    );
+    let post = Call::Post {
+        target: Target::New,
+        body: "which editor?".to_owned(),
+        attachment: Attachment::Poll(Poll {
+            options: vec!["vim".to_owned(), "emacs".to_owned()],
+            duration: attach::Duration::ThreeDays,
+        }),
+    };
+    Client::new(base, DeviceKey::generate().unwrap())
+        .call(&post)
+        .unwrap_err();
+    let seen = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&seen.body).unwrap();
+    assert_eq!(sent["body"], "which editor?");
+    assert_eq!(
+        sent["poll"],
+        serde_json::json!({"options": ["vim", "emacs"], "duration": 4320})
+    );
 }
 
 #[test]
@@ -336,6 +364,7 @@ fn a_dropped_connection_may_have_landed_and_a_refused_one_did_not() {
     let post = Call::Post {
         target: Target::New,
         body: "x".to_owned(),
+        attachment: Attachment::None,
     };
     let dropped = Client::new(base, DeviceKey::generate().unwrap())
         .call(&post)

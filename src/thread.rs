@@ -235,6 +235,7 @@ impl ThreadScreen {
             | Action::Compose
             | Action::Send
             | Action::Editor
+            | Action::Poll
             | Action::Site
             | Action::Link(_)
             | Action::Inbox

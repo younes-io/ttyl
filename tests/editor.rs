@@ -3,9 +3,9 @@ mod common;
 use std::time::Instant;
 
 use common::{boot, contains, press, screen};
-use ttyl::draft::{Target, Write};
-use ttyl::engine::{Effect, Engine, Event};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ttyl::draft::{Draft, Target, Write};
+use ttyl::engine::{Effect, Engine, Event};
 
 const HEIGHT: u16 = 30;
 const FAILED: &str = "editor exited with an error. draft unchanged.";
@@ -46,7 +46,7 @@ fn the_edited_text_comes_back_and_is_saved_without_the_final_newline() {
         effects,
         [Effect::Draft(Write::Save(
             Target::New,
-            "first\nsecond".to_owned()
+            Draft::text("first\nsecond")
         ))]
     );
     let rows = screen(&mut engine, 100, HEIGHT, at);

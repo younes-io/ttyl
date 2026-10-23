@@ -13,7 +13,6 @@ use ratatui::widgets::{Block, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
-use crate::body;
 use crate::clock::{
     FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer, Timers,
 };
@@ -315,6 +314,10 @@ impl Session {
     }
 
     fn can(&self, action: Action) -> bool {
+        if action == Action::Poll {
+            return self.overlay.is_none()
+                && self.composer.as_ref().is_some_and(Composer::can_poll);
+        }
         self.overlay.is_some() || self.composer.is_some() || self.screen_allows(action)
     }
 
@@ -486,6 +489,7 @@ fn post(sched: &mut Scheduler, composer: &Composer) {
     let call = Call::Post {
         target: composer.target().clone(),
         body: composer.text().to_owned(),
+        attachment: composer.attachment(),
     };
     sched.send(call, Priority::Now);
 }
@@ -580,7 +584,7 @@ fn followed(username: &str, on: bool) -> String {
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
-        (_, Action::Send | Action::Editor) if sending => false,
+        (_, Action::Send | Action::Editor | Action::Poll) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -626,7 +630,7 @@ impl Engine {
     }
 
     pub fn draft(&self, target: &Target) -> Option<&str> {
-        self.drafts.get(target)
+        self.drafts.get(target).map(|draft| draft.text.as_str())
     }
 
     pub fn log(&self) -> Option<&LogScreen> {
@@ -1000,7 +1004,7 @@ impl Engine {
             return Vec::new();
         }
         self.drafts
-            .write(composer.target(), composer.text())
+            .write(composer.target(), &composer.draft())
             .map(Effect::Draft)
             .into_iter()
             .collect()
@@ -1025,7 +1029,7 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Send) => {
                 if let Some(composer) = &mut session.composer {
-                    match body::refusal(composer.text()) {
+                    match composer.refusal() {
                         Some(refusal) => composer.note(refusal, theme::muted()),
                         None if secret::detected(composer.text()) => composer.ask(Prompt::Secret),
                         None => post(&mut self.sched, composer),
@@ -1037,6 +1041,7 @@ impl Engine {
                     return vec![Effect::Edit(composer.text().to_owned())];
                 }
             }
+            (Phase::Ready(_), Action::Poll) => return self.edit(Composer::toggle_poll),
             (Phase::Ready(session), Action::Confirm) => {
                 if let Some(composer) = &mut session.composer {
                     composer.answered();

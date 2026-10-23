@@ -1,4 +1,5 @@
 pub mod api;
+pub mod attach;
 mod bidi;
 pub mod body;
 pub mod clock;

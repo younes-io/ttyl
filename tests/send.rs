@@ -5,6 +5,7 @@ use std::time::Instant;
 use common::{answer, boot, buffer, commit, contains, press, runs, screen, secs, tap};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
+use ttyl::attach::Attachment;
 use ttyl::draft::{Target, Write};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{CommitId, Focus, Segment, Status};
@@ -108,7 +109,8 @@ fn ctrl_s_sends_the_draft_once_and_locks_the_panel_until_it_lands() {
         call,
         Call::Post {
             target: Target::New,
-            body: "hello".to_owned()
+            body: "hello".to_owned(),
+            attachment: Attachment::None,
         }
     );
     assert!(
@@ -230,7 +232,8 @@ fn a_reply_counts_on_its_parent_and_joins_the_end_of_its_loaded_replies() {
         call,
         Call::Post {
             target: Target::Reply(grace()),
-            body: "my reply".to_owned()
+            body: "my reply".to_owned(),
+            attachment: Attachment::None,
         }
     );
     reply(
@@ -287,7 +290,8 @@ fn a_quote_goes_on_top_of_latest() {
         call,
         Call::Post {
             target: Target::Quote(grace()),
-            body: "quoted you".to_owned()
+            body: "quoted you".to_owned(),
+            attachment: Attachment::None,
         }
     );
     reply(

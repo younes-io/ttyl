@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use common::{account, boot, contains, page, press, screen, sign_in, tap};
-use ttyl::draft::{Drafts, Target, Write};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ttyl::draft::{Draft, Drafts, Target, Write};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::keys;
 use ttyl::model::CommitId;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
 const WIDTHS: [u16; 2] = [100, 44];
@@ -61,7 +61,7 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
         let effects = press(&mut engine, "x", at);
         assert_eq!(
             saved(&effects),
-            [&Write::Save(target.clone(), "x".to_owned())],
+            [&Write::Save(target.clone(), Draft::text("x"))],
             "{key}"
         );
         for width in WIDTHS {
@@ -78,10 +78,16 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
                 grace_row.is_some_and(|row| row < panel),
                 "{key} at {width} keeps the target above the panel: {rows:#?}"
             );
+            let roomy = width > 52;
+            let poll = if target == Target::New && roomy {
+                "  ctrl-p poll"
+            } else {
+                ""
+            };
             assert_eq!(
                 rows[usize::from(HEIGHT) - 1],
-                " ctrl-s commit  ctrl-e editor  esc close",
-                "{rows:#?}"
+                format!(" ctrl-s commit  ctrl-e editor{poll}  esc close"),
+                "only a new commit can carry a poll, and a narrow row drops its hint: {rows:#?}"
             );
         }
         assert_eq!(
@@ -103,7 +109,7 @@ fn r_and_q_open_on_the_selected_commit_in_a_thread() {
     let effects = press(&mut engine, "y", at);
     assert_eq!(
         saved(&effects),
-        [&Write::Save(Target::Reply(selected), "y".to_owned())]
+        [&Write::Save(Target::Reply(selected), Draft::text("y"))]
     );
     let rows = screen(&mut engine, 100, HEIGHT, at);
     title_row(&rows, "Reply to @grace");
@@ -137,7 +143,10 @@ fn every_letter_types_itself_and_each_edit_saves_the_draft_once() {
         let effects = press(&mut engine, &ch.to_string(), at);
         assert_eq!(
             effects,
-            [Effect::Draft(Write::Save(Target::New, text.clone()))]
+            [Effect::Draft(Write::Save(
+                Target::New,
+                Draft::text(&text.clone())
+            ))]
         );
     }
     assert!(engine.thread().is_none() && engine.log().unwrap().selected() == 2);
@@ -149,12 +158,18 @@ fn every_letter_types_itself_and_each_edit_saves_the_draft_once() {
     }
     assert_eq!(
         tap(&mut engine, KeyCode::Enter, at),
-        [Effect::Draft(Write::Save(Target::New, format!("{text}\n")))]
+        [Effect::Draft(Write::Save(
+            Target::New,
+            Draft::text(&format!("{text}\n"))
+        ))]
     );
     press(&mut engine, "two words", at);
     assert_eq!(
         ctrl(&mut engine, 'u', at),
-        [Effect::Draft(Write::Save(Target::New, format!("{text}\n")))],
+        [Effect::Draft(Write::Save(
+            Target::New,
+            Draft::text(&format!("{text}\n"))
+        ))],
         "ctrl-u deletes to the start of the line, not past it"
     );
     assert!(ctrl(&mut engine, 'u', at).is_empty());
@@ -215,7 +230,7 @@ fn esc_keeps_the_draft_and_reopening_restores_it_with_the_stash_line() {
 #[test]
 fn a_draft_saved_on_disk_comes_back_on_its_target() {
     let at = Instant::now();
-    let saved = HashMap::from([(Target::Quote(grace()), "from last time".to_owned())]);
+    let saved = HashMap::from([(Target::Quote(grace()), Draft::text("from last time"))]);
     let engine = Engine::new("ttyl".to_owned(), at).with_drafts(Drafts::new(saved));
     let mut engine = sign_in(engine, at, account(3), page);
     press(&mut engine, "2jjq", at);
@@ -232,7 +247,7 @@ fn ctrl_c_quits_from_the_composer_and_q_types() {
     press(&mut engine, "c", at);
     assert_eq!(
         saved(&press(&mut engine, "Q", at)),
-        [&Write::Save(Target::New, "Q".to_owned())]
+        [&Write::Save(Target::New, Draft::text("Q"))]
     );
     assert_eq!(ctrl(&mut engine, 'c', at), [Effect::Quit]);
 }
@@ -246,7 +261,10 @@ fn a_paste_arrives_whole_and_the_panel_grows_then_scrolls_to_the_cursor() {
     let effects = engine.update(Event::Paste(pasted.join("\r\n")), at);
     assert_eq!(
         effects,
-        [Effect::Draft(Write::Save(Target::New, pasted.join("\n")))]
+        [Effect::Draft(Write::Save(
+            Target::New,
+            Draft::text(&pasted.join("\n"))
+        ))]
     );
     for width in WIDTHS {
         let rows = screen(&mut engine, width, HEIGHT, at);

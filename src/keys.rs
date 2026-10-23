@@ -31,6 +31,7 @@ pub enum Action {
     Compose,
     Send,
     Editor,
+    Poll,
     Site,
     Saver,
     Link(Link),
@@ -756,6 +757,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Editor,
         hint: Some("ctrl-e editor"),
         help: "write it in $VISUAL or $EDITOR",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[&[Key::ctrl('p')]],
+        action: Action::Poll,
+        hint: Some("ctrl-p poll"),
+        help: "add a poll, or take it off",
     },
     Binding {
         scope: Scope::Composer,

@@ -3,12 +3,12 @@ mod common;
 use std::time::Instant;
 
 use common::{answer, boot, contains, press, runs, screen, secs, tap};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error};
 use ttyl::draft::Target;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::CommitId;
 use ttyl::sched::Ticket;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
 const HEIGHT: u16 = 30;
@@ -262,7 +262,7 @@ fn esc_goes_back_to_the_draft_and_a_paste_waits_until_then() {
     assert!(!contains(&rows, "Your first commit"), "{rows:#?}");
     assert_eq!(
         rows[usize::from(HEIGHT) - 1],
-        " ctrl-s commit  ctrl-e editor  esc close"
+        " ctrl-s commit  ctrl-e editor  ctrl-p poll  esc close"
     );
     press(&mut engine, "!", at);
     assert_eq!(engine.draft(&Target::New), Some("hello!"));

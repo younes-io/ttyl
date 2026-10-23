@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use ureq::Agent;
 use ureq::http::Request;
 
+use crate::attach::Attachment;
 use crate::device::{DeviceKey, Nonce};
 use crate::draft::Target;
 use crate::model::{
@@ -98,6 +99,7 @@ pub enum Call {
     Post {
         target: Target,
         body: String,
+        attachment: Attachment,
     },
     Notifications {
         filter: Filter,
@@ -268,7 +270,9 @@ impl Client {
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
-            Call::User(username) => self.user(username).map(|profile| Reply::User(Box::new(profile))),
+            Call::User(username) => self
+                .user(username)
+                .map(|profile| Reply::User(Box::new(profile))),
             Call::Commits {
                 username,
                 replies,
@@ -302,8 +306,12 @@ impl Client {
                     serde_json::json!({ "reason": reason.slug(), "details": details }).to_string();
                 self.send("POST", &path, body).map(|_| Reply::Done)
             }
-            Call::Post { target, body } => self
-                .post(target, body)
+            Call::Post {
+                target,
+                body,
+                attachment,
+            } => self
+                .post(target, body, attachment)
                 .map(|focus| Reply::Commit(Box::new(focus))),
             Call::Notifications { filter, cursor } => self
                 .notifications(*filter, cursor.as_deref())
@@ -314,7 +322,7 @@ impl Client {
         }
     }
 
-    fn post(&self, target: &Target, body: &str) -> Result<Focus, Error> {
+    fn post(&self, target: &Target, body: &str, attachment: &Attachment) -> Result<Focus, Error> {
         #[derive(Deserialize)]
         struct Wire {
             data: Focus,
@@ -325,10 +333,13 @@ impl Client {
             Target::Reply(id) => (Some(&id.0), None),
             Target::Quote(id) => (None, Some(&id.0)),
         };
-        let body =
-            serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted })
-                .to_string();
-        let (status, text) = self.send("POST", "/api/v1/commits", body)?;
+        let mut json =
+            serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted });
+        if let Attachment::Poll(poll) = attachment {
+            json["poll"] =
+                serde_json::json!({ "options": poll.options, "duration": poll.duration.minutes() });
+        }
+        let (status, text) = self.send("POST", "/api/v1/commits", json.to_string())?;
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 

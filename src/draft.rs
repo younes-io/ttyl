@@ -5,7 +5,11 @@ use std::io::{self, Write as _};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
+use crate::attach::Attachment;
 use crate::model::CommitId;
+
+/// The attachment sits beside the text in a file of its own, so a text-only draft stays plain text.
+const ATTACHMENT: &str = ".attach";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -43,36 +47,55 @@ impl Target {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Draft {
+    pub text: String,
+    pub attachment: Attachment,
+}
+
+impl Draft {
+    pub fn text(text: &str) -> Self {
+        Draft {
+            text: text.to_owned(),
+            attachment: Attachment::None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.trim().is_empty() && self.attachment == Attachment::None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
-    Save(Target, String),
+    Save(Target, Draft),
     Drop(Target),
 }
 
 #[derive(Debug, Default)]
 pub struct Drafts {
-    texts: HashMap<Target, String>,
+    texts: HashMap<Target, Draft>,
 }
 
 impl Drafts {
-    pub fn new(texts: HashMap<Target, String>) -> Self {
+    pub fn new(texts: HashMap<Target, Draft>) -> Self {
         Drafts { texts }
     }
 
-    pub fn get(&self, target: &Target) -> Option<&str> {
-        self.texts.get(target).map(String::as_str)
+    pub fn get(&self, target: &Target) -> Option<&Draft> {
+        self.texts.get(target)
     }
 
-    pub fn write(&mut self, target: &Target, text: &str) -> Option<Write> {
-        if text.trim().is_empty() {
+    pub fn write(&mut self, target: &Target, draft: &Draft) -> Option<Write> {
+        if draft.is_empty() {
             self.texts
                 .remove(target)
                 .map(|_| Write::Drop(target.clone()))
-        } else if self.get(target) == Some(text) {
+        } else if self.get(target) == Some(draft) {
             None
         } else {
-            self.texts.insert(target.clone(), text.to_owned());
-            Some(Write::Save(target.clone(), text.to_owned()))
+            self.texts.insert(target.clone(), draft.clone());
+            Some(Write::Save(target.clone(), draft.clone()))
         }
     }
 
@@ -90,16 +113,22 @@ pub fn dir() -> Option<PathBuf> {
         .map(|state| state.join("ttyl/drafts"))
 }
 
-pub fn load(dir: &Path) -> HashMap<Target, String> {
+pub fn load(dir: &Path) -> HashMap<Target, Draft> {
     let Ok(entries) = fs::read_dir(dir) else {
         return HashMap::new();
     };
     entries
         .flatten()
         .filter_map(|entry| {
-            let target = Target::from_file_name(entry.file_name().to_str()?)?;
+            let name = entry.file_name().into_string().ok()?;
+            let target = Target::from_file_name(&name)?;
             let text = fs::read_to_string(entry.path()).ok()?;
-            (!text.trim().is_empty()).then_some((target, text))
+            let attachment = fs::read_to_string(dir.join(name + ATTACHMENT))
+                .ok()
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default();
+            let draft = Draft { text, attachment };
+            (!draft.is_empty()).then_some((target, draft))
         })
         .collect()
 }
@@ -117,22 +146,32 @@ fn replace_private(dir: &Path, name: &str, text: &str) -> io::Result<()> {
     fs::rename(&temp, dir.join(name))
 }
 
+fn remove(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
 pub fn store(dir: &Path, write: &Write) -> io::Result<()> {
+    let (Write::Save(target, _) | Write::Drop(target)) = write;
+    let Some(name) = target.file_name() else {
+        return Ok(());
+    };
+    let attachment = format!("{name}{ATTACHMENT}");
     match write {
-        Write::Save(target, text) => {
-            let Some(name) = target.file_name() else {
-                return Ok(());
-            };
-            replace_private(dir, &name, text)
-        }
-        Write::Drop(target) => {
-            let Some(name) = target.file_name() else {
-                return Ok(());
-            };
-            match fs::remove_file(dir.join(name)) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-                _ => Ok(()),
+        Write::Save(_, draft) => {
+            if draft.attachment == Attachment::None {
+                remove(&dir.join(&attachment))?;
+            } else {
+                let json = serde_json::to_string(&draft.attachment).map_err(io::Error::other)?;
+                replace_private(dir, &attachment, &json)?;
             }
+            replace_private(dir, &name, &draft.text)
+        }
+        Write::Drop(_) => {
+            remove(&dir.join(attachment))?;
+            remove(&dir.join(name))
         }
     }
 }

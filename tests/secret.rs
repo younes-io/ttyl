@@ -3,10 +3,11 @@ mod common;
 use std::time::Instant;
 
 use common::{boot, contains, press, screen, tap};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::Call;
+use ttyl::attach::Attachment;
 use ttyl::draft::Target;
 use ttyl::engine::{Effect, Engine, Event};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const BODY: &str = "deploy with ghp_aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY3zA5";
 const ASK: &str = "possible secret detected. commit anyway? [y/N]";
@@ -61,7 +62,8 @@ fn only_y_sends() {
         *call,
         Call::Post {
             target: Target::New,
-            body: BODY.to_owned()
+            body: BODY.to_owned(),
+            attachment: Attachment::None,
         }
     );
 }
@@ -93,7 +95,7 @@ fn any_other_key_goes_back_to_editing_with_nothing_sent_or_typed() {
         );
         assert_eq!(
             rows[usize::from(HEIGHT) - 1],
-            " ctrl-s commit  ctrl-e editor  esc close"
+            " ctrl-s commit  ctrl-e editor  ctrl-p poll  esc close"
         );
         press(&mut engine, "!", at);
         assert_eq!(

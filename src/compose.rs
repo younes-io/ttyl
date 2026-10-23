@@ -6,10 +6,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::attach::{Attachment, Duration, MAX_OPTIONS, MIN_OPTIONS, OPTION_LIMIT, Poll};
 use crate::body;
-use crate::draft::Target;
+use crate::draft::{Draft, Target};
 use crate::emoji::{self, Emoji};
 use crate::fatal;
 use crate::feed;
@@ -34,6 +35,10 @@ const PICKS_SHOWN: usize = 8;
 const PICK_HINT: &str = " tab insert ";
 /// The border, a space and the two cells of the emoji come before a name in the picker.
 const PICK_INDENT: usize = 4;
+const OPTION_MARK: &str = "○ ";
+/// An option shows how much room it has left once it gets this close to the limit.
+const OPTION_COUNT_FROM: usize = 10;
+const POLL_REMOVED: &str = "poll removed · ctrl-p brings it back";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
@@ -70,12 +75,73 @@ impl Picker {
     }
 }
 
+/// Where typing goes: the body, or a row of the poll under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Body,
+    Option(usize),
+    Duration,
+}
+
+#[derive(Clone)]
+struct PollForm {
+    options: Vec<Buffer>,
+    duration: Duration,
+}
+
+impl PollForm {
+    fn blank() -> Self {
+        PollForm {
+            options: vec![Buffer::default(); MIN_OPTIONS],
+            duration: Duration::default(),
+        }
+    }
+
+    fn from(poll: &Poll) -> Self {
+        let mut options: Vec<Buffer> = (poll.options.iter())
+            .take(MAX_OPTIONS)
+            .map(|option| Buffer::new(&one_line(option, OPTION_LIMIT)))
+            .collect();
+        options.resize(options.len().max(MIN_OPTIONS), Buffer::default());
+        PollForm {
+            options,
+            duration: poll.duration,
+        }
+    }
+
+    fn poll(&self) -> Poll {
+        Poll {
+            options: (self.options.iter())
+                .map(|option| option.text().to_owned())
+                .collect(),
+            duration: self.duration,
+        }
+    }
+
+    /// The options, then the row that says how long it runs.
+    fn rows(&self) -> usize {
+        self.options.len() + 1
+    }
+}
+
+/// `text` on one line, cut to `limit` characters, the way an option takes typing and pastes.
+fn one_line(text: &str, limit: usize) -> String {
+    text.chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .take(limit)
+        .collect()
+}
+
 pub struct Composer {
     picker: Option<Picker>,
     dismissed: Option<usize>,
     target: Target,
     title: String,
     text: Buffer,
+    poll: Option<PollForm>,
+    /// The poll last taken off, so taking it off is never a loss.
+    stash: Option<PollForm>,
+    focus: Focus,
     restored: bool,
     note: Option<Note>,
     prompt: Option<Prompt>,
@@ -84,18 +150,25 @@ pub struct Composer {
 }
 
 impl Composer {
-    pub fn open(target: Target, handle: Option<&str>, draft: Option<&str>) -> Self {
+    pub fn open(target: Target, handle: Option<&str>, draft: Option<&Draft>) -> Self {
         let title = match (&target, handle) {
             (Target::Reply(_), Some(handle)) => format!("Reply to @{handle}"),
             (Target::Quote(_), Some(handle)) => format!("Quote @{handle}"),
             _ => "commit".to_owned(),
+        };
+        let poll = match draft.map(|draft| &draft.attachment) {
+            Some(Attachment::Poll(poll)) if target == Target::New => Some(PollForm::from(poll)),
+            _ => None,
         };
         Composer {
             picker: None,
             dismissed: None,
             target,
             title,
-            text: Buffer::new(draft.unwrap_or("")),
+            text: Buffer::new(draft.map_or("", |draft| draft.text.as_str())),
+            poll,
+            stash: None,
+            focus: Focus::Body,
             restored: draft.is_some(),
             note: None,
             prompt: None,
@@ -112,10 +185,70 @@ impl Composer {
         self.text.text()
     }
 
+    /// What to keep if the composer closes now, empty poll rows and all.
+    pub fn draft(&self) -> Draft {
+        Draft {
+            text: self.text.text().to_owned(),
+            attachment: self
+                .poll
+                .as_ref()
+                .map_or(Attachment::None, |form| Attachment::Poll(form.poll())),
+        }
+    }
+
+    /// What goes to the server with the body.
+    pub fn attachment(&self) -> Attachment {
+        match &self.poll {
+            Some(form) => Attachment::Poll(form.poll().sent()),
+            None => Attachment::None,
+        }
+    }
+
+    /// Why the server would turn this commit down, if it would.
+    pub fn refusal(&self) -> Option<String> {
+        body::refusal(self.text.text())
+            .or_else(|| self.poll.as_ref().and_then(|form| form.poll().refusal()))
+    }
+
+    /// Only a new commit can carry a poll, and ctrl-p means the emoji picker's up while it's open.
+    pub fn can_poll(&self) -> bool {
+        self.target == Target::New && self.picker.is_none()
+    }
+
+    /// Puts a poll under the body, the one taken off last if there is one, or takes it off.
+    pub fn toggle_poll(&mut self) -> bool {
+        let before = self.draft();
+        match self.poll.take() {
+            Some(form) => {
+                self.stash = Some(form);
+                self.focus = Focus::Body;
+                self.edited(before);
+                self.note(POLL_REMOVED, theme::muted());
+            }
+            None => {
+                self.poll = Some(self.stash.take().unwrap_or_else(PollForm::blank));
+                self.focus = Focus::Option(0);
+                self.edited(before);
+            }
+        }
+        true
+    }
+
     pub fn typed(&mut self, event: KeyEvent) -> bool {
-        let before = self.text.text().to_owned();
+        let before = self.draft();
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let alt = event.modifiers.contains(KeyModifiers::ALT);
+        match self.focus {
+            Focus::Body => {}
+            Focus::Option(at) => {
+                self.typed_option(at, event.code, ctrl, alt);
+                return self.edited(before);
+            }
+            Focus::Duration => {
+                self.typed_duration(event.code);
+                return self.edited(before);
+            }
+        }
         if let Some(picker) = &mut self.picker {
             match event.code {
                 KeyCode::Up => return picker.step(false),
@@ -132,7 +265,13 @@ impl Composer {
             }
         }
         let text = &mut self.text;
+        let last_row = text.row_and_column(self.width).0 + 1 >= text.rows(self.width).len();
         match event.code {
+            KeyCode::Down | KeyCode::Tab
+                if self.poll.is_some() && (last_row || event.code == KeyCode::Tab) =>
+            {
+                self.focus = Focus::Option(0);
+            }
             KeyCode::Char('w') if ctrl => text.delete_word(),
             KeyCode::Char('u') if ctrl => text.delete_line(),
             KeyCode::Char(ch) if !ctrl && !alt => text.insert(ch.encode_utf8(&mut [0; 4])),
@@ -152,6 +291,60 @@ impl Composer {
         }
         self.pick();
         self.edited(before)
+    }
+
+    fn typed_option(&mut self, at: usize, code: KeyCode, ctrl: bool, alt: bool) {
+        let Some(form) = &mut self.poll else {
+            return;
+        };
+        let count = form.options.len();
+        let option = &mut form.options[at];
+        let room = OPTION_LIMIT.saturating_sub(option.text().chars().count());
+        match code {
+            KeyCode::Up | KeyCode::BackTab if at == 0 => self.focus = Focus::Body,
+            KeyCode::Up | KeyCode::BackTab => self.focus = Focus::Option(at - 1),
+            KeyCode::Down | KeyCode::Tab if at + 1 < count => self.focus = Focus::Option(at + 1),
+            KeyCode::Down | KeyCode::Tab => self.focus = Focus::Duration,
+            KeyCode::Enter if at + 1 < count => self.focus = Focus::Option(at + 1),
+            KeyCode::Enter if count < MAX_OPTIONS && !option.text().trim().is_empty() => {
+                form.options.push(Buffer::default());
+                self.focus = Focus::Option(at + 1);
+            }
+            KeyCode::Enter => self.focus = Focus::Duration,
+            KeyCode::Backspace if option.is_empty() && count > MIN_OPTIONS => {
+                form.options.remove(at);
+                self.focus = Focus::Option(at.saturating_sub(1));
+            }
+            KeyCode::Char('w') if ctrl => option.delete_word(),
+            KeyCode::Char('u') if ctrl => option.delete_line(),
+            KeyCode::Char(ch) if !ctrl && !alt && room > 0 && !ch.is_control() => {
+                option.insert(ch.encode_utf8(&mut [0; 4]));
+            }
+            KeyCode::Backspace => option.backspace(),
+            KeyCode::Delete => option.delete(),
+            KeyCode::Left if ctrl => option.word_left(),
+            KeyCode::Right if ctrl => option.word_right(),
+            KeyCode::Left => option.left(),
+            KeyCode::Right => option.right(),
+            KeyCode::Home => option.home(),
+            KeyCode::End => option.end(),
+            _ => {}
+        }
+    }
+
+    fn typed_duration(&mut self, code: KeyCode) {
+        let Some(form) = &mut self.poll else {
+            return;
+        };
+        match code {
+            KeyCode::Up | KeyCode::BackTab => self.focus = Focus::Option(form.options.len() - 1),
+            KeyCode::Tab => self.focus = Focus::Body,
+            KeyCode::Left => form.duration = form.duration.step(false),
+            KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                form.duration = form.duration.step(true);
+            }
+            _ => {}
+        }
     }
 
     /// Hides the emoji picker until the `:name` it was showing is gone, and says whether it was open.
@@ -193,16 +386,27 @@ impl Composer {
         if self.prompt == Some(Prompt::Rules) {
             return false;
         }
-        let before = self.text.text().to_owned();
-        self.text.insert(pasted);
-        self.pick();
+        let before = self.draft();
+        match (self.focus, &mut self.poll) {
+            (Focus::Option(at), Some(form)) => {
+                let option = &mut form.options[at];
+                let room = OPTION_LIMIT.saturating_sub(option.text().chars().count());
+                option.insert(&one_line(pasted, room));
+            }
+            (Focus::Duration, _) => {}
+            _ => {
+                self.text.insert(pasted);
+                self.pick();
+            }
+        }
         self.edited(before)
     }
 
     /// Takes the text back from an editor, which ends a file with a newline the body never wants.
     pub fn replace(&mut self, edited: &str) -> bool {
-        let before = self.text.text().to_owned();
+        let before = self.draft();
         self.text = Buffer::new(edited.trim_end_matches(['\n', '\r']));
+        self.focus = Focus::Body;
         self.pick();
         self.edited(before)
     }
@@ -235,8 +439,8 @@ impl Composer {
         self.prompt = None;
     }
 
-    fn edited(&mut self, before: String) -> bool {
-        let changed = self.text.text() != before;
+    fn edited(&mut self, before: Draft) -> bool {
+        let changed = self.draft() != before;
         if changed {
             self.restored = false;
             self.note = None;
@@ -261,16 +465,27 @@ impl Composer {
         lines
     }
 
+    /// The poll under the body, with a blank row between them.
+    fn poll_rows(&self) -> usize {
+        match &self.poll {
+            Some(form) if self.prompt != Some(Prompt::Rules) => 1 + form.rows(),
+            _ => 0,
+        }
+    }
+
     pub fn height(&self, width: u16, screen: u16) -> u16 {
         let status = self.status(inner_width(width)).len();
+        let poll = self.poll_rows();
+        // A poll's question is often one line, so the options sit right under it.
+        let least = if poll > 0 { 1 } else { MIN_ROWS };
         let most = (usize::from(screen) / 2)
-            .saturating_sub(TITLE + status)
-            .max(MIN_ROWS);
+            .saturating_sub(TITLE + status + poll)
+            .max(least);
         let rows = match self.prompt {
             Some(Prompt::Rules) => rules(inner_width(width)).len(),
             _ => self.lines(layout_width(width)).len(),
         };
-        u16::try_from(rows.clamp(MIN_ROWS, most) + TITLE + status).unwrap_or(u16::MAX)
+        u16::try_from(rows.clamp(least, most) + TITLE + status + poll).unwrap_or(u16::MAX)
     }
 
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, sending: bool) {
@@ -289,18 +504,27 @@ impl Composer {
         frame.render_widget(block, area);
         let status = self.status(inner_width(area.width));
         let status_rows = u16::try_from(status.len()).unwrap_or(u16::MAX);
+        let poll_rows = u16::try_from(self.poll_rows()).unwrap_or(u16::MAX);
         let text_area = Rect {
             x: inner.x + 1,
             width: inner.width.saturating_sub(2),
-            height: inner.height.saturating_sub(status_rows),
+            height: inner.height.saturating_sub(status_rows + poll_rows),
             ..inner
         };
-        let status_area = Rect {
+        let poll_area = Rect {
             y: text_area.y + text_area.height,
+            height: poll_rows,
+            ..text_area
+        };
+        let status_area = Rect {
+            y: poll_area.y + poll_area.height,
             height: status_rows,
             ..text_area
         };
         frame.render_widget(Paragraph::new(status), status_area);
+        if poll_rows > 0 {
+            self.draw_poll(frame, poll_area);
+        }
         if self.prompt == Some(Prompt::Rules) {
             let copy = rules(usize::from(text_area.width));
             frame.render_widget(Paragraph::new(copy), text_area);
@@ -326,17 +550,97 @@ impl Composer {
             })
             .collect();
         frame.render_widget(Paragraph::new(lines), text_area);
-        let x = u16::try_from(column).unwrap_or(u16::MAX);
-        let y = u16::try_from(row - self.scroll).unwrap_or(u16::MAX);
-        frame.set_cursor_position((
-            text_area.x + x.min(text_area.width),
-            text_area.y + y.min(text_area.height.saturating_sub(1)),
-        ));
+        if self.focus == Focus::Body {
+            let x = u16::try_from(column).unwrap_or(u16::MAX);
+            let y = u16::try_from(row - self.scroll).unwrap_or(u16::MAX);
+            frame.set_cursor_position((
+                text_area.x + x.min(text_area.width),
+                text_area.y + y.min(text_area.height.saturating_sub(1)),
+            ));
+        }
         if let Some(picker) = &mut self.picker {
             let (_, column) = self.text.place(self.width, picker.at);
             let colon = text_area.x + u16::try_from(column).unwrap_or(u16::MAX);
             draw_picker(frame, picker, colon, area.y);
         }
+    }
+
+    /// One row per option and a row for how long it runs, each with a hint for the focused one.
+    fn draw_poll(&self, frame: &mut Frame, area: Rect) {
+        let Some(form) = &self.poll else {
+            return;
+        };
+        let width = usize::from(area.width);
+        let room = width.saturating_sub(OPTION_MARK.width());
+        let count = form.options.len();
+        let mut lines = vec![Line::default()];
+        for (at, option) in form.options.iter().enumerate() {
+            let focused = self.focus == Focus::Option(at);
+            let mark = if focused { theme::PRIMARY } else { theme::RAIL };
+            let text = option.text();
+            let typed = text.chars().count();
+            let left = OPTION_LIMIT.saturating_sub(typed);
+            let hint = match () {
+                _ if !focused => String::new(),
+                _ if left <= OPTION_COUNT_FROM => format!("{left} left"),
+                _ if at + 1 == count && count < MAX_OPTIONS && !text.trim().is_empty() => {
+                    "enter adds an option".to_owned()
+                }
+                _ if text.is_empty() && count > MIN_OPTIONS => "backspace removes it".to_owned(),
+                _ => String::new(),
+            };
+            let (shown, style) = if text.is_empty() {
+                (format!("option {}", at + 1), Style::new().fg(theme::FAINT))
+            } else {
+                (
+                    visible(text, option.cursor(), room),
+                    Style::new().fg(theme::FOREGROUND),
+                )
+            };
+            let mut spans = vec![
+                Span::styled(OPTION_MARK, Style::new().fg(mark)),
+                Span::styled(shown.clone(), style),
+            ];
+            let used = OPTION_MARK.width() + shown.width();
+            if !hint.is_empty() && used + 2 + hint.width() <= width {
+                spans.push(Span::raw(" ".repeat(width - used - hint.width())));
+                spans.push(Span::styled(hint, theme::muted()));
+            }
+            lines.push(Line::from(spans));
+            if focused {
+                let before = &text[..option.cursor()];
+                let column = before.width().min(room.saturating_sub(1));
+                let x = u16::try_from(OPTION_MARK.width() + column).unwrap_or(u16::MAX);
+                let y = u16::try_from(1 + at).unwrap_or(u16::MAX);
+                frame.set_cursor_position((area.x + x, area.y + y));
+            }
+        }
+        let focused = self.focus == Focus::Duration;
+        let arrow = if focused {
+            Style::new().fg(theme::ACCENT)
+        } else {
+            Style::new().fg(theme::FAINT)
+        };
+        let label = Style::new().fg(if focused {
+            theme::FOREGROUND
+        } else {
+            theme::MUTED_FOREGROUND
+        });
+        let mut spans = vec![
+            Span::raw(" ".repeat(OPTION_MARK.width())),
+            Span::styled("lasts ", theme::muted()),
+            Span::styled("‹ ", arrow),
+            Span::styled(form.duration.label(), label),
+            Span::styled(" ›", arrow),
+        ];
+        let used: usize = spans.iter().map(Span::width).sum();
+        let hint = "← → change";
+        if focused && used + 2 + hint.width() <= width {
+            spans.push(Span::raw(" ".repeat(width - used - hint.width())));
+            spans.push(Span::styled(hint, theme::muted()));
+        }
+        lines.push(Line::from(spans));
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
     fn status(&self, width: usize) -> Vec<Line<'static>> {
@@ -380,6 +684,25 @@ impl Composer {
         }
         rows.into_iter().map(Line::from).collect()
     }
+}
+
+/// The part of a one-line `text` that fits in `room` cells with the cursor at byte `cursor` in view.
+fn visible(text: &str, cursor: usize, room: usize) -> String {
+    if text.width() <= room {
+        return text.to_owned();
+    }
+    let mut start = 0;
+    while text[start..cursor].width() >= room {
+        start += text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    let mut shown = String::new();
+    for ch in text[start..].chars() {
+        if shown.width() + UnicodeWidthChar::width(ch).unwrap_or(0) > room {
+            break;
+        }
+        shown.push(ch);
+    }
+    shown
 }
 
 /// Draws the picker on the rows above the composer, its names lined up under the typed name.
