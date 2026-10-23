@@ -192,7 +192,11 @@ fn latest_draws_headers_day_markers_and_badges() {
     assert!(contains(&rows, "@ada · 29m  in review"), "{rows:#?}");
     assert!(contains(&rows, "@ada · 15h  rejected"), "{rows:#?}");
     assert!(
-        first.starts_with(" ● Ada @ada · 18m · ↩ 3  ★ 12"),
+        first.starts_with(&format!(
+            " ● Ada @ada · 18m · {} 3  {} 12",
+            theme::icons().reply,
+            theme::icons().star
+        )),
         "counts ride the header: {first:?}"
     );
     assert!(contains(&rows, "today's footgun:"));
@@ -241,7 +245,10 @@ fn a_quoted_commit_takes_one_line_under_the_quoting_commit() {
     let rows = commit_rows(&screen(&mut app, 70, 120), "e4f5a62");
     assert_eq!(
         rows[2].trim_end(),
-        " │ ❝ Margaret @margaret  notes from rewriting our scheduler. 1. the …",
+        format!(
+            " │ {} Margaret @margaret  notes from rewriting our scheduler. 1. the …",
+            theme::icons().quote
+        ),
         "{rows:#?}"
     );
 }
@@ -253,7 +260,10 @@ fn a_deleted_quote_and_a_deleted_reply_read_as_bad_objects() {
     let rows = screen(&mut app, 70, 120);
     let quote = commit_rows(&rows, "0000a01");
     assert!(
-        contains(&quote, "│ ❝ fatal: bad object 0000b01"),
+        contains(
+            &quote,
+            &format!("│ {} fatal: bad object 0000b01", theme::icons().quote)
+        ),
         "{quote:#?}"
     );
     let reply = commit_rows(&rows, "0000201");
@@ -277,14 +287,17 @@ fn the_newest_reply_previews_on_one_line_under_its_commit() {
 }
 
 #[test]
-fn link_previews_images_and_polls_each_take_one_line() {
+fn links_images_and_polls_each_lead_with_their_icon() {
     let mut app = app();
     press(&mut app, "2");
     let rows = screen(&mut app, 80, 120);
     assert!(
         contains(
             &commit_rows(&rows, "0000601"),
-            "│ ⇗ We need tool support for keyset pagination · use-the-index-luke.com"
+            &format!(
+                "│ {} We need tool support for keyset pagination · use-the-index-luke.com",
+                theme::icons().link
+            )
         ),
         "{rows:#?}"
     );
@@ -293,14 +306,21 @@ fn link_previews_images_and_polls_each_take_one_line() {
         assert!(
             contains(
                 &commit_rows(&rows, "0000701"),
-                "│ [2 images · O to open in the browser]"
+                &format!(
+                    "│ {} 2 images · O to open in the browser",
+                    theme::icons().image
+                )
             ),
             "{rows:#?}"
         );
-        assert!(contains(
-            &commit_rows(&rows, "0000801"),
-            "│ [a poll · O to open in the browser]"
-        ));
+        let poll = commit_rows(&rows, "0000801");
+        for line in [
+            format!("│ {} ○ tabs", theme::icons().poll),
+            "│   ○ spaces".to_owned(),
+            "│   closes in ".to_owned(),
+        ] {
+            assert!(contains(&poll, &line), "{line}: {poll:#?}");
+        }
     }
 }
 

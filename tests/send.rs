@@ -3,13 +3,13 @@ mod common;
 use std::time::Instant;
 
 use common::{answer, boot, buffer, commit, contains, press, runs, screen, secs, tap};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
 use ttyl::draft::{Target, Write};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{CommitId, Focus, Segment, Status};
 use ttyl::sched::Ticket;
 use ttyl::theme;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
 const POSTED: &str = "2c3d4e5f-0000-4000-8000-000000000999";
@@ -215,10 +215,10 @@ fn a_reply_counts_on_its_parent_and_joins_the_end_of_its_loaded_replies() {
             .unwrap();
         let line = rows[row..]
             .iter()
-            .find(|row| row.contains('↩'))
+            .find(|row| row.contains(theme::icons().reply))
             .unwrap()
             .clone();
-        let after = line.split('↩').nth(1).unwrap().trim();
+        let after = line.split(theme::icons().reply).nth(1).unwrap().trim();
         after.split_whitespace().next().unwrap().parse().unwrap()
     };
     let replies = count(&before);
@@ -249,7 +249,10 @@ fn a_reply_counts_on_its_parent_and_joins_the_end_of_its_loaded_replies() {
         earlier.is_some() && posted > earlier,
         "the reply joins the end of the loaded replies: {rows:#?}"
     );
-    assert!(contains(&rows, &format!("↩ {}", replies + 1)), "{rows:#?}");
+    assert!(
+        contains(&rows, &format!("{} {}", theme::icons().reply, replies + 1)),
+        "{rows:#?}"
+    );
     tap(&mut engine, KeyCode::Esc, at);
     let rows = screen(&mut engine, 100, HEIGHT, at);
     assert_eq!(count(&rows), replies + 1, "{rows:#?}");

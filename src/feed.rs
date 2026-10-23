@@ -18,7 +18,7 @@ use crate::bidi;
 use crate::clock::Spark;
 use crate::code;
 use crate::model::{
-    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown,
+    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment, Shown,
     Status,
 };
 use crate::theme;
@@ -101,17 +101,21 @@ pub fn spark(
     spark: Spark,
     elapsed: Duration,
 ) {
-    let star = rows.clone().find_map(|row| {
-        let mut col = 0;
-        for span in &lines[row].spans {
-            if let Some(at) = span.content.find('★') {
-                let before = span.content[..at].width();
-                return Some((row, col + before, span.width() - before));
+    let find = |icon: &str| {
+        rows.clone().find_map(|row| {
+            let mut col = 0;
+            for span in &lines[row].spans {
+                if let Some(at) = span.content.find(icon) {
+                    let before = span.content[..at].width();
+                    return Some((row, col + before, span.width() - before));
+                }
+                col += span.width();
             }
-            col += span.width();
-        }
-        None
-    });
+            None
+        })
+    };
+    let icons = theme::icons();
+    let star = find(icons.star);
     let ms = elapsed.as_millis();
     let lit = Style::new()
         .fg(theme::BACKGROUND)
@@ -127,10 +131,10 @@ pub fn spark(
             let mut marks = match ms {
                 0..250 | 450..700 => vec![
                     (row, col - 1, " ", lit, Some(0)),
-                    (row, col, "★", lit, None),
+                    (row, col, icons.star, lit, None),
                     (row, col + 1, " ", lit, Some(0)),
                 ],
-                _ => vec![(row, col, "★", bold, None)],
+                _ => vec![(row, col, icons.star, bold, None)],
             };
             let burst: &[(isize, &str, Color)] = match ms {
                 0..250 => &[(0, "✦", theme::AMBER)],
@@ -156,7 +160,8 @@ pub fn spark(
             marks
         }
         Spark::Pastel => {
-            let Some((row, col)) = star
+            let Some((row, col)) = find(icons.pastel)
+                .or(star)
                 .map(|(row, col, width)| (row, col + width + 1))
                 .or_else(|| {
                     let header = lines.get(rows.start)?;
@@ -398,22 +403,11 @@ fn row_lines<Tz: TimeZone>(
     }
     let width = out.content();
     let mut lines = Vec::new();
-    web_only(&row.media, width, &mut lines);
+    media(&row.media, width, now, &mut lines);
     if commit.quoted_commit_id.is_some() {
         lines.push(quote_line(row.quoted_commit.as_ref(), width));
     }
-    if let Some(preview) = &row.media.link_preview
-        && let Some(title) = &preview.title
-    {
-        lines.push(fit(
-            vec![
-                Span::styled("⇗ ", theme::muted()),
-                Span::styled(title.clone(), Style::new().fg(theme::PRIMARY)),
-                Span::styled(format!(" · {}", domain(&preview.url)), theme::muted()),
-            ],
-            width,
-        ));
-    }
+    lines.extend(link_line(&row.media, width));
     if inline_replies && let Some(reply) = row.reply_preview.data.first() {
         lines.push(reply_line(reply, width, now));
     }
@@ -432,7 +426,7 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
     if row.replies_count > 0 {
         spans.push(Span::styled(" · ", theme::muted()));
         spans.push(Span::styled(
-            format!("↩ {}", row.replies_count),
+            format!("{} {}", theme::icons().reply, row.replies_count),
             Style::new().fg(theme::PRIMARY),
         ));
     }
@@ -444,15 +438,27 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
         };
         let lead = if spans.is_empty() { " · " } else { "  " };
         spans.push(Span::styled(lead, theme::muted()));
-        spans.push(Span::styled(format!("★ {}", row.stars_count), star));
+        spans.push(Span::styled(
+            format!("{} {}", theme::icons().star, row.stars_count),
+            star,
+        ));
+    }
+    if row.commit.pasteis_count > 0 {
+        let lead = if spans.is_empty() { " · " } else { "  " };
+        spans.push(Span::styled(lead, theme::muted()));
+        spans.push(Span::styled(
+            format!("{} {}", theme::icons().pastel, row.commit.pasteis_count),
+            Style::new().fg(theme::ACCENT),
+        ));
     }
     spans
 }
 
 fn quote_line(quoted: Option<&Shown<Quote>>, width: usize) -> Vec<Span<'static>> {
-    let mark = Span::styled("❝ ", theme::muted());
+    let node = format!("{} ", theme::icons().quote);
+    let mark = Span::styled(node.clone(), theme::muted());
     match quoted {
-        Some(Shown::Live(quote)) => one_liner("❝ ", &quote.commit, "", theme::muted(), width),
+        Some(Shown::Live(quote)) => one_liner(&node, &quote.commit, "", theme::muted(), width),
         Some(Shown::Deleted(tombstone)) => fit(
             vec![
                 mark,
@@ -487,16 +493,14 @@ pub(crate) fn content<Tz: TimeZone>(
         );
     }
     let mut lines = Vec::new();
-    web_only(&row.media, out.content(), &mut lines);
+    media(&row.media, out.content(), now, &mut lines);
     for line in lines {
         out.line(rail.clone(), line);
     }
     if quoted {
         quote(out, rail, row.quoted_commit.as_ref(), now);
     }
-    let mut lines = Vec::new();
-    link_preview(&row.media, out.content(), &mut lines);
-    for line in lines {
+    if let Some(line) = link_line(&row.media, out.content()) {
         out.line(rail.clone(), line);
     }
 }
@@ -514,47 +518,142 @@ pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
     } else {
         theme::muted()
     };
+    let icons = theme::icons();
     out.push(
         rail.clone(),
         vec![
-            Span::styled(format!("↩ {}", row.replies_count), theme::muted()),
+            Span::styled(
+                format!("{} {}", icons.reply, row.replies_count),
+                theme::muted(),
+            ),
             Span::raw("   "),
-            Span::styled(format!("★ {}", row.stars_count), star),
+            Span::styled(format!("{} {}", icons.star, row.stars_count), star),
+            Span::raw("   "),
+            Span::styled(
+                format!("{} {}", icons.pastel, row.commit.pasteis_count),
+                theme::muted(),
+            ),
         ],
     );
 }
 
-fn web_only(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
-    let mut parts = Vec::new();
-    match media.images.len() {
-        0 => {}
-        1 => parts.push("1 image".to_owned()),
-        count => parts.push(format!("{count} images")),
+/// Images and a poll, each led by its icon in the column the quote and link icons share.
+fn media<Tz: TimeZone>(
+    media: &Media,
+    width: usize,
+    now: &DateTime<Tz>,
+    out: &mut Vec<Vec<Span<'static>>>,
+) {
+    let icons = theme::icons();
+    let faint = Style::new().fg(theme::FAINT);
+    let images = match media.images.len() {
+        0 => None,
+        1 => Some("1 image".to_owned()),
+        count => Some(format!("{count} images")),
+    };
+    if let Some(images) = images {
+        out.push(fit(
+            vec![
+                Span::styled(format!("{} ", icons.image), theme::muted()),
+                Span::styled(format!("{images} · O to open in the browser"), faint),
+            ],
+            width,
+        ));
     }
-    if media.poll.is_some() {
-        parts.push("a poll".to_owned());
-    }
-    if !parts.is_empty() {
-        let note = format!("[{} · O to open in the browser]", parts.join(" and "));
-        wrap(&[(note, theme::muted())], width, out);
+    if let Some(poll) = &media.poll {
+        poll_lines(poll, width, now, out);
     }
 }
 
-fn link_preview(media: &Media, width: usize, out: &mut Vec<Vec<Span<'static>>>) {
-    let Some(preview) = &media.link_preview else {
-        return;
-    };
-    let Some(title) = &preview.title else {
-        return;
-    };
-    wrap(
-        &[
-            (title.clone(), Style::new().fg(theme::FOREGROUND)),
-            (format!(" · {}", domain(&preview.url)), theme::muted()),
+const BAR: usize = 10;
+
+/// The poll's options as bars once its results are out, or as a list until then.
+fn poll_lines<Tz: TimeZone>(
+    poll: &Poll,
+    width: usize,
+    now: &DateTime<Tz>,
+    out: &mut Vec<Vec<Span<'static>>>,
+) {
+    let faint = Style::new().fg(theme::FAINT);
+    let icon = format!("{} ", theme::icons().poll);
+    let indent = " ".repeat(icon.width());
+    for (at, option) in poll.options.iter().enumerate() {
+        let lead = if at == 0 {
+            icon.clone()
+        } else {
+            indent.clone()
+        };
+        let mut spans = vec![Span::styled(lead, theme::muted())];
+        let label = Style::new().fg(theme::FOREGROUND);
+        match option.percentage {
+            Some(percentage) => {
+                let filled = (percentage as usize * BAR + 50) / 100;
+                let bar = if option.voted {
+                    Style::new().fg(theme::PRIMARY)
+                } else {
+                    theme::muted()
+                };
+                spans.push(Span::styled("▇".repeat(filled), bar));
+                spans.push(Span::styled(
+                    "░".repeat(BAR - filled),
+                    Style::new().fg(theme::RAIL),
+                ));
+                spans.push(Span::styled(format!(" {percentage:>3}%  "), theme::muted()));
+            }
+            None => spans.push(Span::styled("○ ", faint)),
+        }
+        spans.push(Span::styled(option.label.clone(), label));
+        if option.voted {
+            spans.push(Span::styled(" ✓", Style::new().fg(theme::PRIMARY)));
+        }
+        out.push(fit(spans, width));
+    }
+    let mut meta = Vec::new();
+    if let Some(total) = poll.total_votes {
+        meta.push(match total {
+            1 => "1 vote".to_owned(),
+            _ => format!("{total} votes"),
+        });
+    }
+    if poll.is_closed {
+        meta.push("closed".to_owned());
+    } else if let Some(closes) = poll.closes_at {
+        meta.push(format!("closes in {}", until(closes, now)));
+    }
+    if !poll.is_closed && !poll.has_voted {
+        meta.push("O to vote in the browser".to_owned());
+    }
+    out.push(fit(
+        vec![Span::raw(indent), Span::styled(meta.join(" · "), faint)],
+        width,
+    ));
+}
+
+/// How long until `at`, in the largest whole unit.
+fn until<Tz: TimeZone>(at: DateTime<Utc>, now: &DateTime<Tz>) -> String {
+    let seconds = (at.timestamp() - now.timestamp()).max(60);
+    match seconds {
+        ..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
+}
+
+/// The link preview's title and domain behind the link icon.
+fn link_line(media: &Media, width: usize) -> Option<Vec<Span<'static>>> {
+    let preview = media.link_preview.as_ref()?;
+    let title = preview.title.as_ref()?;
+    Some(fit(
+        vec![
+            Span::styled(format!("{} ", theme::icons().link), theme::muted()),
+            Span::styled(title.clone(), Style::new().fg(theme::PRIMARY)),
+            Span::styled(
+                format!(" · {}", domain(&preview.url)),
+                Style::new().fg(theme::FAINT),
+            ),
         ],
         width,
-        out,
-    );
+    ))
 }
 
 fn domain(url: &str) -> &str {
@@ -589,8 +688,8 @@ fn quote<Tz: TimeZone>(
                 text.push(vec![Span::styled("…", theme::muted())]);
             }
             lines.extend(text);
-            web_only(&quote.media, inner, &mut lines);
-            link_preview(&quote.media, inner, &mut lines);
+            media(&quote.media, inner, now, &mut lines);
+            lines.extend(link_line(&quote.media, inner));
         }
         Some(Shown::Deleted(tombstone)) => {
             for text in [
@@ -659,7 +758,7 @@ fn reply_line<Tz: TimeZone>(
 }
 
 fn one_liner(
-    node: &'static str,
+    node: &str,
     commit: &Commit,
     meta: &str,
     text: Style,
@@ -667,7 +766,7 @@ fn one_liner(
 ) -> Vec<Span<'static>> {
     let author = &commit.author;
     let mut spans = vec![
-        Span::styled(node, Style::new().fg(theme::lane(author.lane))),
+        Span::styled(node.to_owned(), Style::new().fg(theme::lane(author.lane))),
         Span::styled(
             author.name.clone(),
             Style::new()

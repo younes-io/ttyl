@@ -1,5 +1,7 @@
 //! The web's dark theme tokens from `resources/css/app.css`.
 
+use std::sync::OnceLock;
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
@@ -152,4 +154,46 @@ pub fn hl(hl: Option<Hl>) -> Style {
         Some(Hl::Attribute) => base.add_modifier(Modifier::ITALIC),
         Some(Hl::Deletion) => base.fg(DESTRUCTIVE),
     }
+}
+
+/// The marks drawn before counts and attachments.
+pub struct Icons {
+    pub star: &'static str,
+    pub reply: &'static str,
+    pub pastel: &'static str,
+    pub quote: &'static str,
+    pub link: &'static str,
+    pub image: &'static str,
+    pub poll: &'static str,
+}
+
+// Most monospace fonts lack ★, ❝ and ⇗, so terminals draw them from a fallback font at a fraction of
+// the cell. Nerd Font icons fill the cell.
+const NERD: Icons = Icons {
+    star: "\u{f005}",
+    reply: "\u{f112}",
+    pastel: "\u{f0198}",
+    quote: "\u{f10d}",
+    link: "\u{f08e}",
+    image: "\u{f03e}",
+    poll: "\u{f080}",
+};
+
+const PLAIN: Icons = Icons {
+    star: "★",
+    reply: "↩",
+    pastel: "◍",
+    quote: "❝",
+    link: "⇗",
+    image: "▣",
+    poll: "≡",
+};
+
+/// Nerd Font icons, or plain Unicode when `TTYL_ICONS=plain`.
+pub fn icons() -> &'static Icons {
+    static ICONS: OnceLock<&Icons> = OnceLock::new();
+    ICONS.get_or_init(|| match std::env::var("TTYL_ICONS").as_deref() {
+        Ok("plain") => &PLAIN,
+        _ => &NERD,
+    })
 }

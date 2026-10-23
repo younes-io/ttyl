@@ -107,7 +107,7 @@ fn star_at(engine: &mut Engine, width: u16, height: u16, at: Instant) -> (u16, u
         .unwrap_or_else(|| panic!("grace's row is on screen: {rows:#?}"));
     (y..rows.len())
         .flat_map(|y| (0..width).map(move |x| (x, y as u16)))
-        .find(|at| buffer[*at].symbol() == "★")
+        .find(|at| buffer[*at].symbol() == theme::icons().star)
         .unwrap_or_else(|| panic!("grace's row has a star: {rows:#?}"))
 }
 
@@ -135,13 +135,13 @@ fn a_new_star_pops_in_place_and_settles_amber() {
     assert_eq!(
         frames,
         [
-            ("★", true, "✦"),
-            ("★", false, "✧ · ✧"),
-            ("★", true, "✦       ✦"),
-            ("★", false, "·           ·"),
-            ("★", false, ""),
+            (true, "✦"),
+            (false, "✧ · ✧"),
+            (true, "✦       ✦"),
+            (false, "·           ·"),
+            (false, ""),
         ]
-        .map(|(glyph, lit, above)| (glyph.to_owned(), lit, above.to_owned())),
+        .map(|(lit, above)| (theme::icons().star.to_owned(), lit, above.to_owned())),
         "the star flashes twice while sparkles burst out above it"
     );
     assert!(engine.next_wake(at + ms(1200)).unwrap() <= at + ms(1233));
@@ -162,7 +162,7 @@ fn taking_a_star_back_does_not_pop() {
     press(&mut engine, "ss", at);
     let star = star_at(&mut engine, 100, 30, at);
     let buffer = buffer(&mut engine, 100, 30, at);
-    assert_eq!(buffer[star].symbol(), "★");
+    assert_eq!(buffer[star].symbol(), theme::icons().star);
     assert_ne!(buffer[star].fg, theme::AMBER);
 }
 
