@@ -116,10 +116,10 @@ pub fn spark(
         Spark::Star => {
             let Some((row, col, _)) = star else { return };
             let (glyph, color) = match ms {
-                0..70 => ("·", theme::FOREGROUND),
-                70..140 => ("✧", theme::FOREGROUND),
-                140..210 => ("✦", theme::FOREGROUND),
-                210..300 => ("★", theme::FOREGROUND),
+                0..200 => ("·", theme::FOREGROUND),
+                200..400 => ("✧", theme::FOREGROUND),
+                400..600 => ("✦", theme::FOREGROUND),
+                600..1000 => ("★", theme::FOREGROUND),
                 _ => ("★", theme::AMBER),
             };
             (
@@ -148,11 +148,11 @@ pub fn spark(
                 return;
             };
             let (row, style) = match ms {
-                0..300 => (
+                0..600 => (
                     row,
                     Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
                 ),
-                300..500 => (row.saturating_sub(1), Style::new().fg(theme::AMBER)),
+                600..1100 => (row.saturating_sub(1), Style::new().fg(theme::AMBER)),
                 _ => (row.saturating_sub(1), Style::new().fg(theme::FAINT)),
             };
             (row, col, "+1", style)

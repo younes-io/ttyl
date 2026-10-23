@@ -117,7 +117,7 @@ fn a_new_star_pops_in_place_and_settles_amber() {
     let mut engine = on_grace(at);
     let (ticket, _) = one_run(&press(&mut engine, "s", at));
     let star = star_at(&mut engine, 100, 30, at + Spark::Star.lasts());
-    let frames: Vec<(String, bool)> = [0, 100, 170, 250, 400]
+    let frames: Vec<(String, bool)> = [0, 300, 500, 800, 1200]
         .map(|n| {
             let buffer = buffer(&mut engine, 100, 30, at + ms(n));
             (
@@ -138,13 +138,13 @@ fn a_new_star_pops_in_place_and_settles_amber() {
         ]
         .map(|(glyph, amber)| (glyph.to_owned(), amber))
     );
-    assert!(engine.next_wake(at + ms(100)).unwrap() <= at + ms(133));
+    assert!(engine.next_wake(at + ms(1200)).unwrap() <= at + ms(1233));
 
     assert!(reply(&mut engine, ticket, Ok(starred(true, 28)), at).is_empty());
-    engine.pump(at + ms(400));
-    let wake = engine.next_wake(at + ms(400));
+    engine.pump(at + ms(1500));
+    let wake = engine.next_wake(at + ms(1500));
     assert!(
-        wake.is_none_or(|wake| wake > at + ms(500)),
+        wake.is_none_or(|wake| wake > at + ms(1600)),
         "frames slow down once the pop is over"
     );
 }
@@ -476,14 +476,14 @@ fn a_pastel_shows_a_plus_one_that_floats_up_and_goes() {
         "it starts beside the star"
     );
     assert_eq!(
-        drawn(&mut engine, 400, (plus.0, y - 1)),
+        drawn(&mut engine, 800, (plus.0, y - 1)),
         "+1",
         "then floats up a row"
     );
-    assert_ne!(drawn(&mut engine, 400, plus), "+1");
+    assert_ne!(drawn(&mut engine, 800, plus), "+1");
     engine.pump(at + Spark::Pastel.lasts());
     assert_ne!(
-        drawn(&mut engine, 800, (plus.0, y - 1)),
+        drawn(&mut engine, 1600, (plus.0, y - 1)),
         "+1",
         "then it is gone"
     );

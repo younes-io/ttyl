@@ -22,8 +22,7 @@ pub enum Spark {
 impl Spark {
     pub fn lasts(self) -> Duration {
         match self {
-            Spark::Star => Duration::from_millis(400),
-            Spark::Pastel => Duration::from_millis(700),
+            Spark::Star | Spark::Pastel => Duration::from_millis(1500),
         }
     }
 }
