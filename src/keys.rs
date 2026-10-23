@@ -475,7 +475,7 @@ pub const TABLE: &[Binding] = &[
         scope: Scope::Commit,
         chords: &[&[Key::ch('v')]],
         action: Action::Commit(Act::Vote),
-        hint: None,
+        hint: Some("v vote"),
         help: "vote in the poll",
     },
     Binding {

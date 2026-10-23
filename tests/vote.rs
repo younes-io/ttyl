@@ -121,6 +121,17 @@ fn v_opens_the_poll_with_its_options_and_the_first_one_marked() {
 }
 
 #[test]
+fn the_hint_line_offers_v_on_an_open_poll_only() {
+    let at = Instant::now();
+    let mut engine = on_poll(at);
+    let rows = screen(&mut engine, 160, 40, at);
+    assert!(contains(&rows, "v vote"), "{rows:#?}");
+    let mut closed = on_poll_serving(at, closed);
+    let rows = screen(&mut closed, 160, 40, at);
+    assert!(!contains(&rows, "v vote"), "{rows:#?}");
+}
+
+#[test]
 fn j_k_and_the_digits_move_the_mark_within_the_options() {
     let at = Instant::now();
     let mut engine = on_poll(at);
@@ -146,7 +157,8 @@ fn enter_votes_for_the_marked_option_and_closes_the_box() {
     press(&mut engine, "vj", at);
     let (_, call) = one_run(&tap(&mut engine, KeyCode::Enter, at));
     assert_eq!(call, vote(SPACES));
-    assert!(!contains(&screen(&mut engine, 100, 40, at), " vote "));
+    let title = format!(" vote {} ", id().short_hash());
+    assert!(!contains(&screen(&mut engine, 100, 40, at), &title));
 }
 
 #[test]
