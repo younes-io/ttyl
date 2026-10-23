@@ -697,7 +697,9 @@ pub(crate) fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> 
             Segment::Text { text: body } => {
                 for (index, word) in body.split(char::is_whitespace).enumerate() {
                     gap |= index > 0;
-                    add(word, text, &mut gap);
+                    for (piece, style) in branded(word, text) {
+                        add(&piece, style, &mut gap);
+                    }
                 }
             }
             Segment::Code { code } => add(&code.replace('\t', TAB), theme::hl(None), &mut gap),
@@ -817,12 +819,11 @@ pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>
                         wrap(&mem::take(&mut paragraph), width, &mut lines);
                     }
                     for run in runs(&piece.replace('\t', TAB)) {
-                        let style = if is_reference(run) {
-                            Style::new().fg(theme::PRIMARY)
+                        if is_reference(run) {
+                            paragraph.push((run.to_owned(), Style::new().fg(theme::PRIMARY)));
                         } else {
-                            text
-                        };
-                        paragraph.push((run.to_owned(), style));
+                            paragraph.extend(branded(run, text));
+                        }
                     }
                 }
             }
@@ -841,23 +842,34 @@ pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>
     lines
 }
 
+/// Pieces with no whitespace between them make one word, which moves to the next line whole, so a
+/// word styled in parts, like the wordmark, never breaks between its parts.
 pub(crate) fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Vec<Span<'static>>>) {
-    let mut line = Vec::new();
-    let mut used = 0;
+    let blank = |run: &str| run.starts_with(char::is_whitespace);
+    let mut words: Vec<Vec<(&str, Style)>> = Vec::new();
     for (text, style) in paragraph {
         for run in runs(text) {
-            let run_width = run.width();
-            let blank = run.starts_with(char::is_whitespace);
-            if used > 0 && used + run_width > width {
-                out.push(mem::take(&mut line));
-                used = 0;
-                if blank {
-                    continue;
-                }
+            match words.last_mut() {
+                Some(word) if !blank(run) && !blank(word[0].0) => word.push((run, *style)),
+                _ => words.push(vec![(run, *style)]),
             }
-            if run_width <= width {
-                append(&mut line, run, *style);
-                used += run_width;
+        }
+    }
+    let mut line = Vec::new();
+    let mut used = 0;
+    for word in words {
+        let word_width: usize = word.iter().map(|(run, _)| run.width()).sum();
+        if used > 0 && used + word_width > width {
+            out.push(mem::take(&mut line));
+            used = 0;
+            if blank(word[0].0) {
+                continue;
+            }
+        }
+        for (run, style) in word {
+            if word_width <= width {
+                append(&mut line, run, style);
+                used += run.width();
                 continue;
             }
             for grapheme in run.graphemes(true) {
@@ -866,12 +878,42 @@ pub(crate) fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Ve
                     out.push(mem::take(&mut line));
                     used = 0;
                 }
-                append(&mut line, grapheme, *style);
+                append(&mut line, grapheme, style);
                 used += grapheme_width;
             }
         }
     }
     out.push(line);
+}
+
+/// Splits a run of prose so each /dev/null in it shows as the wordmark, as the web draws it. A
+/// /dev/null inside a longer path or word stays plain text.
+fn branded(run: &str, text: Style) -> Vec<(String, Style)> {
+    const NAME: &str = "/dev/null";
+    let joined = |ch: Option<char>, also: &str| {
+        ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || also.contains(ch))
+    };
+    let mut pieces = Vec::new();
+    let mut plain = 0;
+    for (at, _) in run.match_indices(NAME) {
+        let end = at + NAME.len();
+        if joined(run[..at].chars().next_back(), "./-") || joined(run[end..].chars().next(), "/-") {
+            continue;
+        }
+        if plain < at {
+            pieces.push((run[plain..at].to_owned(), text));
+        }
+        pieces.extend(
+            theme::wordmark()
+                .into_iter()
+                .map(|span| (span.content.into_owned(), span.style)),
+        );
+        plain = end;
+    }
+    if plain < run.len() {
+        pieces.push((run[plain..].to_owned(), text));
+    }
+    pieces
 }
 
 /// A mention or a link, which the web draws as a link.
@@ -1051,4 +1093,53 @@ pub(crate) fn scroll(
         offset
     };
     offset.max((entry.header + 1).saturating_sub(height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(text: &str) -> Vec<Segment> {
+        vec![Segment::Text {
+            text: text.to_owned(),
+        }]
+    }
+
+    /// Each line as its text, with the parts drawn in the accent marked by brackets.
+    fn shown(lines: &[Vec<Span<'static>>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|span| match span.style.fg {
+                        Some(theme::ACCENT) => format!("[{}]", span.content),
+                        _ => span.content.to_string(),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dev_null_in_prose_shows_as_the_wordmark_but_not_inside_a_path_link_or_code() {
+        let mut segments = text("/dev/null, not ./dev/null or /dev/nulls or ");
+        segments.push(Segment::Code {
+            code: "/dev/null".to_owned(),
+        });
+        segments.extend(text(" or https://dev-null.sh/dev/null. (/dev/null)"));
+        assert_eq!(
+            shown(&body(&segments, 200)),
+            [
+                "/dev[/]null, not ./dev/null or /dev/nulls or /dev/null or https://dev-null.sh/dev/null. (/dev[/]null)"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_wordmark_moves_to_the_next_line_whole() {
+        assert_eq!(
+            shown(&body(&text("pipe it to /dev/null."), 15)),
+            ["pipe it to ", "/dev[/]null."]
+        );
+    }
 }
