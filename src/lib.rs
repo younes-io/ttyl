@@ -16,6 +16,7 @@ pub mod inbox;
 pub mod keys;
 pub mod log;
 pub mod model;
+pub mod profile;
 pub mod saver;
 pub mod sched;
 pub mod secret;

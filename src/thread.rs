@@ -223,6 +223,7 @@ impl ThreadScreen {
             | Action::Pick(_)
             | Action::Choose(_)
             | Action::Commit(_)
+            | Action::Profile
             | Action::Compose
             | Action::Send
             | Action::Editor

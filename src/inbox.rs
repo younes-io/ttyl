@@ -16,6 +16,7 @@ use crate::log::Retry;
 use crate::model::{
     CommitId, Event, Filter, Group, GroupPage, Kind, NotificationId, NotificationPage, Shown,
 };
+use crate::profile;
 use crate::store::Store;
 use crate::theme;
 use crate::thread::LOADING_NOTE_DELAY;
@@ -346,12 +347,13 @@ impl GroupList {
         self.head.event.kind == Kind::Followed
     }
 
-    /// The selected event's commit; people in a follow group open nothing until profiles exist.
-    pub fn opens(&self) -> Option<&CommitId> {
+    /// The selected event's thread, or for a follow group, the follower's profile.
+    pub fn opens(&self) -> Option<profile::Opens> {
         let event = &self.list.selected()?.event;
-        (event.kind != Kind::Followed)
-            .then(|| event.commit_id())
-            .flatten()
+        if event.kind == Kind::Followed {
+            return Some(profile::Opens::Profile(event.actor.username.clone()));
+        }
+        event.commit_id().cloned().map(profile::Opens::Thread)
     }
 
     pub fn can(&self, action: Action) -> bool {

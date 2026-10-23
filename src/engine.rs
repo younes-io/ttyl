@@ -22,14 +22,16 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, REPORT_SCOPES,
-    RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES, VOTE_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PROFILE_PEOPLE_SCOPES,
+    PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope,
+    THREAD_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
     self, Commit, CommitId, Filter, Kind, Log, NotificationId, Poll, Reason, Row, Shown, Status,
     User,
 };
+use crate::profile::{self, Item, ProfileScreen, Tab};
 use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
@@ -105,6 +107,7 @@ enum Screen {
     Thread(Box<ThreadScreen>),
     Inbox,
     Group(Box<GroupList>),
+    Profile(Box<ProfileScreen>),
 }
 
 enum Overlay {
@@ -132,7 +135,7 @@ impl Session {
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_)) | None => None,
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_)) | None => None,
         }
     }
 
@@ -140,7 +143,7 @@ impl Session {
     fn shown_thread(&self, now: Instant) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_)) => None,
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_)) => None,
             None => self.log.peek(&self.store, now),
         }
     }
@@ -160,6 +163,35 @@ impl Session {
         })
     }
 
+    fn profile(&self) -> Option<&ProfileScreen> {
+        match self.stack.last() {
+            Some(Screen::Profile(profile)) => Some(profile),
+            _ => None,
+        }
+    }
+
+    /// Every open profile of this person, wherever it sits in the stack.
+    fn profiles_mut(&mut self, username: &str) -> impl Iterator<Item = &mut ProfileScreen> {
+        self.stack
+            .iter_mut()
+            .filter_map(move |screen| match screen {
+                Screen::Profile(profile) if profile.username() == username => {
+                    Some(profile.as_mut())
+                }
+                _ => None,
+            })
+    }
+
+    /// Whose profile p opens: the selected commit's author or the selected person, unless already shown.
+    fn profile_target(&self) -> Option<String> {
+        let username = match self.selected()? {
+            Selected::Row(row) => row.commit.author.username.clone(),
+            Selected::Note(commit) => commit.author.username.clone(),
+            Selected::Person(user) => user.username.clone(),
+        };
+        (self.profile().map(ProfileScreen::username) != Some(&username)).then_some(username)
+    }
+
     fn on_inbox(&self) -> bool {
         matches!(self.stack.last(), Some(Screen::Inbox))
     }
@@ -171,6 +203,8 @@ impl Session {
             Some(Screen::Inbox) => INBOX_SCOPES,
             Some(Screen::Group(group)) if group.people() => PEOPLE_SCOPES,
             Some(Screen::Group(_)) => GROUP_SCOPES,
+            Some(Screen::Profile(profile)) if profile.people_tab() => PROFILE_PEOPLE_SCOPES,
+            Some(Screen::Profile(_)) => PROFILE_SCOPES,
         }
     }
 
@@ -178,12 +212,16 @@ impl Session {
         if let Action::Commit(act) = action {
             return self.allows(act);
         }
+        if action == Action::Profile {
+            return self.profile_target().is_some();
+        }
         matches!(action, Action::Quit | Action::Help | Action::Saver)
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
                 Some(Screen::Group(group)) => group.can(action),
+                Some(Screen::Profile(profile)) => profile.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -196,6 +234,10 @@ impl Session {
                 return Selected::of(&group.event, group.actors_count == 1);
             }
             Some(Screen::Group(group)) => return Selected::of(group.selected()?, true),
+            Some(Screen::Profile(profile)) => match profile.selected()? {
+                Item::Commit(id) => id,
+                Item::Person(person) => return Some(Selected::Person(&person.user)),
+            },
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
         match self.store.node(id)? {
@@ -250,16 +292,12 @@ impl Session {
                     return Some(id);
                 }
             }
-            (Some(Screen::Group(group)), Action::Open) => {
-                if let Some(id) = group.opens().cloned() {
-                    self.stack
-                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
-                    return Some(id);
-                }
-            }
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
+            (Some(Screen::Profile(profile)), action) => {
+                profile.act(action, now);
+            }
             (None, _) => {}
         }
         None
@@ -483,6 +521,13 @@ fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, no
     );
 }
 
+fn open_profile(sched: &mut Scheduler, session: &mut Session, username: String, now: Instant) {
+    let profile = ProfileScreen::new(username, now);
+    sched.send(Call::User(profile.username().to_owned()), Priority::Now);
+    sched.send(profile.tab_call(), Priority::Now);
+    session.stack.push(Screen::Profile(Box::new(profile)));
+}
+
 fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
     let call = Call::Group {
         id: group.id().clone(),
@@ -698,6 +743,7 @@ impl Engine {
         self.load_older();
         self.load_older_inbox();
         self.load_older_group();
+        self.load_older_profile();
         for (call, priority) in self.thread_wants(now) {
             self.sched.send(call, priority);
         }
@@ -784,6 +830,15 @@ impl Engine {
         }
     }
 
+    fn load_older_profile(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        if let Some(call) = session.profile().and_then(ProfileScreen::wants_older) {
+            self.sched.send(call, Priority::Now);
+        }
+    }
+
     fn thread_wants(&self, now: Instant) -> Vec<(Call, Priority)> {
         let Phase::Ready(session) = &self.phase else {
             return Vec::new();
@@ -809,6 +864,7 @@ impl Engine {
             Some(Screen::Thread(thread)) => thread.placeholder_at(&session.store),
             Some(Screen::Inbox) => session.inbox.placeholder_at(),
             Some(Screen::Group(group)) => group.placeholder_at(),
+            Some(Screen::Profile(profile)) => profile.placeholder_at(),
             None => session.log.peek_due(),
         }
     }
@@ -1024,6 +1080,38 @@ impl Engine {
                     None => {}
                 }
             }
+            (Phase::Ready(session), Action::Profile) => {
+                if let Some(username) = session.profile_target() {
+                    open_profile(&mut self.sched, session, username, now);
+                }
+            }
+            (Phase::Ready(session), Action::Open) if session.group().is_some() => {
+                let opens = session.group().and_then(GroupList::opens);
+                self.open_row(opens, now);
+            }
+            (Phase::Ready(session), Action::Open) if session.profile().is_some() => {
+                let opens = session.profile().and_then(ProfileScreen::opens);
+                self.open_row(opens, now);
+            }
+            (Phase::Ready(session), Action::Refresh) if session.profile().is_some() => {
+                let Some(Screen::Profile(profile)) = session.stack.last_mut() else {
+                    unreachable!("a profile is open");
+                };
+                profile.reload(now);
+                self.sched
+                    .send(Call::User(profile.username().to_owned()), Priority::Now);
+                self.sched.send(profile.tab_call(), Priority::Now);
+            }
+            (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
+                if session.profile().is_some() =>
+            {
+                let Some(Screen::Profile(profile)) = session.stack.last_mut() else {
+                    unreachable!("a profile is open");
+                };
+                if profile.act(action, now) {
+                    self.sched.send(profile.tab_call(), Priority::Now);
+                }
+            }
             (Phase::Ready(session), Action::Refresh) if session.group().is_some() => {
                 fetch_group(&mut self.sched, session.group().expect("a group is open"));
             }
@@ -1063,6 +1151,25 @@ impl Engine {
             (Phase::Splash | Phase::SignIn(_), _) => {}
         }
         Vec::new()
+    }
+
+    /// Pushes what a group or profile row opens: a thread, or someone's profile.
+    fn open_row(&mut self, opens: Option<profile::Opens>, now: Instant) {
+        let Phase::Ready(session) = &mut self.phase else {
+            return;
+        };
+        match opens {
+            Some(profile::Opens::Thread(id)) => {
+                session
+                    .stack
+                    .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
+                fetch_thread(&mut self.sched, &mut self.timers, id);
+            }
+            Some(profile::Opens::Profile(username)) => {
+                open_profile(&mut self.sched, session, username, now);
+            }
+            None => {}
+        }
     }
 
     fn on_commit(&mut self, act: Act, now: Instant) -> Vec<Effect> {
@@ -1220,6 +1327,42 @@ impl Engine {
                 }
                 return Vec::new();
             }
+            Call::Commits { .. } | Call::People { .. } => {
+                let Some((username, tab, cursor)) = Tab::of(call) else {
+                    return Vec::new();
+                };
+                let (items, next): (Vec<Item>, _) = match reply {
+                    Reply::Rows(page) => {
+                        let ids = session.store.absorb_rows(page.rows);
+                        (
+                            ids.into_iter().map(Item::Commit).collect(),
+                            page.next_cursor,
+                        )
+                    }
+                    Reply::People(page) => {
+                        let next = page.next_cursor.clone();
+                        let people = page.people.clone();
+                        session.store.apply(call, Reply::People(page));
+                        let items = people
+                            .into_iter()
+                            .map(|person| Item::Person(Box::new(person)))
+                            .collect();
+                        (items, next)
+                    }
+                    _ => return Vec::new(),
+                };
+                for profile in session.profiles_mut(username) {
+                    profile.land(tab, cursor, items.clone(), next.clone());
+                }
+                return Vec::new();
+            }
+            Call::User(username) => {
+                if let Reply::User(profile) = &reply {
+                    for screen in session.profiles_mut(username) {
+                        screen.set_profile(profile.as_ref().clone());
+                    }
+                }
+            }
             _ => {}
         }
         let Call::Page(log) = call else {
@@ -1344,6 +1487,11 @@ impl Engine {
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
                 let offline = matches!(failure, Failure::Offline(_));
+                if let Call::User(username) = &call {
+                    for profile in session.profiles_mut(username) {
+                        profile.fail_header(failure.clone());
+                    }
+                }
                 let connection = match call {
                     Call::Page(log) => {
                         session.asked_to_refresh.remove(&Refresh::Log(log));
@@ -1398,7 +1546,14 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Commits { .. } | Call::People { .. } => offline,
+                    Call::Commits { .. } | Call::People { .. } => {
+                        if let Some((username, tab, _)) = Tab::of(&call) {
+                            for profile in session.profiles_mut(username) {
+                                profile.fail_tab(tab, failure.clone());
+                            }
+                        }
+                        offline
+                    }
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
@@ -1553,8 +1708,12 @@ impl Engine {
                     Constraint::Length(1),
                 ])
                 .areas(area);
-                let title =
-                    (session.on_inbox() || session.group().is_some()).then_some(inbox::TITLE);
+                let handle = session
+                    .profile()
+                    .map(|profile| format!("@{}", profile.username()));
+                let title = (session.on_inbox() || session.group().is_some())
+                    .then_some(inbox::TITLE)
+                    .or(handle.as_deref());
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
                 let bar = Block::new().style(Style::new().bg(theme::MUTED));
                 frame.render_widget(bar.clone(), top);
@@ -1574,6 +1733,9 @@ impl Engine {
                 }
                 if let Some(group) = session.group() {
                     frame.render_widget(group.banner(), banner);
+                }
+                if let Some(profile) = session.profile() {
+                    frame.render_widget(profile.tab_bar(banner.width), banner);
                 }
                 if on_log {
                     let fresh = loaded.map_or(0, |listing| listing.new_commits);
@@ -1609,6 +1771,8 @@ impl Engine {
                         .or(health)
                 } else if let Some(group) = session.group() {
                     group.failure().map(|failure| (failure, None)).or(health)
+                } else if let Some(profile) = session.profile() {
+                    profile.failure().map(|failure| (failure, None)).or(health)
                 } else if on_log {
                     loaded.and_then(|listing| match &listing.failure {
                         Some(failure) => Some((failure, retry.page)),
@@ -1685,6 +1849,9 @@ impl Engine {
                         session.inbox.draw(frame, inset(body), retry, now, wall);
                     }
                     Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
+                    Some(Screen::Profile(profile)) => {
+                        profile.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                    }
                     None => {
                         let pane = session.log.draw(
                             frame,

@@ -3,11 +3,11 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{account, boot, contains, press, runs, screen, secs, tap};
+use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{Filter, GroupPage, Kind, NotificationId, NotificationPage};
 use ttyl::sched::Ticket;
-use ratatui::crossterm::event::KeyCode;
 
 #[test]
 fn gn_opens_the_inbox_and_esc_returns_to_the_same_place() {
@@ -480,7 +480,7 @@ fn a_level_up_offers_no_enter() {
 }
 
 #[test]
-fn the_people_in_a_follow_group_open_nothing_yet() {
+fn the_people_in_a_follow_group_open_their_profile() {
     let at = Instant::now();
     let mut engine = boot(at);
     opened(&mut engine, at);
@@ -490,10 +490,16 @@ fn the_people_in_a_follow_group_open_nothing_yet() {
         event.kind = Kind::Followed;
         event.commit = None;
     }
+    let follower = page.events[0].actor.username.clone();
     engine.update(Event::Reply(ticket, Ok(Reply::Group(page))), at);
-    assert!(runs(&press(&mut engine, "o", at)).is_empty());
+    let effects = press(&mut engine, "o", at);
+    assert!(
+        runs(&effects).contains(&&Call::User(follower.clone())),
+        "{:#?}",
+        runs(&effects)
+    );
     let rows = screen(&mut engine, 100, 30, at);
-    assert!(!rows[29].contains("enter open"), "{rows:#?}");
+    assert!(rows[0].contains(&format!("@{follower}")), "{rows:#?}");
 }
 
 #[test]
