@@ -182,6 +182,7 @@ impl LogScreen {
             | Action::Send
             | Action::Editor
             | Action::Poll
+            | Action::Attach
             | Action::Site
             | Action::Link(_)
             | Action::Inbox

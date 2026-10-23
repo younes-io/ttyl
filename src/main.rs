@@ -1,7 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::env;
-use std::io;
+use std::fs::{self, DirBuilder, OpenOptions};
+use std::io::{self, Write as _};
 use std::ops::ControlFlow;
-use std::path::PathBuf;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -9,18 +12,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::Local;
-use ttyl::api::{self, Call, Client};
-use ttyl::device::{self, DeviceKey};
-use ttyl::draft::{self, Drafts};
-use ttyl::engine::{Effect, Engine, Event, WORKERS};
-use ttyl::sched::Ticket;
-use ttyl::{desktop, editor, signin, welcome};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self as input, DisableBracketedPaste, EnableBracketedPaste, Event as Input,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ttyl::api::{self, Call, Client};
+use ttyl::attach::{self, Attachment};
+use ttyl::desktop::{self, Clipped};
+use ttyl::device::{self, DeviceKey};
+use ttyl::draft::{self, Draft, Drafts, Target};
+use ttyl::engine::{Effect, Engine, Event, WORKERS};
+use ttyl::sched::Ticket;
+use ttyl::{editor, signin, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 
@@ -76,6 +81,9 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
     let device_name = welcome::device_name();
     let drafts = draft::dir();
     let saved = drafts.as_deref().map(draft::load).unwrap_or_default();
+    if let Some(dir) = drafts.as_deref() {
+        prune(dir, &saved);
+    }
     let mut runtime = Runtime {
         engine: Engine::new(device_name.clone(), Instant::now()).with_drafts(Drafts::new(saved)),
         client,
@@ -146,6 +154,23 @@ impl Runtime {
                     let effects = self.engine.update(event, Instant::now());
                     self.perform(terminal, effects)?;
                 }
+                Effect::Read(paths, pasted) => {
+                    let looks = (paths.into_iter())
+                        .map(|path| {
+                            let look = attach::look(&path);
+                            (path, look)
+                        })
+                        .collect();
+                    let effects = self
+                        .engine
+                        .update(Event::Read(looks, pasted), Instant::now());
+                    self.perform(terminal, effects)?;
+                }
+                Effect::Clip => {
+                    let event = self.clip();
+                    let effects = self.engine.update(event, Instant::now());
+                    self.perform(terminal, effects)?;
+                }
                 Effect::Draft(write) => {
                     let stored = match &self.drafts {
                         Some(dir) => draft::store(dir, &write),
@@ -161,6 +186,36 @@ impl Runtime {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    /// What ctrl-v in the composer brings in. An image is kept as a file, the way a picked one is.
+    fn clip(&self) -> Event {
+        let read = |paths: Vec<PathBuf>| {
+            let looks = (paths.into_iter())
+                .map(|path| {
+                    let look = attach::look(&path);
+                    (path, look)
+                })
+                .collect();
+            Event::Read(looks, None)
+        };
+        match desktop::paste() {
+            Clipped::Image(bytes) => match self.drafts.as_deref().map(|dir| keep(dir, &bytes)) {
+                Some(Ok(path)) => read(vec![path]),
+                Some(Err(error)) => {
+                    Event::Unclipped(format!("can't keep the pasted image: {error}."))
+                }
+                None => {
+                    Event::Unclipped("can't keep the pasted image: no home directory.".to_owned())
+                }
+            },
+            Clipped::Files(paths) => read(paths),
+            Clipped::Text(text) => Event::Paste(text),
+            Clipped::Empty => Event::Unclipped("no image or text on the clipboard.".to_owned()),
+            Clipped::Unreachable => Event::Unclipped(
+                "can't reach the clipboard. install wl-clipboard or xclip.".to_owned(),
+            ),
+        }
     }
 
     fn edit(&mut self, terminal: &mut DefaultTerminal, text: &str) -> Option<String> {
@@ -246,4 +301,56 @@ fn spawn_workers(client: Arc<Client>, events: Sender<Event>) -> Sender<(Ticket, 
         });
     }
     jobs
+}
+
+/// Where pasted images are kept, beside the drafts that name them.
+fn pasted(drafts: &Path) -> PathBuf {
+    drafts.with_file_name("pasted")
+}
+
+/// Writes a pasted image to a file of its own, named for when it was pasted.
+fn keep(drafts: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+    let dir = pasted(drafts);
+    DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    let extension = attach::probe(bytes).map_or("png", |probe| probe.kind.extension());
+    let stamp = Local::now().format("pasted-%H%M%S");
+    for tries in 1.. {
+        let name = match tries {
+            1 => format!("{stamp}.{extension}"),
+            _ => format!("{stamp}-{tries}.{extension}"),
+        };
+        let path = dir.join(name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut file) => return file.write_all(bytes).map(|()| path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("some name is free")
+}
+
+/// Removes pasted images no draft names any more, as after their commit went out.
+fn prune(drafts: &Path, saved: &HashMap<Target, Draft>) {
+    let named: HashSet<&Path> = (saved.values())
+        .filter_map(|draft| match &draft.attachment {
+            Attachment::Images(images) => Some(images),
+            _ => None,
+        })
+        .flatten()
+        .map(|image| image.path.as_path())
+        .collect();
+    let Ok(entries) = fs::read_dir(pasted(drafts)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !named.contains(path.as_path()) {
+            let _ = fs::remove_file(path);
+        }
+    }
 }

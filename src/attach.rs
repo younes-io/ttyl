@@ -1,4 +1,8 @@
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::Read as _;
+use std::os::unix::ffi::OsStringExt;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -216,4 +220,96 @@ pub fn file_refusal(probe: Option<Probe>, bytes: u64) -> Option<String> {
         return Some(format!("over {MAX_SIDE} px a side."));
     }
     None
+}
+
+/// What a picked file turned out to be when it was last read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Look {
+    Fine {
+        probe: Probe,
+        bytes: u64,
+    },
+    Refused(String),
+    /// Nothing is there, or it isn't a file.
+    Gone,
+}
+
+/// Reads enough of the file at `path` to know whether the server would take it.
+pub fn look(path: &Path) -> Look {
+    let Ok(meta) = fs::metadata(path) else {
+        return Look::Gone;
+    };
+    if !meta.is_file() {
+        return Look::Gone;
+    }
+    // A JPEG's frame can sit behind a lot of metadata, so a file small enough to send is read whole.
+    let head = if meta.len() > MAX_BYTES {
+        1 << 20
+    } else {
+        meta.len()
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = File::open(path).and_then(|file| file.take(head).read_to_end(&mut bytes)) {
+        return Look::Refused(format!("can't read it: {error}."));
+    }
+    let probe = probe(&bytes);
+    match (file_refusal(probe, meta.len()), probe) {
+        (None, Some(probe)) => Look::Fine {
+            probe,
+            bytes: meta.len(),
+        },
+        (refusal, _) => Look::Refused(refusal.unwrap_or_default()),
+    }
+}
+
+/// The files named by text a terminal pasted, the way it pastes a file dropped on it, if that's all the text is.
+///
+/// Terminals quote or backslash-escape a dropped path, or send it as a `file://` uri, and put several on one line
+/// or a line each.
+pub fn dropped(text: &str) -> Option<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quote = None;
+    let mut chars = text.trim().chars();
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(open), _) if ch == open => quote = None,
+            (Some('"') | None, '\\') => word.get_or_insert_default().push(chars.next()?),
+            (Some(_), _) => word.get_or_insert_default().push(ch),
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                word.get_or_insert_default();
+            }
+            (None, _) if ch.is_whitespace() => paths.extend(word.take()),
+            (None, _) => word.get_or_insert_default().push(ch),
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    paths.extend(word);
+    let paths: Option<Vec<PathBuf>> = paths.iter().map(|word| path(word)).collect();
+    paths.filter(|paths| !paths.is_empty())
+}
+
+/// An absolute path, or a local `file://` uri with its escapes undone.
+fn path(word: &str) -> Option<PathBuf> {
+    let Some(rest) = word.strip_prefix("file://") else {
+        return word.starts_with('/').then(|| PathBuf::from(word));
+    };
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    let mut rest = rest.bytes();
+    while let Some(byte) = rest.next() {
+        if byte == b'%' {
+            let hex = [rest.next()?, rest.next()?];
+            bytes.push(u8::from_str_radix(str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    Some(PathBuf::from(OsString::from_vec(bytes)))
 }

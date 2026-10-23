@@ -32,6 +32,7 @@ pub enum Action {
     Send,
     Editor,
     Poll,
+    Attach,
     Site,
     Saver,
     Link(Link),
@@ -787,6 +788,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Poll,
         hint: Some("ctrl-p poll"),
         help: "add a poll, or take it off",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[&[Key::ctrl('v')]],
+        action: Action::Attach,
+        hint: Some("ctrl-v image"),
+        help: "attach the image on the clipboard. dropping a file on the terminal works too",
     },
     Binding {
         scope: Scope::Composer,

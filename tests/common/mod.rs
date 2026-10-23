@@ -221,7 +221,9 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
             | Effect::Copy(_)
             | Effect::Open(_)
             | Effect::Draft(_)
-            | Effect::Edit(_) => None,
+            | Effect::Edit(_)
+            | Effect::Read(_, _)
+            | Effect::Clip => None,
         })
         .collect()
 }

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone};
@@ -13,6 +14,7 @@ use ratatui::widgets::{Block, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
+use crate::attach::{self, Look};
 use crate::clock::{
     FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer, Timers,
 };
@@ -63,6 +65,10 @@ pub enum Event {
     DraftFailed(io::Error),
     Edited(String),
     EditorFailed,
+    /// What reading picked files found, and the text they came from if they were pasted.
+    Read(Vec<(PathBuf, Look)>, Option<String>),
+    /// The clipboard held nothing to attach, and why.
+    Unclipped(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -75,6 +81,10 @@ pub enum Effect {
     Open(String),
     Draft(draft::Write),
     Edit(String),
+    /// Reads picked files to see whether they can go, and keeps the pasted text they came from.
+    Read(Vec<PathBuf>, Option<String>),
+    /// Takes an image, or the files or text, from the clipboard.
+    Clip,
 }
 
 pub enum Phase {
@@ -604,6 +614,17 @@ impl<'a> Selected<'a> {
     }
 }
 
+/// Puts the composer up, and reads the images a draft brought back, which may have changed since.
+fn opened(session: &mut Session, composer: Composer) -> Vec<Effect> {
+    let unread = composer.unread();
+    session.composer = Some(composer);
+    if unread.is_empty() {
+        Vec::new()
+    } else {
+        vec![Effect::Read(unread, None)]
+    }
+}
+
 fn followed(username: &str, on: bool) -> String {
     let done = if on { "following" } else { "unfollowed" };
     format!("{done} @{username} · f to undo")
@@ -612,7 +633,7 @@ fn followed(username: &str, on: bool) -> String {
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
-        (_, Action::Send | Action::Editor | Action::Poll) if sending => false,
+        (_, Action::Send | Action::Editor | Action::Poll | Action::Attach) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -710,6 +731,12 @@ impl Engine {
                 {
                     session.pasted(&text);
                 }
+                // A file dropped on the terminal arrives as a pasted path.
+                if let Some(paths) = attach::dropped(&text)
+                    && self.composing()
+                {
+                    return vec![Effect::Read(paths, Some(text))];
+                }
                 self.edit(|composer| composer.paste(&text))
             }
             Event::Reply(ticket, result) => {
@@ -747,6 +774,17 @@ impl Engine {
                 Vec::new()
             }
             Event::Edited(text) => self.edit(|composer| composer.replace(&text)),
+            Event::Read(looks, pasted) => {
+                self.edit(|composer| composer.read(looks, pasted.as_deref()))
+            }
+            Event::Unclipped(why) => {
+                if let Phase::Ready(session) = &mut self.phase
+                    && let Some(composer) = &mut session.composer
+                {
+                    composer.unattached(&why);
+                }
+                Vec::new()
+            }
             Event::EditorFailed => {
                 if let Phase::Ready(session) = &mut self.phase
                     && let Some(composer) = &mut session.composer
@@ -1018,6 +1056,12 @@ impl Engine {
         }
     }
 
+    /// Whether a composer is open and can take changes.
+    fn composing(&self) -> bool {
+        !self.sending()
+            && matches!(&self.phase, Phase::Ready(session) if session.composer.is_some())
+    }
+
     fn edit(&mut self, edit: impl FnOnce(&mut Composer) -> bool) -> Vec<Effect> {
         if self.sending() {
             return Vec::new();
@@ -1070,6 +1114,9 @@ impl Engine {
                 }
             }
             (Phase::Ready(_), Action::Poll) => return self.edit(Composer::toggle_poll),
+            (Phase::Ready(session), Action::Attach) if session.composer.is_some() => {
+                return vec![Effect::Clip];
+            }
             (Phase::Ready(session), Action::Confirm) => {
                 if let Some(composer) = &mut session.composer {
                     composer.answered();
@@ -1103,7 +1150,7 @@ impl Engine {
             (Phase::Ready(_), Action::Saver) => self.saver = Some(saver::Saver::new(now)),
             (Phase::Ready(session), Action::Compose) => {
                 let draft = self.drafts.get(&Target::New);
-                session.composer = Some(Composer::open(Target::New, None, draft));
+                return opened(session, Composer::open(Target::New, None, draft));
             }
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(&Timer::Retry);
@@ -1316,8 +1363,10 @@ impl Engine {
                     _ => Target::Quote(id),
                 };
                 let draft = self.drafts.get(&target);
-                session.composer = Some(Composer::open(target, Some(&author), draft));
-                (None, Vec::new())
+                (
+                    None,
+                    opened(session, Composer::open(target, Some(&author), draft)),
+                )
             }
         };
         if let Some(text) = toast {
