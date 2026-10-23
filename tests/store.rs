@@ -1,6 +1,6 @@
 use ttyl::api::{Account, Call, Failure, Me, Reply};
-use ttyl::model::{CommitId, Log, LogPage};
-use ttyl::store::{Slot, Store};
+use ttyl::model::{CommitId, CommitPage, Log, LogPage, RepliesPage, Shown};
+use ttyl::store::{Branch, Slot, Store};
 
 fn page(name: &str) -> LogPage {
     let json = std::fs::read_to_string(format!(
@@ -168,39 +168,53 @@ fn latest_and_an_older_page() -> Store {
 }
 
 #[test]
-fn a_first_page_that_overlaps_lands_on_top_and_keeps_the_older_pages() {
+fn a_reload_keeps_the_rows_shown_until_it_has_walked_back_as_deep_as_they_went() {
     let mut store = latest_and_an_older_page();
-    let (before, _, _) = listed(&store, Log::Latest);
-    let mut first = renamed(page("log-latest"), "new");
-    first.rows.truncate(2);
-    first
-        .rows
-        .extend(page("log-latest").rows.into_iter().take(9));
+    let before = listed(&store, Log::Latest);
+    let mut first = page("log-latest");
+    let deleted = first.rows.remove(1).commit.id.0;
     first.next_cursor = Some("after-first".to_owned());
 
-    store.apply(&Call::Page(Log::Latest), Reply::Page(first));
+    store.apply(&Call::Page(Log::Latest), Reply::Page(first.clone()));
+    assert_eq!(listed(&store, Log::Latest), before, "nothing moves halfway");
+    assert_eq!(store.refilling(Log::Latest), Some("after-first"));
+
+    let mut second = renamed(page("log-latest"), "again");
+    second.rows.truncate(4);
+    second.next_cursor = Some("after-second".to_owned());
+    store.apply(
+        &Call::Older {
+            log: Log::Latest,
+            cursor: "after-first".to_owned(),
+        },
+        Reply::Page(second.clone()),
+    );
 
     let (ids, cursor, _) = listed(&store, Log::Latest);
-    assert_eq!(ids[..2], ["new-0", "new-1"]);
-    assert_eq!(ids[2..], before[..]);
-    assert_eq!(cursor.as_deref(), Some("after-old"));
+    let expected: Vec<String> = (first.rows.iter().chain(&second.rows))
+        .map(|row| row.commit.id.0.clone())
+        .collect();
+    assert_eq!(ids, expected);
+    assert!(
+        !ids.contains(&deleted),
+        "a commit deleted elsewhere is gone"
+    );
+    assert_eq!(cursor.as_deref(), Some("after-second"));
+    assert_eq!(store.refilling(Log::Latest), None);
 }
 
 #[test]
-fn a_first_page_with_no_listed_commit_replaces_the_log() {
+fn a_reload_that_runs_out_of_pages_lands_what_there_is() {
     let mut store = latest_and_an_older_page();
-    let fresh = renamed(page("log-latest"), "new");
-    let expected: Vec<String> = fresh
-        .rows
-        .iter()
-        .map(|row| row.commit.id.0.clone())
-        .collect();
+    let mut fresh = renamed(page("log-latest"), "new");
+    fresh.rows.truncate(2);
+    fresh.next_cursor = None;
 
     store.apply(&Call::Page(Log::Latest), Reply::Page(fresh));
 
     let (ids, cursor, _) = listed(&store, Log::Latest);
-    assert_eq!(ids, expected);
-    assert_eq!(cursor, page("log-latest").next_cursor);
+    assert_eq!(ids, ["new-0", "new-1"]);
+    assert_eq!(cursor, None);
 }
 
 #[test]
@@ -246,7 +260,9 @@ fn a_count_of_new_commits_holds_only_for_the_newest_commit_it_was_asked_about() 
         "the count moves no row"
     );
 
-    store.apply(&Call::Page(Log::Latest), Reply::Page(page("log-latest")));
+    let mut fresh = page("log-latest");
+    fresh.next_cursor = None;
+    store.apply(&Call::Page(Log::Latest), Reply::Page(fresh));
     assert_eq!(listed(&store, Log::Latest).2, 0);
 }
 
@@ -280,4 +296,104 @@ fn a_page_with_more_replies_than_were_listed_makes_the_thread_ask_again() {
         !asks(&store),
         "a refresh with the same count keeps the list"
     );
+}
+
+#[test]
+fn a_commit_fetched_again_without_its_quote_drops_it() {
+    let mut store = store();
+    let json = std::fs::read_to_string(format!(
+        "{}/fixtures/commit-quote.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let quoting = CommitPage::parse(&json).unwrap();
+    let id = quoting.commit.commit.id.clone();
+    let call = Call::Commit(id.clone());
+    store.apply(&call, Reply::Thread(Box::new(quoting.clone())));
+    assert!(store.row(&id).unwrap().quoted_commit.is_some());
+
+    let mut unquoted = quoting;
+    unquoted.commit.quoted_commit = None;
+    store.apply(&call, Reply::Thread(Box::new(unquoted)));
+
+    assert!(
+        store.row(&id).unwrap().quoted_commit.is_none(),
+        "a quote deleted elsewhere is gone"
+    );
+}
+
+fn replies_page(prefix: &str, count: usize, next_cursor: Option<&str>) -> RepliesPage {
+    let json = std::fs::read_to_string(format!(
+        "{}/fixtures/replies-paged.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut page = RepliesPage::parse(&json).unwrap();
+    let template = page.replies[0].clone();
+    page.replies = (0..count)
+        .map(|index| {
+            let mut reply = template.clone();
+            if let Shown::Live(reply) = &mut reply {
+                reply.commit.id = CommitId(format!("{prefix}-{index}"));
+            }
+            reply
+        })
+        .collect();
+    page.next_cursor = next_cursor.map(str::to_owned);
+    page
+}
+
+fn reply_ids(store: &Store, id: &CommitId) -> Vec<String> {
+    let Some(Branch::Listed(replies)) = store.replies(id) else {
+        panic!("the replies are listed");
+    };
+    replies.ids.iter().map(|id| id.0.clone()).collect()
+}
+
+#[test]
+fn a_reloaded_reply_list_swaps_in_once_it_is_as_deep_as_the_one_shown() {
+    let mut store = store();
+    let owner = CommitId("owner".to_owned());
+    let first = |cursor: Option<&str>| Call::Replies {
+        id: owner.clone(),
+        cursor: cursor.map(str::to_owned),
+    };
+    store.apply(
+        &first(None),
+        Reply::Replies(replies_page("a", 3, Some("p2"))),
+    );
+    store.apply(
+        &first(Some("p2")),
+        Reply::Replies(replies_page("b", 3, Some("p3"))),
+    );
+    let before = reply_ids(&store, &owner);
+    assert_eq!(before.len(), 6);
+
+    let mut fresh = replies_page("a", 3, Some("p2"));
+    fresh.replies.remove(1);
+    store.apply(&first(None), Reply::Replies(fresh));
+    assert_eq!(reply_ids(&store, &owner), before, "nothing moves halfway");
+    assert_eq!(store.refilling_replies(&owner), Some("p2"));
+
+    store.apply(
+        &first(Some("p2")),
+        Reply::Replies(replies_page("b", 3, Some("p3"))),
+    );
+
+    assert_eq!(
+        reply_ids(&store, &owner),
+        before,
+        "five rows are not as deep as six"
+    );
+    store.apply(
+        &first(Some("p3")),
+        Reply::Replies(replies_page("c", 1, None)),
+    );
+
+    assert_eq!(
+        reply_ids(&store, &owner),
+        ["a-0", "a-2", "b-0", "b-1", "b-2", "c-0"],
+        "a reply deleted elsewhere is gone"
+    );
+    assert_eq!(store.refilling_replies(&owner), None);
 }

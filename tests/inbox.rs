@@ -2,7 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{account, boot, contains, press, reload, runs, screen, secs, tap};
+use common::{account, answer_pages, boot, contains, press, reload, runs, screen, secs, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
@@ -606,7 +606,9 @@ fn a_refresh_says_so_when_the_list_lands_and_opening_stays_quiet() {
         !contains(&screen(&mut engine, 100, 30, at), "refreshed"),
         "opening is not a refresh"
     );
-    let (ticket, _, _) = list_call(&reload(&mut engine, at + secs(1)));
+    let effects = reload(&mut engine, at + secs(1));
+    answer_pages(&mut engine, &effects, at + secs(1));
+    let (ticket, _, _) = list_call(&effects);
     land(
         &mut engine,
         ticket,

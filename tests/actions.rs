@@ -291,7 +291,7 @@ fn a_star_that_could_not_reach_the_server_stays_and_is_sent_once_it_is_back() {
     );
 
     let effects = reload(&mut engine, at + secs(1));
-    let [Effect::Run(page, Call::Page(log))] = effects.as_slice() else {
+    let [Effect::Run(page, Call::Page(log)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     let effects = reply(

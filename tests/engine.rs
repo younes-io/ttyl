@@ -4,8 +4,8 @@ use std::io;
 use std::time::Instant;
 
 use common::{
-    account, boot, boot_serving, contains, following_nobody, help_entry, key, open_browser, page,
-    press, reload, runs, screen, secs, serve,
+    account, answer_pages, boot, boot_serving, contains, following_nobody, help_entry, key,
+    open_browser, page, press, reload, runs, screen, secs, serve,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
@@ -182,21 +182,26 @@ fn a_429_holds_every_call_until_retry_after_passes() {
     let at = Instant::now();
     let mut engine = boot(at);
     let effects = reload(&mut engine, at);
-    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+    let [Effect::Run(_, Call::Page(Log::Following)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
-    engine.update(
-        Event::Reply(
-            *ticket,
-            Err(Error::Api {
-                status: 429,
-                code: Some("rate_limited".to_owned()),
-                message: "slow down".to_owned(),
-                retry_after: Some(secs(7)),
-            }),
-        ),
-        at,
-    );
+    for effect in effects {
+        let Effect::Run(ticket, _) = effect else {
+            panic!("{effect:?}");
+        };
+        engine.update(
+            Event::Reply(
+                ticket,
+                Err(Error::Api {
+                    status: 429,
+                    code: Some("rate_limited".to_owned()),
+                    message: "slow down".to_owned(),
+                    retry_after: Some(secs(7)),
+                }),
+            ),
+            at,
+        );
+    }
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "rate limited, retrying in 7s"), "{rows:#?}");
 
@@ -576,13 +581,12 @@ fn refresh_toasts_then_the_hints_come_back() {
     let at = Instant::now();
     let mut engine = boot(at);
     let effects = reload(&mut engine, at);
-    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+    let [Effect::Run(_, Call::Page(Log::Following)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
-    engine.update(
-        Event::Reply(*ticket, Ok(Reply::Page(page(Log::Following)))),
-        at + secs(1),
-    );
+    answer_pages(&mut engine, &effects, at + secs(1));
+    let queued = engine.pump(at + secs(1));
+    answer_pages(&mut engine, &queued, at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));
     assert_eq!(rows[19], " following refreshed");
 
@@ -683,7 +687,7 @@ fn another_logs_failure_stays_off_the_active_logs_footer() {
     let at = Instant::now();
     let mut engine = boot(at);
     let effects = reload(&mut engine, at);
-    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Following)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     press(&mut engine, "2", at);
@@ -711,7 +715,7 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
     let mut engine = boot(at);
     press(&mut engine, "2", at);
     let effects = reload(&mut engine, at + secs(10));
-    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Latest)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at + secs(10));
@@ -723,21 +727,25 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
         "{:?}",
         rows[29]
     );
-    for effect in engine.pump(at + secs(30)) {
-        match effect {
-            Effect::Run(ticket, Call::Me) => {
-                engine.update(
-                    Event::Reply(ticket, Ok(Reply::Account(account(0)))),
-                    at + secs(30),
-                );
+    while let effects = engine.pump(at + secs(30))
+        && !effects.is_empty()
+    {
+        for effect in effects {
+            match effect {
+                Effect::Run(ticket, Call::Me) => {
+                    engine.update(
+                        Event::Reply(ticket, Ok(Reply::Account(account(0)))),
+                        at + secs(30),
+                    );
+                }
+                Effect::Run(ticket, Call::Since { log, .. } | Call::Page(log)) => {
+                    engine.update(
+                        Event::Reply(ticket, Ok(Reply::Page(page(log)))),
+                        at + secs(30),
+                    );
+                }
+                other => panic!("{other:?}"),
             }
-            Effect::Run(ticket, Call::Since { log, .. }) => {
-                engine.update(
-                    Event::Reply(ticket, Ok(Reply::Page(page(log)))),
-                    at + secs(30),
-                );
-            }
-            other => panic!("{other:?}"),
         }
     }
     let rows = screen(&mut engine, 100, 30, at + secs(31));
@@ -843,7 +851,7 @@ fn the_help_overlay_footer_names_the_key_that_closes_it() {
     let at = Instant::now();
     let mut engine = boot(at);
     let effects = reload(&mut engine, at);
-    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Following)), ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     engine.update(Event::Reply(*ticket, Err(maintenance())), at);
@@ -861,10 +869,11 @@ fn a_failing_footer_keeps_help_wherever_a_working_one_does() {
     let mut working = boot(at);
     let mut failing = boot(at);
     let effects = reload(&mut failing, at);
-    let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Following)), rest @ ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     failing.update(Event::Reply(*ticket, Err(offline())), at);
+    answer_pages(&mut failing, rest, at);
     for width in 1..=120 {
         let foot = |engine: &mut Engine| screen(engine, width, 20, at + secs(1))[19].clone();
         let (working, failing) = (foot(&mut working), foot(&mut failing));

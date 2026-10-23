@@ -504,10 +504,11 @@ fn a_narrow_footer_error_still_ends_in_help() {
     let mut engine = boot(at);
     common::press(&mut engine, "2", at);
     let effects = common::reload(&mut engine, at);
-    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Latest)), rest @ ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     engine.update(Event::Reply(*ticket, Err(Error::Unexpected(502))), at);
+    common::answer_pages(&mut engine, rest, at);
     let rows = common::screen(&mut engine, 120, 20, at + secs(1));
     assert_eq!(
         rows[19],

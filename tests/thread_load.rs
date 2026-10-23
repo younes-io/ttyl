@@ -165,9 +165,13 @@ fn opening_asks_for_the_commit_and_its_replies_in_the_same_update() {
 fn opening_spends_the_reserve_and_nested_lists_wait_for_it() {
     let at = Instant::now();
     let mut engine = boot_serving(at, world_pages);
-    for _ in 0..80 {
+    loop {
         let effects = reload(&mut engine, at);
+        let held = effects.len() == 1;
         settle(&mut engine, effects, HEIGHT, at);
+        if held {
+            break;
+        }
     }
     let effects = tap(&mut engine, KeyCode::Enter, at);
     assert_eq!(
@@ -447,4 +451,38 @@ fn a_new_notification_reloads_every_list_in_the_peeked_thread() {
         };
         assert!(calls.contains(&call), "{call:?} in {calls:?}");
     }
+}
+
+fn every_log_reloaded(calls: &[Call]) -> bool {
+    [Log::Following, Log::Latest, Log::Trending]
+        .iter()
+        .all(|log| calls.contains(&Call::Page(*log)))
+}
+
+#[test]
+fn reloading_from_a_thread_reloads_the_logs_under_it() {
+    let (mut engine, at) = opened("", HEIGHT);
+    let effects = reload(&mut engine, at + Duration::from_secs(1));
+    let calls = settle(&mut engine, effects, HEIGHT, at + Duration::from_secs(1));
+    assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");
+    assert!(every_log_reloaded(&calls), "{calls:?}");
+}
+
+#[test]
+fn coming_back_to_the_terminal_reloads_quietly_at_most_every_ten_seconds() {
+    let (mut engine, at) = opened("", HEIGHT);
+    let back = |engine: &mut Engine, secs: u64| {
+        let at = at + Duration::from_secs(secs);
+        let effects = engine.update(Event::Focused, at);
+        settle(engine, effects, HEIGHT, at)
+    };
+
+    let calls = back(&mut engine, 1);
+    assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");
+    assert!(every_log_reloaded(&calls), "{calls:?}");
+    let footer = screen(&mut engine, WIDTH, HEIGHT, at + Duration::from_secs(1));
+    assert!(!contains(&footer, "refreshed"), "{footer:#?}");
+
+    assert_eq!(back(&mut engine, 5), [], "a quick flick away and back");
+    assert!(every_log_reloaded(&back(&mut engine, 12)));
 }

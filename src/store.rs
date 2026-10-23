@@ -19,6 +19,8 @@ pub struct Store {
     logs: HashMap<Log, Slot>,
     threads: HashMap<CommitId, Thread>,
     replies: HashMap<CommitId, Branch>,
+    refills: HashMap<Log, Refill<Listing>>,
+    reply_refills: HashMap<CommitId, Refill<Replies>>,
     star_wants: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
     deleting: HashSet<CommitId>,
@@ -99,6 +101,43 @@ impl Listing {
     fn ends_at(&self, cursor: &str) -> bool {
         self.next_cursor.as_deref() == Some(cursor)
     }
+
+    /// Adds an older page's new ids. A page that adds nothing ends the list, so following its
+    /// cursor doesn't ask again on every pump.
+    fn extend(&mut self, ids: Vec<CommitId>, next_cursor: Option<String>) {
+        self.next_cursor = extend(&mut self.ids, ids, next_cursor);
+    }
+}
+
+impl Replies {
+    fn extend(&mut self, ids: Vec<CommitId>, next_cursor: Option<String>) {
+        self.next_cursor = extend(&mut self.ids, ids, next_cursor);
+        self.more = None;
+    }
+}
+
+/// Appends the ids not listed yet, and returns the cursor to follow next, if the page added any.
+fn extend(
+    listed: &mut Vec<CommitId>,
+    ids: Vec<CommitId>,
+    next_cursor: Option<String>,
+) -> Option<String> {
+    let before = listed.len();
+    for id in ids {
+        if !listed.contains(&id) {
+            listed.push(id);
+        }
+    }
+    next_cursor.filter(|_| listed.len() > before)
+}
+
+/// A list fetched again from its first page. It fills back to the depth the reader had loaded
+/// before it takes the old list's place, so a reload drops what is gone everywhere at once and
+/// never cuts the list short under the reader.
+#[derive(Debug, Clone)]
+struct Refill<T> {
+    fresh: T,
+    depth: usize,
 }
 
 impl Store {
@@ -111,6 +150,8 @@ impl Store {
             logs: HashMap::new(),
             threads: HashMap::new(),
             replies: HashMap::new(),
+            refills: HashMap::new(),
+            reply_refills: HashMap::new(),
             star_wants: HashMap::new(),
             follows: HashMap::new(),
             deleting: HashSet::new(),
@@ -361,18 +402,28 @@ impl Store {
         match target {
             Target::New | Target::Quote(_) => {
                 for log in [Log::Latest, Log::Following] {
-                    if let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log)
-                        && !listing.ids.contains(&id)
-                    {
-                        listing.ids.insert(0, id.clone());
+                    let refill = self.refills.get_mut(&log).map(|refill| &mut refill.fresh);
+                    let shown = match self.logs.get_mut(&log) {
+                        Some(Slot::Loaded(listing)) => Some(listing),
+                        _ => None,
+                    };
+                    for listing in shown.into_iter().chain(refill) {
+                        if !listing.ids.contains(&id) {
+                            listing.ids.insert(0, id.clone());
+                        }
                     }
                 }
             }
             Target::Reply(parent) => {
-                if let Some(Branch::Listed(replies)) = self.replies.get_mut(parent)
-                    && !replies.ids.contains(&id)
-                {
-                    replies.ids.push(id);
+                let refill = (self.reply_refills.get_mut(parent)).map(|refill| &mut refill.fresh);
+                let shown = match self.replies.get_mut(parent) {
+                    Some(Branch::Listed(replies)) => Some(replies),
+                    _ => None,
+                };
+                for replies in shown.into_iter().chain(refill) {
+                    if !replies.ids.contains(&id) {
+                        replies.ids.push(id.clone());
+                    }
                 }
                 if let Some(row) = self.rows.get_mut(parent) {
                     row.replies_count += 1;
@@ -432,7 +483,7 @@ impl Store {
     }
 
     fn land_replies(&mut self, id: &CommitId, cursor: Option<&str>, page: RepliesPage) {
-        let mut ids: Vec<CommitId> = page
+        let ids: Vec<CommitId> = page
             .replies
             .into_iter()
             .map(|reply| {
@@ -459,46 +510,52 @@ impl Store {
                 })
             })
             .collect();
-        let mut next_cursor = page.next_cursor;
-        let old = match self.replies.remove(id) {
-            Some(Branch::Listed(old)) => Some(old),
-            Some(Branch::Failed(_)) | None => None,
-        };
-        let replies = match (cursor, old) {
-            (None, Some(old)) => {
-                if let Some(last) = old.ids.iter().rposition(|each| ids.contains(each)) {
-                    ids.extend(old.ids[last + 1..].iter().cloned());
-                    next_cursor = old.next_cursor;
-                }
-                Replies {
-                    ids,
-                    next_cursor,
-                    reload: None,
-                    more: old.more,
-                }
-            }
-            (None, None) => Replies {
+        let next_cursor = page.next_cursor;
+        let Some(cursor) = cursor else {
+            let depth = match self.replies.get(id) {
+                Some(Branch::Listed(old)) => old.ids.len(),
+                Some(Branch::Failed(_)) | None => 0,
+            };
+            let fresh = Replies {
                 ids,
                 next_cursor,
                 reload: None,
                 more: None,
-            },
-            (Some(cursor), Some(mut old)) => {
-                if old.next_cursor.as_deref() == Some(cursor) {
-                    for id in ids {
-                        if !old.ids.contains(&id) {
-                            old.ids.push(id);
-                        }
-                    }
-                    old.next_cursor = next_cursor;
-                    old.more = None;
-                }
-                old
-            }
-            (Some(_), None) => return,
+            };
+            self.settle_replies(id, Refill { fresh, depth });
+            return;
         };
-        self.replies.insert(id.clone(), Branch::Listed(replies));
+        if let Some(mut refill) = self.reply_refills.remove(id) {
+            if refill.fresh.next_cursor.as_deref() == Some(cursor) {
+                refill.fresh.extend(ids, next_cursor);
+                self.settle_replies(id, refill);
+                return;
+            }
+            self.reply_refills.insert(id.clone(), refill);
+        }
+        if let Some(Branch::Listed(old)) = self.replies.get_mut(id)
+            && old.next_cursor.as_deref() == Some(cursor)
+        {
+            old.extend(ids, next_cursor);
+            self.generation += 1;
+        }
+    }
+
+    /// Shows a refilled reply list once it is as deep as the one it replaces, or has run out.
+    fn settle_replies(&mut self, id: &CommitId, refill: Refill<Replies>) {
         self.generation += 1;
+        if refill.fresh.next_cursor.is_some() && refill.fresh.ids.len() < refill.depth {
+            self.reply_refills.insert(id.clone(), refill);
+        } else {
+            self.reply_refills.remove(id);
+            self.replies
+                .insert(id.clone(), Branch::Listed(refill.fresh));
+        }
+    }
+
+    /// The cursor of the next page a reply list refills from, while it does.
+    pub fn refilling_replies(&self, id: &CommitId) -> Option<&str> {
+        self.reply_refills.get(id)?.fresh.next_cursor.as_deref()
     }
 
     fn keep<T>(
@@ -527,15 +584,10 @@ impl Store {
     fn keep_counted(&mut self, card: Card, replies_count: Option<u32>) -> CommitId {
         let id = card.commit.id.clone();
         let old = self.rows.remove(&id);
-        let (old_count, old_quote, reply_preview) = old
-            .map(|old| {
-                (
-                    Some(old.replies_count),
-                    old.quoted_commit,
-                    old.reply_preview,
-                )
-            })
-            .unwrap_or_else(|| (None, None, no_preview()));
+        // A card has no reply preview, so the one a log row brought stays.
+        let (old_count, reply_preview) = old
+            .map(|old| (Some(old.replies_count), old.reply_preview))
+            .unwrap_or_else(|| (None, no_preview()));
         self.rows.insert(
             id.clone(),
             Row {
@@ -544,7 +596,7 @@ impl Store {
                 stars_count: card.stars_count,
                 starred: card.starred,
                 replies_count: replies_count.or(old_count).unwrap_or(0),
-                quoted_commit: card.quoted_commit.or(old_quote),
+                quoted_commit: card.quoted_commit,
                 reply_preview,
                 deletion: None,
             },
@@ -554,45 +606,54 @@ impl Store {
     }
 
     fn land_first_page(&mut self, page: LogPage) {
-        let mut ids = self.absorb(page.rows);
-        let mut next_cursor = page.next_cursor;
-        if let Some(Slot::Loaded(old)) = self.logs.get(&page.log)
-            && !page.is_ranked
-            && let Some(last) = old.ids.iter().rposition(|id| ids.contains(id))
-        {
-            ids.extend(old.ids[last + 1..].iter().cloned());
-            next_cursor.clone_from(&old.next_cursor);
-        }
-        let listing = Listing {
+        let ids = self.absorb(page.rows);
+        let depth = match self.logs.get(&page.log) {
+            Some(Slot::Loaded(old)) => old.ids.len(),
+            Some(Slot::Loading | Slot::Failed(_)) | None => 0,
+        };
+        let fresh = Listing {
             ids,
             is_ranked: page.is_ranked,
-            next_cursor,
+            next_cursor: page.next_cursor,
             new_commits: 0,
             failure: None,
             suggestions: page.suggestions,
         };
-        self.logs.insert(page.log, Slot::Loaded(listing));
-        self.generation += 1;
+        self.settle(page.log, Refill { fresh, depth });
     }
 
     fn append(&mut self, log: Log, cursor: &str, page: LogPage) {
-        if !matches!(self.logs.get(&log), Some(Slot::Loaded(listing)) if listing.ends_at(cursor)) {
-            return;
-        }
-        self.generation += 1;
         let ids = self.absorb(page.rows);
-        let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log) else {
-            unreachable!("the listing was just checked");
-        };
-        let before = listing.ids.len();
-        for id in ids {
-            if !listing.ids.contains(&id) {
-                listing.ids.push(id);
+        self.generation += 1;
+        if let Some(mut refill) = self.refills.remove(&log) {
+            if refill.fresh.ends_at(cursor) {
+                refill.fresh.extend(ids, page.next_cursor);
+                self.settle(log, refill);
+                return;
             }
+            self.refills.insert(log, refill);
         }
-        // A page that adds nothing leaves the reader as near the end as before, so following its
-        // cursor would ask again on every pump.
-        listing.next_cursor = page.next_cursor.filter(|_| listing.ids.len() > before);
+        if let Some(Slot::Loaded(listing)) = self.logs.get_mut(&log)
+            && listing.ends_at(cursor)
+        {
+            listing.extend(ids, page.next_cursor);
+        }
+    }
+
+    /// Shows a refilled log once it is as deep as the one it replaces, or has run out.
+    fn settle(&mut self, log: Log, refill: Refill<Listing>) {
+        self.generation += 1;
+        if refill.fresh.next_cursor.is_some() && refill.fresh.ids.len() < refill.depth {
+            self.refills.insert(log, refill);
+        } else {
+            self.refills.remove(&log);
+            self.logs.insert(log, Slot::Loaded(refill.fresh));
+        }
+    }
+
+    /// The cursor of the next page a log refills from, while it does.
+    pub fn refilling(&self, log: Log) -> Option<&str> {
+        self.refills.get(&log)?.fresh.next_cursor.as_deref()
     }
 
     /// Keeps rows a screen lists on its own, and returns their ids in order.
@@ -615,6 +676,7 @@ impl Store {
             .is_some_and(|old| old.replies_count != row.replies_count)
         {
             self.replies.remove(&id);
+            self.reply_refills.remove(&id);
         }
         self.gone.remove(&id);
         self.rows.insert(id.clone(), row);

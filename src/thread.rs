@@ -316,6 +316,18 @@ impl ThreadScreen {
                 ));
             }
         }
+        for owner in self.lists(store) {
+            if let Some(cursor) = store.refilling_replies(&owner) {
+                wants.push((
+                    Call::Replies {
+                        id: owner.clone(),
+                        cursor: Some(cursor.to_owned()),
+                    },
+                    Priority::Later,
+                    Timer::More(owner),
+                ));
+            }
+        }
         let pieces = self.pieces(store, &BARE);
         let ids: Vec<&CommitId> = pieces.iter().filter_map(Piece::id).collect();
         let at = self.index(&ids);

@@ -401,7 +401,7 @@ impl ProfileScreen {
         self.list_mut().asked(now)
     }
 
-    /// Clears what failed so R shows the loading line again where nothing is shown.
+    /// Clears what failed so a reload shows the loading line again where nothing is shown.
     pub fn reload(&mut self, now: Instant) {
         if self.profile.is_none() {
             self.failure = None;

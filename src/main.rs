@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use chrono::Local;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
-    self as input, DisableBracketedPaste, EnableBracketedPaste, Event as Input,
+    self as input, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste,
+    EnableFocusChange, Event as Input,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
@@ -62,9 +63,9 @@ fn start() -> Result<(), String> {
     let mut terminal = ratatui::init();
     // Asked before input is read on another thread, which would take the terminal's answer.
     let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-    let _ = execute!(io::stdout(), EnableBracketedPaste);
+    let _ = execute!(io::stdout(), EnableBracketedPaste, EnableFocusChange);
     let result = run(&mut terminal, client, picker);
-    let _ = execute!(io::stdout(), DisableBracketedPaste);
+    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableFocusChange);
     ratatui::restore();
     result.map_err(|error| error.to_string())
 }
@@ -251,11 +252,21 @@ impl Runtime {
             return None;
         }
         let mut out = io::stdout();
-        let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = execute!(
+            out,
+            DisableBracketedPaste,
+            DisableFocusChange,
+            LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
         let edited = editor::edit(&editor::chosen(), text);
         let _ = terminal::enable_raw_mode();
-        let _ = execute!(out, EnterAlternateScreen, EnableBracketedPaste);
+        let _ = execute!(
+            out,
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableFocusChange
+        );
         let _ = terminal.clear();
         drop(resume);
         edited
@@ -288,6 +299,7 @@ fn spawn_input(events: Sender<Event>) -> Sender<Pause> {
                 Ok(Input::Key(key)) => Event::Key(key),
                 Ok(Input::Paste(text)) => Event::Paste(text),
                 Ok(Input::Resize(..)) => Event::Tick,
+                Ok(Input::FocusGained) => Event::Focused,
                 Ok(_) => continue,
                 Err(error) => {
                     let _ = events.send(Event::InputLost(error));

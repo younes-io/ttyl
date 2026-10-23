@@ -398,6 +398,15 @@ pub fn reload(engine: &mut Engine, at: Instant) -> Vec<Effect> {
     effects
 }
 
+/// Answers each log page among `effects` with that log's fixture.
+pub fn answer_pages(engine: &mut Engine, effects: &[Effect], at: Instant) {
+    for effect in effects {
+        if let &Effect::Run(ticket, Call::Page(log)) = effect {
+            engine.update(Event::Reply(ticket, Ok(Reply::Page(page(log)))), at);
+        }
+    }
+}
+
 pub fn tap(engine: &mut Engine, code: KeyCode, at: Instant) -> Vec<Effect> {
     let mut effects = engine.update(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), at);
     effects.extend(engine.pump(at));

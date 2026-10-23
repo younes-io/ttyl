@@ -16,7 +16,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::attach::{self, Look};
 use crate::clock::{
-    FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer, Timers,
+    FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
+    Timers,
 };
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
@@ -73,6 +74,8 @@ pub enum Event {
     Unclipped(String),
     /// An image fetched for the viewer, or why it couldn't be.
     Fetched(String, Result<image::DynamicImage, String>),
+    /// The terminal came back into focus.
+    Focused,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -699,6 +702,7 @@ pub struct Engine {
     drafts: Drafts,
     saver: Option<saver::Saver>,
     gallery: Gallery,
+    reloaded_at: Option<Instant>,
 }
 
 impl Engine {
@@ -717,6 +721,7 @@ impl Engine {
             drafts: Drafts::default(),
             saver: None,
             gallery: Gallery::new(Picker::halfblocks()),
+            reloaded_at: None,
         }
     }
 
@@ -807,6 +812,15 @@ impl Engine {
                 Vec::new()
             }
             Event::Tick => Vec::new(),
+            Event::Focused => {
+                if self
+                    .reloaded_at
+                    .is_none_or(|at| now.duration_since(at) >= FOCUS_RELOAD)
+                {
+                    self.reload(false, now);
+                }
+                Vec::new()
+            }
             Event::SignIn(result) => {
                 if let Phase::SignIn(step) = &mut self.phase {
                     *step = match result {
@@ -886,6 +900,7 @@ impl Engine {
                 | Timer::OlderInbox(_) => {}
             }
         }
+        self.refill_logs();
         self.load_older();
         self.load_older_inbox();
         self.load_older_group();
@@ -926,6 +941,26 @@ impl Engine {
         .min()
     }
 
+    /// Walks each reloaded log back to the depth it was read to.
+    fn refill_logs(&mut self) {
+        let Phase::Ready(session) = &self.phase else {
+            return;
+        };
+        for log in LOGS {
+            if let Some(cursor) = session.store.refilling(log)
+                && !self.timers.is_set(&Timer::Older(log))
+            {
+                let cursor = cursor.to_owned();
+                let priority = if log == session.log.active() {
+                    Priority::Now
+                } else {
+                    Priority::Later
+                };
+                self.sched.send(Call::Older { log, cursor }, priority);
+            }
+        }
+    }
+
     fn load_older(&mut self) {
         let Phase::Ready(session) = &self.phase else {
             return;
@@ -934,6 +969,9 @@ impl Engine {
         let Slot::Loaded(listing) = session.store.slot(log) else {
             return;
         };
+        if session.store.refilling(log).is_some() {
+            return;
+        }
         let Some(cursor) = &listing.next_cursor else {
             return;
         };
@@ -1228,16 +1266,11 @@ impl Engine {
                     fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
                 }
             }
-            (
-                Phase::Ready(session),
-                Action::Refresh | Action::NextFilter | Action::PreviousFilter,
-            ) if session.on_inbox() => {
+            (Phase::Ready(_), Action::Refresh) => self.reload(true, now),
+            (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
+                if session.on_inbox() =>
+            {
                 session.inbox.act(action, &session.store);
-                if action == Action::Refresh {
-                    session
-                        .asked_to_refresh
-                        .insert(Refresh::Inbox(session.inbox.filter()));
-                }
                 fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
             }
             (Phase::Ready(session), Action::Open) if session.on_inbox() => {
@@ -1269,15 +1302,6 @@ impl Engine {
                 let opens = session.profile().and_then(ProfileScreen::opens);
                 self.open_row(opens, now);
             }
-            (Phase::Ready(session), Action::Refresh) if session.profile().is_some() => {
-                let Some(Screen::Profile(profile)) = session.stack.last_mut() else {
-                    unreachable!("a profile is open");
-                };
-                profile.reload(now);
-                self.sched
-                    .send(Call::User(profile.username().to_owned()), Priority::Now);
-                self.sched.send(profile.tab_call(), Priority::Now);
-            }
             (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
                 if session.profile().is_some() =>
             {
@@ -1287,13 +1311,6 @@ impl Engine {
                 if profile.act(action, now) {
                     self.sched.send(profile.tab_call(), Priority::Now);
                 }
-            }
-            (Phase::Ready(session), Action::Refresh) if session.group().is_some() => {
-                fetch_group(&mut self.sched, session.group().expect("a group is open"));
-            }
-            (Phase::Ready(session), Action::Refresh) if session.thread().is_some() => {
-                let thread = session.thread().expect("a thread is open");
-                refresh_thread(&mut self.sched, &mut self.timers, thread, &session.store);
             }
             (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
             (Phase::Ready(session), action) if !session.stack.is_empty() => {
@@ -1313,20 +1330,59 @@ impl Engine {
                     fetch_thread(&mut self.sched, &mut self.timers, id);
                 }
             }
-            (Phase::Ready(session), Action::Refresh) => {
-                let log = session.log.active();
-                session.asked_to_refresh.insert(Refresh::Log(log));
-                self.timers.clear(&Timer::Reload(log));
-                self.timers.clear(&Timer::Older(log));
-                self.sched.send(Call::Page(log), Priority::Now);
-                if let Some(peek) = session.log.peek(&session.store, now) {
-                    refresh_thread(&mut self.sched, &mut self.timers, peek, &session.store);
-                }
-            }
             (Phase::Ready(session), action) => session.log.act(action, &session.store),
             (Phase::Splash | Phase::SignIn(_), _) => {}
         }
         Vec::new()
+    }
+
+    /// Reloads all the session shows: every log, the peek, and each screen on the stack.
+    /// The inbox reloads only on screen, since reading it marks it read. `asked` toasts when the screen shown lands.
+    fn reload(&mut self, asked: bool, now: Instant) {
+        let Phase::Ready(session) = &mut self.phase else {
+            return;
+        };
+        self.reloaded_at = Some(now);
+        let shown = session.log.active();
+        for log in LOGS {
+            self.timers.clear(&Timer::Reload(log));
+            self.timers.clear(&Timer::Older(log));
+            let priority = if log == shown && session.stack.is_empty() {
+                Priority::Now
+            } else {
+                Priority::Later
+            };
+            self.sched.send(Call::Page(log), priority);
+        }
+        if asked && session.stack.is_empty() {
+            session.asked_to_refresh.insert(Refresh::Log(shown));
+        }
+        if let Some(peek) = session.log.peek(&session.store, now) {
+            refresh_thread(&mut self.sched, &mut self.timers, peek, &session.store);
+        }
+        if session.on_inbox() {
+            if asked {
+                session
+                    .asked_to_refresh
+                    .insert(Refresh::Inbox(session.inbox.filter()));
+            }
+            fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
+        }
+        for screen in &mut session.stack {
+            match screen {
+                Screen::Thread(thread) => {
+                    refresh_thread(&mut self.sched, &mut self.timers, thread, &session.store);
+                }
+                Screen::Group(group) => fetch_group(&mut self.sched, group),
+                Screen::Profile(profile) => {
+                    profile.reload(now);
+                    self.sched
+                        .send(Call::User(profile.username().to_owned()), Priority::Now);
+                    self.sched.send(profile.tab_call(), Priority::Now);
+                }
+                Screen::Inbox => {}
+            }
+        }
     }
 
     /// Pushes what a group or profile row opens: a thread, or someone's profile.
@@ -1556,7 +1612,7 @@ impl Engine {
             }
             _ => {}
         }
-        let Call::Page(log) = call else {
+        let (Call::Page(log) | Call::Older { log, .. }) = call else {
             let answered = match (call, &reply) {
                 (Call::User(username), Reply::User(profile)) => {
                     Some((username, profile.is_following))
@@ -1610,13 +1666,14 @@ impl Engine {
             }
             return Vec::new();
         };
-        let refreshed = session.asked_to_refresh.remove(&Refresh::Log(*log));
         let selected = session.log.selected_id(*log, &session.store).cloned();
         session.store.apply(call, reply);
         session
             .log
             .reselect(*log, selected.as_ref(), &session.store);
-        if refreshed {
+        if session.store.refilling(*log).is_none()
+            && session.asked_to_refresh.remove(&Refresh::Log(*log))
+        {
             self.toast(format!("{} refreshed", log.slug()), now);
         }
         Vec::new()

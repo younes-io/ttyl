@@ -2,7 +2,9 @@ mod common;
 
 use std::time::Instant;
 
-use common::{account, boot, contains, cursor, older, page, press, reload, runs, screen, secs};
+use common::{
+    account, answer_pages, boot, contains, cursor, older, page, press, reload, runs, screen, secs,
+};
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{Log, LogPage};
@@ -218,9 +220,10 @@ fn r_loads_the_new_commits_above_and_keeps_the_cursor_on_its_commit() {
     let before = screen(&mut engine, 100, 40, at + secs(30));
 
     let effects = reload(&mut engine, at + secs(30));
-    let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
+    let [Effect::Run(ticket, Call::Page(Log::Latest)), rest @ ..] = effects.as_slice() else {
         panic!("{effects:?}");
     };
+    answer_pages(&mut engine, rest, at + secs(30));
     let mut first = older(Log::Latest, "new", 2, Some(&cursor(Log::Latest)));
     first.rows.extend(page(Log::Latest).rows);
     engine.update(Event::Reply(*ticket, Ok(Reply::Page(first))), at + secs(30));

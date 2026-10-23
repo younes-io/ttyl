@@ -11,6 +11,8 @@ pub const GLOW: Duration = Duration::from_secs(5);
 pub const FRAME: Duration = Duration::from_millis(100);
 pub const SECOND: Duration = Duration::from_secs(1);
 pub const SPARK_FRAME: Duration = Duration::from_millis(33);
+/// How long after a reload coming back to the terminal reloads again, so flicking between windows doesn't.
+pub const FOCUS_RELOAD: Duration = Duration::from_secs(10);
 
 /// A short animation on the selected card after the user stars it or gives it a pastel, or the first
 /// time it lands on a poll whose results show.
