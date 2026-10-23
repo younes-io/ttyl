@@ -274,38 +274,9 @@ impl LogScreen {
     /// The three logs as the top edge of the feed's box, the open one marked with the brand's
     /// slash. Names give way to their keys when they don't fit in `room`.
     pub fn tabs(&self, focused: bool, room: usize) -> Line<'static> {
-        let edge = Style::new().fg(edge(focused));
-        let slash = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
-        let lit = if focused {
-            theme::FOREGROUND
-        } else {
-            theme::MUTED_FOREGROUND
-        };
-        let lit = Style::new().fg(lit).add_modifier(Modifier::BOLD);
-        let tabs = |named: bool| {
-            let mut spans = vec![Span::styled("─ ", edge)];
-            for (index, log) in LOGS.iter().enumerate() {
-                if index > 0 {
-                    spans.push(Span::styled(" ── ", edge));
-                }
-                let name = if named {
-                    log.slug().to_string()
-                } else {
-                    (index + 1).to_string()
-                };
-                if *log == self.active {
-                    spans.push(Span::styled("/", slash));
-                    spans.push(Span::styled(name, lit));
-                } else {
-                    spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
-                }
-            }
-            spans.push(Span::styled(" ", edge));
-            Line::from(spans)
-        };
-        Some(tabs(true))
-            .filter(|tabs| tabs.width() <= room)
-            .unwrap_or_else(|| tabs(false))
+        let names: Vec<&str> = LOGS.iter().map(|log| log.slug()).collect();
+        let active = LOGS.iter().position(|log| *log == self.active).unwrap_or(0);
+        tabs(&names, active, focused, room)
     }
 
     /// The tabs as a rule across a row, for a feed too narrow for its box, with `tail` at the end.
@@ -463,6 +434,60 @@ impl LogScreen {
 pub struct Panes {
     pub feed: Rect,
     pub pane: Rect,
+}
+
+/// Tabs as the top edge of a box, the open one marked with the brand's slash. Names give way to
+/// their numbers when they don't fit in `room`.
+pub fn tabs(names: &[&str], active: usize, focused: bool, room: usize) -> Line<'static> {
+    let edge = Style::new().fg(edge(focused));
+    let slash = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
+    let lit = if focused {
+        theme::FOREGROUND
+    } else {
+        theme::MUTED_FOREGROUND
+    };
+    let lit = Style::new().fg(lit).add_modifier(Modifier::BOLD);
+    let line = |named: bool| {
+        let mut spans = vec![Span::styled("─ ", edge)];
+        for (index, name) in names.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::styled(" ── ", edge));
+            }
+            let name = if named {
+                name.to_string()
+            } else {
+                (index + 1).to_string()
+            };
+            if index == active {
+                spans.push(Span::styled("/", slash));
+                spans.push(Span::styled(name, lit));
+            } else {
+                spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
+            }
+        }
+        spans.push(Span::styled(" ", edge));
+        Line::from(spans)
+    };
+    Some(line(true))
+        .filter(|line| line.width() <= room)
+        .unwrap_or_else(|| line(false))
+}
+
+/// Draws a box with `names` as tabs along its top and returns the inside.
+pub fn draw_tabbed(
+    frame: &mut Frame,
+    area: Rect,
+    names: &[&str],
+    active: usize,
+    focused: bool,
+) -> Rect {
+    let line = tabs(
+        names,
+        active,
+        focused,
+        usize::from(area.width.saturating_sub(2)),
+    );
+    render_box(frame, area, line, focused)
 }
 
 fn edge(focused: bool) -> Color {

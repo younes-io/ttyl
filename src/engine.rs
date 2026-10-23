@@ -1735,9 +1735,6 @@ impl Engine {
                 if let Some(group) = session.group() {
                     frame.render_widget(group.banner(), banner);
                 }
-                if let Some(profile) = session.profile() {
-                    frame.render_widget(profile.tab_bar(banner.width), banner);
-                }
                 if on_log {
                     let fresh = loaded.map_or(0, |listing| listing.new_commits);
                     let news = Style::new().fg(theme::PRIMARY);

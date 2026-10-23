@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Wrap};
 
 use crate::api::{Call, Failure};
 use crate::clock::Timers;
@@ -14,6 +14,7 @@ use crate::engine::AHEAD;
 use crate::fatal;
 use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::Action;
+use crate::log;
 use crate::model::{Circle, CommitId, Log, LogPage, Person, Profile, User};
 use crate::store::Store;
 use crate::theme;
@@ -342,28 +343,6 @@ impl ProfileScreen {
         Some(self.tab.call(&self.username, Some(cursor)))
     }
 
-    /// The tabs under the top line, the shown one bold, with single gaps when narrow.
-    pub fn tab_bar(&self, width: u16) -> Line<'static> {
-        let wide: usize = Tab::ALL.iter().map(|each| each.slug().len() + 2).sum();
-        let gap = if wide <= usize::from(width) + 1 {
-            "  "
-        } else {
-            " "
-        };
-        let spans = Tab::ALL.iter().enumerate().flat_map(|(at, tab)| {
-            let lead = if at == 0 { " " } else { gap };
-            let style = if *tab == self.tab {
-                Style::new()
-                    .fg(theme::FOREGROUND)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                theme::muted()
-            };
-            [Span::raw(lead), Span::styled(tab.slug(), style)]
-        });
-        Line::from(spans.collect::<Vec<_>>())
-    }
-
     pub fn draw<Tz: TimeZone>(
         &mut self,
         frame: &mut Frame,
@@ -385,11 +364,23 @@ impl ProfileScreen {
             }
             return;
         };
-        let header = header(profile, store, area.width);
-        let height = (header.len() as u16).min(area.height / 2);
+        let card = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(theme::RAIL))
+            .padding(Padding::horizontal(2));
+        let header = header(profile, store, card.inner(area).width);
+        let height = (header.len() as u16 + 2).min(area.height / 2);
         let [top, area] =
             Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
-        frame.render_widget(Paragraph::new(header), top);
+        let inside = card.inner(top);
+        frame.render_widget(card, top);
+        frame.render_widget(Paragraph::new(header), inside);
+        let names = Tab::ALL.map(Tab::slug);
+        let active = Tab::ALL
+            .iter()
+            .position(|tab| *tab == self.tab)
+            .unwrap_or(0);
+        let area = log::draw_tabbed(frame, area, &names, active, true);
 
         let tab = self.tab;
         let username = self.username.clone();
@@ -463,82 +454,154 @@ impl ProfileScreen {
     }
 }
 
-/// Who they are, what they say about themselves, their counts, and their pinned commit.
+/// Who they are and their standing with you, what they say about themselves, where they are,
+/// their counts, and their pinned commit.
 fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width);
     let person = &profile.person;
     let user = &person.user;
-    let dot = || Span::styled(" · ", theme::muted());
-    let mut name = vec![
-        Span::styled(
-            user.name.clone(),
-            Style::new()
-                .fg(theme::lane(user.lane))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" @{}", user.username), theme::muted()),
-    ];
-    if profile.follows_you {
-        name.extend([dot(), Span::styled("follows you", theme::muted())]);
-    }
-    if user.username != store.me.username
-        && store
-            .following(&user.username)
-            .unwrap_or(profile.is_following)
+    let faint = Style::new().fg(theme::FAINT);
+    let quiet = Style::new().fg(theme::MUTED_FOREGROUND);
+
+    let mut chips = Vec::new();
+    if user.username == store.me.username {
+        chips.push(Span::styled(" you ", quiet.bg(theme::MUTED)));
+    } else if store
+        .following(&user.username)
+        .unwrap_or(profile.is_following)
     {
-        name.extend([
-            dot(),
-            Span::styled("following", Style::new().fg(theme::PRIMARY)),
-        ]);
+        chips.push(Span::styled(
+            " following ",
+            Style::new()
+                .fg(theme::BACKGROUND)
+                .bg(theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
-    let mut lines = vec![feed::fit(name, usize::from(width))];
+    if profile.follows_you {
+        if !chips.is_empty() {
+            chips.push(Span::raw(" "));
+        }
+        chips.push(Span::styled(" follows you ", quiet.bg(theme::MUTED)));
+    }
+    let chips = Line::from(chips);
+    let mut name = vec![Span::styled(
+        user.name.clone(),
+        Style::new()
+            .fg(theme::lane(user.lane))
+            .add_modifier(Modifier::BOLD),
+    )];
+    if user.name != user.username {
+        name.push(Span::styled(format!("  @{}", user.username), quiet));
+    }
+    let room = width.saturating_sub(chips.width() + 1);
+    let mut top = feed::fit(name, room);
+    let used = Line::from(top.clone()).width();
+    top.push(Span::raw(
+        " ".repeat(width.saturating_sub(used + chips.width())),
+    ));
+    top.extend(chips.spans);
+    let mut lines = vec![top];
+
     if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
+        lines.push(Vec::new());
         feed::wrap(
             &[(bio.clone(), Style::new().fg(theme::FOREGROUND))],
-            usize::from(width),
+            width,
             &mut lines,
         );
     }
-    let joined = format!("Joined {}", person.created_at.format("%B %Y"));
-    let facts = [&person.company, &person.location, &person.website]
-        .into_iter()
-        .flatten()
-        .filter(|fact| !fact.is_empty())
-        .cloned()
-        .chain([joined]);
-    lines.push(feed::fit(joined_by_dots(facts), usize::from(width)));
+    lines.push(Vec::new());
+
+    let given = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
+    let mut facts = Vec::new();
+    if let Some(company) = given(&person.company) {
+        facts.push(vec![Span::styled(company, quiet)]);
+    }
+    if let Some(location) = given(&person.location) {
+        facts.push(vec![Span::styled(location, quiet)]);
+    }
+    if let Some(website) = given(&person.website) {
+        let shown = website
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_string();
+        facts.push(vec![
+            Span::styled(format!("{} ", theme::icons().link), faint),
+            Span::styled(shown, Style::new().fg(theme::PRIMARY)),
+        ]);
+    }
+    facts.push(vec![Span::styled(
+        format!("Joined {}", person.created_at.format("%B %Y")),
+        quiet,
+    )]);
+    lines.push(feed::fit(spaced(facts, faint), width));
+
     let counts = [
         (person.commits_count, "commits"),
         (person.followers_count, "followers"),
         (person.following_count, "following"),
     ]
     .into_iter()
-    .filter_map(|(count, noun)| Some(format!("{} {noun}", count?)));
-    lines.push(joined_by_dots(counts));
+    .filter_map(|(count, noun)| {
+        Some(vec![
+            Span::styled(
+                grouped(count?),
+                Style::new()
+                    .fg(theme::FOREGROUND)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {noun}"), quiet),
+        ])
+    })
+    .collect::<Vec<_>>();
+    if !counts.is_empty() {
+        lines.push(feed::fit(spaced(counts, faint), width));
+    }
+
     if let Some(pinned) = &profile.pinned {
+        lines.push(Vec::new());
         let mut spans = vec![
-            Span::styled("pinned ", theme::muted()),
+            Span::styled(
+                "pinned  ",
+                Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 pinned.commit.short_hash.clone(),
                 Style::new().fg(theme::PRIMARY),
             ),
-            Span::raw(" "),
+            Span::raw("  "),
         ];
-        spans.extend(feed::one_line(&pinned.commit.body_segments, theme::muted()));
-        lines.push(feed::fit(spans, usize::from(width)));
+        spans.extend(feed::one_line(&pinned.commit.body_segments, quiet));
+        lines.push(feed::fit(spans, width));
     }
-    lines.push(Vec::new());
     lines.into_iter().map(Line::from).collect()
 }
 
-fn joined_by_dots(parts: impl Iterator<Item = String>) -> Vec<Span<'static>> {
+/// Groups of spans with a faint dot between each.
+fn spaced(groups: Vec<Vec<Span<'static>>>, dot: Style) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    for part in parts {
+    for group in groups {
         if !spans.is_empty() {
-            spans.push(Span::styled(" · ", theme::muted()));
+            spans.push(Span::styled("  ·  ", dot));
         }
-        spans.push(Span::styled(part, theme::muted()));
+        spans.extend(group);
     }
     spans
+}
+
+/// A count with thousands separators, as in 5,271.
+fn grouped(count: u32) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// One node per person, the way the inbox lays out a follow group.
