@@ -490,7 +490,8 @@ pub fn draw_tabbed(
     render_box(frame, area, line, focused)
 }
 
-fn edge(focused: bool) -> Color {
+/// A box edge, lit when the box holds the keys.
+pub fn edge(focused: bool) -> Color {
     if focused { theme::PRIMARY } else { theme::RAIL }
 }
 

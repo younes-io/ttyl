@@ -83,10 +83,10 @@ fn p_opens_the_selected_authors_profile() {
     );
     let mut engine = on_profile(at);
     let rows = screen(&mut engine, 100, 30, at);
-    assert!(rows[3].contains(&author()), "{rows:#?}");
-    assert!(rows[3].contains(" following "), "{rows:#?}");
+    assert!(rows[4].contains(&author()), "{rows:#?}");
+    assert!(rows[4].contains(" following "), "{rows:#?}");
     assert!(contains(&rows, "Joined January 2025"), "{rows:#?}");
-    assert!(contains(&rows, "/commits ── replies"), "{rows:#?}");
+    assert!(contains(&rows, "├─ /commits ── replies"), "{rows:#?}");
 }
 
 #[test]

@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Wrap};
@@ -384,23 +384,45 @@ impl ProfileScreen {
             }
             return;
         };
-        let card = Block::bordered()
+        // One frame holds the header and the list, with the tabs as the rule between them.
+        let edge = Style::new().fg(log::edge(true));
+        let panel = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(theme::RAIL))
-            .padding(Padding::horizontal(2));
-        let header = header(profile, store, card.inner(area).width);
-        let height = (header.len() as u16 + 2).min(area.height / 2);
-        let [top, area] =
-            Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
-        let inside = card.inner(top);
-        frame.render_widget(card, top);
-        frame.render_widget(Paragraph::new(header), inside);
+            .border_style(edge);
+        let inside = panel.inner(area);
+        frame.render_widget(panel, area);
+        let header = header(profile, store, inside.width.saturating_sub(2));
+        let height = (header.len() as u16 + 2).min(inside.height.saturating_sub(8));
+        let [top, rule, list] = Layout::vertical([
+            Constraint::Length(height),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(inside);
+        frame.render_widget(
+            Paragraph::new(header).block(Block::new().padding(Padding::new(1, 1, 1, 1))),
+            top,
+        );
         let names = Tab::ALL.map(Tab::slug);
         let active = Tab::ALL
             .iter()
             .position(|tab| *tab == self.tab)
             .unwrap_or(0);
-        let area = log::draw_tabbed(frame, area, &names, active, true);
+        let tabs = log::tabs(&names, active, true, usize::from(rule.width));
+        let fill = usize::from(rule.width).saturating_sub(tabs.width());
+        let mut spans = vec![Span::styled("├", edge)];
+        spans.extend(tabs.spans);
+        spans.push(Span::styled("─".repeat(fill), edge));
+        spans.push(Span::styled("┤", edge));
+        frame.render_widget(
+            Line::from(spans),
+            Rect {
+                x: area.x,
+                width: area.width,
+                ..rule
+            },
+        );
+        let area = list.inner(Margin::new(1, 0));
 
         let tab = self.tab;
         let username = self.username.clone();
@@ -505,7 +527,6 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
         }
         chips.push(Span::styled(" follows you ", quiet.bg(theme::MUTED)));
     }
-    let chips = Line::from(chips);
     let mut name = vec![Span::styled(
         user.name.clone(),
         Style::new()
@@ -515,24 +536,6 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
     if user.name != user.username {
         name.push(Span::styled(format!("  @{}", user.username), quiet));
     }
-    let room = width.saturating_sub(chips.width() + 1);
-    let mut top = feed::fit(name, room);
-    let used = Line::from(top.clone()).width();
-    top.push(Span::raw(
-        " ".repeat(width.saturating_sub(used + chips.width())),
-    ));
-    top.extend(chips.spans);
-    let mut lines = vec![top];
-
-    if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
-        lines.push(Vec::new());
-        feed::wrap(
-            &[(bio.clone(), Style::new().fg(theme::FOREGROUND))],
-            width,
-            &mut lines,
-        );
-    }
-    lines.push(Vec::new());
 
     let given = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
     let mut facts = Vec::new();
@@ -557,59 +560,134 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
         format!("Joined {}", person.created_at.format("%B %Y")),
         quiet,
     )]);
-    lines.push(feed::fit(spaced(facts, faint), width));
 
-    let counts = [
+    let counts: Vec<(String, &str)> = [
         (person.commits_count, "commits"),
         (person.followers_count, "followers"),
         (person.following_count, "following"),
     ]
     .into_iter()
-    .filter_map(|(count, noun)| {
-        Some(vec![
-            Span::styled(
-                grouped(count?),
-                Style::new()
-                    .fg(theme::FOREGROUND)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!(" {noun}"), quiet),
-        ])
-    })
-    .collect::<Vec<_>>();
-    if !counts.is_empty() {
-        lines.push(feed::fit(spaced(counts, faint), width));
+    .filter_map(|(count, noun)| Some((grouped(count?), noun)))
+    .collect();
+    let bold = Style::new()
+        .fg(theme::FOREGROUND)
+        .add_modifier(Modifier::BOLD);
+    let bio = |width: usize, lines: &mut Vec<Vec<Span<'static>>>| {
+        if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
+            lines.push(Vec::new());
+            feed::wrap(
+                &[(bio.clone(), Style::new().fg(theme::FOREGROUND))],
+                width,
+                lines,
+            );
+        }
+    };
+
+    let mut lines = Vec::new();
+    if width >= SIDE * 2 + GUTTER {
+        // Who they are on the left, their standing and counts in a column on the right.
+        let left = width - SIDE - GUTTER;
+        let mut body = vec![feed::fit(name, left)];
+        bio(left, &mut body);
+        body.push(Vec::new());
+        body.extend(flow(facts, faint, left));
+        let mut side = vec![right(chips, SIDE), Vec::new()];
+        let digits = counts.iter().map(|(count, _)| count.len()).max();
+        for (count, noun) in &counts {
+            let pad = digits.unwrap_or(0) - count.len();
+            side.push(right(
+                vec![
+                    Span::styled(format!("{}{count}", " ".repeat(pad)), bold),
+                    Span::styled(format!("  {noun:<9}"), quiet),
+                ],
+                SIDE,
+            ));
+        }
+        for row in 0..body.len().max(side.len()) {
+            let mut line = body.get(row).cloned().unwrap_or_default();
+            let used = Line::from(line.clone()).width();
+            line.push(Span::raw(" ".repeat(left + GUTTER - used)));
+            line.extend(side.get(row).cloned().unwrap_or_default());
+            lines.push(line);
+        }
+    } else {
+        lines.push(feed::fit(name, width));
+        lines.push(right(chips, width));
+        bio(width, &mut lines);
+        lines.push(Vec::new());
+        lines.extend(flow(facts, faint, width));
+        let counts = counts
+            .into_iter()
+            .map(|(count, noun)| {
+                vec![
+                    Span::styled(count, bold),
+                    Span::styled(format!(" {noun}"), quiet),
+                ]
+            })
+            .collect();
+        lines.extend(flow(counts, faint, width));
     }
 
     if let Some(pinned) = &profile.pinned {
+        let label = "pinned ";
         lines.push(Vec::new());
-        let mut spans = vec![
+        lines.push(vec![
             Span::styled(
-                "pinned  ",
+                label,
                 Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
             ),
+            Span::styled(
+                "─".repeat(width.saturating_sub(label.len())),
+                Style::new().fg(theme::RAIL),
+            ),
+        ]);
+        let mut spans = vec![
             Span::styled(
                 pinned.commit.short_hash.clone(),
                 Style::new().fg(theme::PRIMARY),
             ),
             Span::raw("  "),
         ];
-        spans.extend(feed::one_line(&pinned.commit.body_segments, quiet));
+        spans.extend(feed::one_line(
+            &pinned.commit.body_segments,
+            Style::new().fg(theme::FOREGROUND),
+        ));
         lines.push(feed::fit(spans, width));
     }
     lines.into_iter().map(Line::from).collect()
 }
 
-/// Groups of spans with a faint dot between each.
-fn spaced(groups: Vec<Vec<Span<'static>>>, dot: Style) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
+/// The width of the header's right column, which fits both chips side by side.
+const SIDE: usize = 26;
+const GUTTER: usize = 4;
+
+/// Spans pushed to the right edge of `width`.
+fn right(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+    let used = Line::from(spans.clone()).width();
+    let mut out = vec![Span::raw(" ".repeat(width.saturating_sub(used)))];
+    out.extend(spans);
+    out
+}
+
+/// Groups of spans laid along lines of `width`, with a faint dot between groups on a line.
+fn flow(groups: Vec<Vec<Span<'static>>>, dot: Style, width: usize) -> Vec<Vec<Span<'static>>> {
+    let mut lines: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut used = 0;
     for group in groups {
-        if !spans.is_empty() {
-            spans.push(Span::styled("  ·  ", dot));
+        let size = Line::from(group.clone()).width();
+        match lines.last_mut() {
+            Some(line) if used + 5 + size <= width => {
+                line.push(Span::styled("  ·  ", dot));
+                line.extend(group);
+                used += 5 + size;
+            }
+            _ => {
+                lines.push(feed::fit(group, width));
+                used = size;
+            }
         }
-        spans.extend(group);
     }
-    spans
+    lines
 }
 
 /// A count with thousands separators, as in 5,271.
