@@ -693,6 +693,10 @@ fn poll_lines<Tz: TimeZone>(
     let faint = Style::new().fg(theme::FAINT);
     let icon = format!("{} ", theme::icons().poll);
     let indent = " ".repeat(icon.width());
+    if let Some(picking) = poll.picking {
+        picker(poll, picking, &icon, width, out);
+        return;
+    }
     let percentages: Vec<u32> = poll
         .options
         .iter()
@@ -747,6 +751,47 @@ fn poll_lines<Tz: TimeZone>(
     }
     out.push(fit(
         vec![Span::raw(indent), Span::styled(meta.join(" · "), faint)],
+        width,
+    ));
+}
+
+/// The options numbered for their keys, the one the user is on filled in as the feed fills a selection.
+fn picker(
+    poll: &Poll,
+    picking: usize,
+    icon: &str,
+    width: usize,
+    out: &mut Vec<Vec<Span<'static>>>,
+) {
+    let indent = " ".repeat(icon.width());
+    let texts: Vec<String> = (poll.options.iter().enumerate())
+        .map(|(at, option)| format!(" {}  {} ", at + 1, option.label))
+        .collect();
+    let widest = texts.iter().map(|text| text.width()).max().unwrap_or(0);
+    for (at, text) in texts.into_iter().enumerate() {
+        let lead = if at == 0 { icon } else { &indent };
+        let style = if at == picking {
+            Style::new()
+                .fg(theme::BACKGROUND)
+                .bg(theme::PRIMARY)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(theme::FOREGROUND)
+        };
+        let pad = " ".repeat(widest - text.width());
+        out.push(fit(
+            vec![
+                Span::styled(lead.to_owned(), theme::muted()),
+                Span::styled(format!("{text}{pad}"), style),
+            ],
+            width,
+        ));
+    }
+    out.push(fit(
+        vec![
+            Span::raw(indent),
+            Span::styled("votes are final", Style::new().fg(theme::AMBER)),
+        ],
         width,
     ));
 }

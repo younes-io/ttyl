@@ -63,15 +63,15 @@ pub fn openssh_accepts(
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Account, Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{CommitId, CommitPage, Log, LogPage, RepliesPage};
 use ttyl::signin::{Attempt, REDIRECT_URI};
 use ttyl::welcome::Wait;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn page(log: Log) -> LogPage {
     let json = std::fs::read_to_string(format!(

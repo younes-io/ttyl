@@ -198,6 +198,9 @@ pub struct Poll {
     pub has_voted: bool,
     pub total_votes: Option<u32>,
     pub options: Vec<PollOption>,
+    /// The option the user is on while they pick one to vote for. The server never sends it.
+    #[serde(skip)]
+    pub picking: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

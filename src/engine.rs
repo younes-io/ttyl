@@ -29,8 +29,7 @@ use crate::keys::{
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Poll, Reason, Row, Shown, Status,
-    User,
+    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
 };
 use crate::profile::{self, Item, ProfileScreen, Tab};
 use crate::saver;
@@ -123,10 +122,10 @@ enum Overlay {
         reason: Reason,
         text: String,
     },
+    /// Picking an option in the poll inside `id`, which draws in place. The store holds the option.
     Vote {
         id: CommitId,
-        poll: Poll,
-        at: usize,
+        options: usize,
     },
 }
 
@@ -410,19 +409,23 @@ impl Session {
                 }),
                 None,
             ),
-            (Overlay::Vote { id, poll, at }, Action::Down) => {
-                let at = (at + 1).min(poll.options.len().saturating_sub(1));
-                (Some(Overlay::Vote { id, poll, at }), None)
+            (Overlay::Vote { id, options }, Action::Down | Action::Up | Action::Choose(_)) => {
+                let at = self.store.picking().unwrap_or(0);
+                let at = match action {
+                    Action::Down => (at + 1).min(options.saturating_sub(1)),
+                    Action::Up => at.saturating_sub(1),
+                    Action::Choose(chosen) if chosen < options => chosen,
+                    _ => at,
+                };
+                self.store.pick(Some((id.clone(), at)));
+                (Some(Overlay::Vote { id, options }), None)
             }
-            (Overlay::Vote { id, poll, at }, Action::Up) => {
-                let at = at.saturating_sub(1);
-                (Some(Overlay::Vote { id, poll, at }), None)
-            }
-            (Overlay::Vote { id, poll, .. }, Action::Choose(at)) if at < poll.options.len() => {
-                (Some(Overlay::Vote { id, poll, at }), None)
-            }
-            (Overlay::Vote { id, poll, at }, Action::Confirm) => {
-                let option = poll.options.get(at).map(|option| option.id.clone());
+            (Overlay::Vote { id, .. }, Action::Confirm) => {
+                let at = self.store.picking().unwrap_or(0);
+                let poll = self.store.row(&id).and_then(|row| row.media.poll.as_ref());
+                let option = poll
+                    .and_then(|poll| poll.options.get(at))
+                    .map(|option| option.id.clone());
                 (None, option.map(|option| Call::Vote { id, option }))
             }
             (Overlay::Details { id, reason, text }, Action::Confirm) => {
@@ -439,6 +442,9 @@ impl Session {
             }
             (overlay, _) => (Some(overlay), None),
         };
+        if !matches!(next, Some(Overlay::Vote { .. })) && self.store.picking().is_some() {
+            self.store.pick(None);
+        }
         self.overlay = next;
         call
     }
@@ -1241,12 +1247,11 @@ impl Engine {
                 (None, Vec::new())
             }
             Act::Vote => {
-                if let Some(poll) = session
-                    .store
-                    .row(&id)
-                    .and_then(|row| row.media.poll.clone())
+                if let Some(poll) = (session.store.row(&id)).and_then(|row| row.media.poll.as_ref())
                 {
-                    session.overlay = Some(Overlay::Vote { id, poll, at: 0 });
+                    let options = poll.options.len();
+                    session.store.pick(Some((id.clone(), 0)));
+                    session.overlay = Some(Overlay::Vote { id, options });
                 }
                 (None, Vec::new())
             }
@@ -1903,12 +1908,11 @@ impl Engine {
                 match &session.overlay {
                     Some(Overlay::Help) => draw_help(frame, session),
                     Some(Overlay::Reason { id, at }) => draw_report(frame, id, *at, None),
-                    Some(Overlay::Vote { id, poll, at }) => draw_vote(frame, id, poll, *at),
                     Some(Overlay::Details { id, reason, text }) => {
                         let at = Reason::ALL.iter().position(|each| each == reason);
                         draw_report(frame, id, at.unwrap_or(0), Some(text.as_str()));
                     }
-                    Some(Overlay::Delete(_)) | None => {}
+                    Some(Overlay::Delete(_) | Overlay::Vote { .. }) | None => {}
                 }
             }
         }
@@ -2065,41 +2069,6 @@ fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&str
     if !picking && row < inner.height {
         frame.set_cursor_position((inner.x + cursor.min(inner.width), inner.y + row));
     }
-}
-
-fn draw_vote(frame: &mut Frame, id: &CommitId, poll: &Poll, at: usize) {
-    let area = frame.area();
-    let area = Rect {
-        height: area.height.saturating_sub(1),
-        ..area
-    };
-    let width = 48.min(area.width.saturating_sub(2));
-    let rows = u16::try_from(poll.options.len()).unwrap_or(u16::MAX);
-    let height = rows.saturating_add(6).min(area.height);
-    let box_area = Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, box_area);
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .title(format!(" vote {} ", id.short_hash()))
-        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
-    let mut lines = vec![Line::raw("")];
-    lines.extend(poll.options.iter().enumerate().map(|(each, option)| {
-        let marker = if each == at { "›" } else { " " };
-        Line::from(vec![
-            Span::styled(format!(" {marker} "), Style::new().fg(theme::PRIMARY)),
-            Span::raw(format!("{}  {}", each + 1, option.label)),
-        ])
-    }));
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(" votes are final", theme::muted()));
-    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Each hint's key stands out from what it does.

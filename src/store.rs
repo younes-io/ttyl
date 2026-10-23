@@ -23,6 +23,7 @@ pub struct Store {
     follows: HashMap<String, Follow>,
     deleting: HashSet<CommitId>,
     unsent_pastels: HashMap<CommitId, u32>,
+    picking: Option<(CommitId, usize)>,
     generation: u64,
 }
 
@@ -114,6 +115,7 @@ impl Store {
             follows: HashMap::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
+            picking: None,
             generation: 0,
         }
     }
@@ -155,6 +157,16 @@ impl Store {
 
     pub fn give_pastel(&mut self, id: &CommitId) {
         *self.unsent_pastels.entry(id.clone()).or_default() += 1;
+    }
+
+    /// Puts the user on option `at` of the poll in `id` while they pick, or takes them off it.
+    pub fn pick(&mut self, picking: Option<(CommitId, usize)>) {
+        self.picking = picking;
+        self.generation += 1;
+    }
+
+    pub fn picking(&self) -> Option<usize> {
+        self.picking.as_ref().map(|(_, at)| *at)
     }
 
     pub fn start_delete(&mut self, id: &CommitId) {
@@ -377,7 +389,10 @@ impl Store {
             .copied()
             .filter(|want| *want != row.starred);
         let deleting = self.deleting.contains(id);
-        if want.is_none() && !deleting {
+        let picking = (self.picking.as_ref())
+            .filter(|(on, _)| on == id)
+            .map(|(_, at)| *at);
+        if want.is_none() && !deleting && picking.is_none() {
             return Cow::Borrowed(row);
         }
         let mut row = row.clone();
@@ -391,6 +406,9 @@ impl Store {
         }
         if deleting {
             row.deletion = Some(Deletion::Running);
+        }
+        if let Some(poll) = row.media.poll.as_mut() {
+            poll.picking = picking;
         }
         Cow::Owned(row)
     }

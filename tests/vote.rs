@@ -2,7 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{boot_as, boot_serving, contains, page, press, runs, screen, tap};
+use common::{boot_as, boot_serving, buffer, contains, page, press, runs, screen, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Account, Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
@@ -86,38 +86,30 @@ fn one_run(effects: &[Effect]) -> (ttyl::sched::Ticket, Call) {
     (*ticket, call.clone())
 }
 
-fn vote_box(engine: &mut Engine, at: Instant) -> Vec<String> {
-    let title = format!(" vote {} ", id().short_hash());
-    let rows = screen(engine, 100, 40, at);
-    let top = rows
-        .iter()
-        .position(|row| row.contains(&title))
-        .unwrap_or_else(|| panic!("the vote box is open: {rows:#?}"));
-    rows[top..top + 8].to_vec()
-}
-
-fn marked(rows: &[String]) -> String {
-    let row = rows
-        .iter()
-        .find(|row| row.contains(" › "))
-        .unwrap_or_else(|| panic!("one option is marked: {rows:#?}"));
-    row.split(" › ")
-        .nth(1)
-        .and_then(|rest| rest.split('│').next())
-        .unwrap()
-        .trim_end()
-        .to_owned()
+/// The option the filled bar is on, or `None` while no poll is being picked in.
+fn marked(engine: &mut Engine, at: Instant) -> Option<String> {
+    let (width, height) = (100, 40);
+    let buffer = buffer(engine, width, height, at);
+    (0..height).find_map(|y| {
+        let bar: String = (0..width)
+            .filter(|x| buffer[(*x, y)].bg == ttyl::theme::PRIMARY)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        (!bar.trim().is_empty()).then(|| bar.trim().to_owned())
+    })
 }
 
 #[test]
-fn v_opens_the_poll_with_its_options_and_the_first_one_marked() {
+fn v_turns_the_poll_into_a_picker_in_place_with_the_first_option_on() {
     let at = Instant::now();
     let mut engine = on_poll(at);
     assert!(runs(&press(&mut engine, "v", at)).is_empty());
-    let rows = vote_box(&mut engine, at);
-    assert_eq!(marked(&rows), "1  tabs", "{rows:#?}");
+    assert_eq!(marked(&mut engine, at).as_deref(), Some("1  tabs"));
+    let rows = screen(&mut engine, 100, 40, at);
     assert!(contains(&rows, "2  spaces"), "{rows:#?}");
     assert!(contains(&rows, "votes are final"), "{rows:#?}");
+    assert!(!contains(&rows, "v to vote"), "{rows:#?}");
+    assert!(!contains(&rows, "┌"), "no box opens: {rows:#?}");
 }
 
 #[test]
@@ -146,19 +138,22 @@ fn j_k_and_the_digits_move_the_mark_within_the_options() {
         ("1", "1  tabs"),
     ] {
         press(&mut engine, keys, at);
-        assert_eq!(marked(&vote_box(&mut engine, at)), option, "after {keys}");
+        assert_eq!(
+            marked(&mut engine, at).as_deref(),
+            Some(option),
+            "after {keys}"
+        );
     }
 }
 
 #[test]
-fn enter_votes_for_the_marked_option_and_closes_the_box() {
+fn enter_votes_for_the_marked_option_and_ends_the_pick() {
     let at = Instant::now();
     let mut engine = on_poll(at);
     press(&mut engine, "vj", at);
     let (_, call) = one_run(&tap(&mut engine, KeyCode::Enter, at));
     assert_eq!(call, vote(SPACES));
-    let title = format!(" vote {} ", id().short_hash());
-    assert!(!contains(&screen(&mut engine, 100, 40, at), &title));
+    assert_eq!(marked(&mut engine, at), None);
 }
 
 #[test]
@@ -167,8 +162,8 @@ fn esc_backs_out_without_voting() {
     let mut engine = on_poll(at);
     press(&mut engine, "v2", at);
     assert!(runs(&tap(&mut engine, KeyCode::Esc, at)).is_empty());
-    let title = format!(" vote {} ", id().short_hash());
-    assert!(!contains(&screen(&mut engine, 100, 40, at), &title));
+    assert_eq!(marked(&mut engine, at), None);
+    assert!(contains(&screen(&mut engine, 100, 40, at), "v to vote"));
 }
 
 #[test]
@@ -225,8 +220,6 @@ fn v_does_nothing_on_a_closed_poll_a_voted_poll_or_your_own() {
         ("own", own),
     ] {
         assert!(runs(&press(&mut engine, "v", at)).is_empty(), "{why}");
-        let title = format!(" vote {} ", id().short_hash());
-        let rows = screen(&mut engine, 100, 40, at);
-        assert!(!contains(&rows, &title), "{why}: {rows:#?}");
+        assert_eq!(marked(&mut engine, at), None, "{why}");
     }
 }
