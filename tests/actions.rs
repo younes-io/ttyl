@@ -3,8 +3,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    account, answer, boot, boot_as, buffer, commit, contains, help_entry, page, press, profile,
-    runs, screen, secs, tap,
+    account, answer, boot, boot_as, buffer, commit, contains, help_entry, marked, page, press,
+    profile, runs, screen, secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
@@ -817,7 +817,6 @@ fn the_report_dialog_fits_wide_and_narrow_terminals() {
         let rows = screen(&mut engine, width, 30, at);
         for line in [
             "report 0000201",
-            "› 2  Harassment or hate",
             "3  Harmful or private information",
             "details (optional)",
             "0/500",
@@ -825,12 +824,17 @@ fn the_report_dialog_fits_wide_and_narrow_terminals() {
             assert!(contains(&rows, line), "{width}: {line} {rows:#?}");
         }
         assert_eq!(rows[29], PICK_HINT, "{width}");
+        assert_eq!(
+            marked(&mut engine, width, 30, at).as_deref(),
+            Some("2  Harassment or hate"),
+            "{width}"
+        );
         press(&mut engine, "2", at);
         press(&mut engine, &"long words ".repeat(10), at);
         let rows = screen(&mut engine, width, 30, at);
         let field = rows
             .iter()
-            .find_map(|row| row.split_once("│ > "))
+            .find_map(|row| row.split_once("│  > "))
             .and_then(|(_, rest)| rest.split_once('│'))
             .map(|(typed, _)| typed.trim_end())
             .unwrap_or_else(|| panic!("{rows:#?}"));

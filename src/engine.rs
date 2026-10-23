@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
@@ -31,6 +31,7 @@ use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
     self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
 };
+use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
 use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
@@ -132,6 +133,16 @@ enum Overlay {
 const SERVER_DETAILS_MAX: usize = 500;
 
 impl Session {
+    /// Where the selected card on screen was last drawn.
+    fn card(&self) -> Option<Rect> {
+        match self.stack.last() {
+            Some(Screen::Thread(thread)) => thread.card(),
+            Some(Screen::Profile(profile)) => profile.card(),
+            Some(Screen::Inbox | Screen::Group(_)) => None,
+            None => self.log.card(),
+        }
+    }
+
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
@@ -1905,12 +1916,24 @@ impl Engine {
                         foot,
                     );
                 }
+                let screen = Rect {
+                    height: area.height.saturating_sub(1),
+                    ..area
+                };
+                let card = session.card();
                 match &session.overlay {
-                    Some(Overlay::Help) => draw_help(frame, session),
-                    Some(Overlay::Reason { id, at }) => draw_report(frame, id, *at, None),
+                    Some(Overlay::Help) => {
+                        popup::dim(frame.buffer_mut(), screen, None);
+                        draw_help(frame, screen, session);
+                    }
+                    Some(Overlay::Reason { id, at }) => {
+                        popup::dim(frame.buffer_mut(), screen, card);
+                        draw_report(frame, screen, card, id, *at, None);
+                    }
                     Some(Overlay::Details { id, reason, text }) => {
                         let at = Reason::ALL.iter().position(|each| each == reason);
-                        draw_report(frame, id, at.unwrap_or(0), Some(text.as_str()));
+                        popup::dim(frame.buffer_mut(), screen, card);
+                        draw_report(frame, screen, card, id, at.unwrap_or(0), Some(text));
                     }
                     Some(Overlay::Delete(_) | Overlay::Vote { .. }) | None => {}
                 }
@@ -1948,7 +1971,7 @@ fn news_of(count: u32) -> String {
     format!("↑ {count} new {noun} · R to load")
 }
 
-fn draw_help(frame: &mut Frame, session: &Session) {
+fn draw_help(frame: &mut Frame, screen: Rect, session: &Session) {
     let allows = |action| session.screen_allows(action);
     let rows = keys::help(session.screen_scopes(), &allows);
     let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
@@ -1957,31 +1980,25 @@ fn draw_help(frame: &mut Frame, session: &Session) {
         .map(|(_, help, _)| key_width + 2 + help.width())
         .max()
         .unwrap_or(0)
-        + 4;
-    let height = rows.len() + 2;
-    let area = frame.area();
-    let width = u16::try_from(width).unwrap_or(u16::MAX).min(area.width);
-    let height = u16::try_from(height).unwrap_or(u16::MAX).min(area.height);
-    let box_area = Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, box_area);
+        + 6;
+    let height = rows.len() + 4;
+    let width = u16::try_from(width).unwrap_or(u16::MAX);
+    let height = u16::try_from(height).unwrap_or(u16::MAX);
     let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(theme::PRIMARY))
         .title(Span::styled(
             " keys ",
             Style::new()
                 .fg(theme::FOREGROUND)
                 .add_modifier(Modifier::BOLD),
         ))
-        .padding(Padding::horizontal(1))
-        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
+        .padding(Padding::new(2, 2, 1, 1));
+    let area = popup::place(screen, width, height, None);
+    let block = if area.height < height {
+        block.padding(Padding::horizontal(2))
+    } else {
+        block
+    };
+    let inner = popup::raise(frame, area, block);
     let lines: Vec<Line> = rows
         .into_iter()
         .map(|(key, help, live)| {
@@ -2003,67 +2020,74 @@ fn draw_help(frame: &mut Frame, session: &Session) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&str>) {
-    let area = frame.area();
-    let area = Rect {
-        height: area.height.saturating_sub(1),
-        ..area
-    };
-    let width = 48.min(area.width.saturating_sub(2));
-    let height = 10.min(area.height);
-    let box_area = Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, box_area);
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .title(format!(" report {} ", id.short_hash()))
-        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
-    let picking = details.is_none();
-    let mut lines = vec![Line::raw("")];
-    lines.extend(Reason::ALL.iter().enumerate().map(|(each, reason)| {
-        let chosen = each == at;
-        let marker = if chosen { "›" } else { " " };
-        let style = if chosen || picking {
+/// Asks why a commit is being reported, beside the card it reports when there is room.
+fn draw_report(
+    frame: &mut Frame,
+    screen: Rect,
+    card: Option<Rect>,
+    id: &CommitId,
+    at: usize,
+    details: Option<&str>,
+) {
+    let height = u16::try_from(Reason::ALL.len() + 7).unwrap_or(u16::MAX);
+    let block = Block::bordered()
+        .title(Span::styled(
+            format!(" report {} ", id.short_hash()),
             Style::new()
-        } else {
-            theme::muted()
-        };
-        Line::from(vec![
-            Span::styled(format!(" {marker} "), Style::new().fg(theme::PRIMARY)),
-            Span::styled(format!("{}  {}", each + 1, reason.label()), style),
-        ])
-    }));
-    lines.push(Line::raw(""));
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::uniform(1));
+    let area = popup::place(screen, 50, height, card);
+    let block = if area.height < height {
+        block.padding(Padding::horizontal(1))
+    } else {
+        block
+    };
+    let inner = popup::raise(frame, area, block);
+    let width = usize::from(inner.width);
+    let picking = details.is_none();
+    let mut lines: Vec<Line> = Reason::ALL
+        .iter()
+        .enumerate()
+        .map(|(each, reason)| {
+            let row = format!(" {}  {}", each + 1, reason.label());
+            let row = format!("{row:<width$}");
+            if each == at {
+                Line::styled(row, popup::chosen())
+            } else if picking {
+                Line::raw(row)
+            } else {
+                Line::styled(row, theme::muted())
+            }
+        })
+        .collect();
+    if usize::from(inner.height) > Reason::ALL.len() + 2 {
+        lines.push(Line::raw(""));
+    }
     let text = details.unwrap_or("");
     let label = " details (optional)";
     let count = format!("{}/{SERVER_DETAILS_MAX} ", text.chars().count());
-    let gap = usize::from(inner.width).saturating_sub(label.len() + count.len());
-    let field_style = if picking {
-        theme::muted()
-    } else {
-        Style::new()
-    };
+    let gap = width.saturating_sub(label.len() + count.len());
     lines.push(Line::styled(
         format!("{label}{}{count}", " ".repeat(gap)),
-        field_style,
+        theme::muted(),
     ));
-    let room = usize::from(inner.width).saturating_sub(4);
+    let room = width.saturating_sub(4);
     let shown: String = {
         let skip = text.chars().count().saturating_sub(room);
         text.chars().skip(skip).collect()
     };
     let field = format!(" > {shown}");
     let cursor = u16::try_from(field.chars().count()).unwrap_or(u16::MAX);
-    lines.push(Line::styled(field, field_style));
-    if lines.len() > usize::from(inner.height) {
-        lines.remove(0);
-    }
+    let well = if picking {
+        theme::muted()
+    } else {
+        Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND)
+    };
+    lines.push(Line::styled(format!("{field:<width$}"), well));
+    let excess = lines.len().saturating_sub(usize::from(inner.height));
+    lines.drain(..excess);
     let row = u16::try_from(lines.len() - 1).unwrap_or(u16::MAX);
     frame.render_widget(Paragraph::new(lines), inner);
     if !picking && row < inner.height {

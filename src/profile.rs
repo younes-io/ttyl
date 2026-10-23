@@ -240,6 +240,8 @@ pub struct ProfileScreen {
     asked_at: Instant,
     tab: Tab,
     lists: [Paged; Tab::ALL.len()],
+    /// Where the selected card was last drawn, for a box about it to open beside.
+    card: Option<Rect>,
 }
 
 impl ProfileScreen {
@@ -253,7 +255,13 @@ impl ProfileScreen {
             asked_at: now,
             tab: Tab::Commits,
             lists,
+            card: None,
         }
+    }
+
+    /// Where the selected card was last drawn.
+    pub fn card(&self) -> Option<Rect> {
+        self.card
     }
 
     pub fn username(&self) -> &str {
@@ -428,6 +436,7 @@ impl ProfileScreen {
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
+        self.card = None;
         let Some(profile) = &self.profile else {
             if let Some(failure) = &self.failure {
                 frame.render_widget(
@@ -540,9 +549,11 @@ impl ProfileScreen {
         list.offset = feed::scroll(&feed, total, list.selected, list.offset, height);
         let shown = list.offset.min(total)..(list.offset + height).min(total);
         let rows = feed.card_rows(selected, &shown);
+        let at = list.selected;
+        self.card = feed::card_area(area, &rows);
         let lines = feed.window(selected, shown, area.width);
         frame.render_widget(Paragraph::new(&lines[..]), area);
-        let Some(id) = ids.get(list.selected) else {
+        let Some(id) = ids.get(at) else {
             return;
         };
         for (spark, elapsed) in timers.sparks(id, now) {

@@ -28,6 +28,8 @@ pub struct LogScreen {
     places: [Place; 3],
     expanded: HashSet<CommitId>,
     peek: Option<ThreadScreen>,
+    /// Where the selected card was last drawn, for a box about it to open beside.
+    card: Option<Rect>,
 }
 
 #[derive(Default)]
@@ -83,6 +85,7 @@ impl Default for LogScreen {
             places: Default::default(),
             expanded: HashSet::new(),
             peek: None,
+            card: None,
         }
     }
 }
@@ -94,6 +97,11 @@ fn index(log: Log) -> usize {
 }
 
 impl LogScreen {
+    /// Where the selected card was last drawn.
+    pub fn card(&self) -> Option<Rect> {
+        self.card
+    }
+
     /// The pane's thread, once the selection has rested on it long enough to fetch.
     pub fn peek(&self, store: &Store, now: Instant) -> Option<&ThreadScreen> {
         let peek = self.peek.as_ref()?;
@@ -312,6 +320,7 @@ impl LogScreen {
         at: Instant,
         now: &DateTime<Tz>,
     ) -> Option<Panes> {
+        self.card = None;
         let retry = Retry {
             page: timers.remaining(&Timer::Reload(self.active), at),
             older: timers.remaining(&Timer::Older(self.active), at),
@@ -383,6 +392,7 @@ impl LogScreen {
                 let end = (place.offset + height).min(total);
                 let shown = place.offset.min(feed.lines.len())..end.min(feed.lines.len());
                 let rows = feed.card_rows(selected, &shown);
+                self.card = feed::card_area(area, &rows);
                 let mut lines = feed.window(selected, shown, area.width);
                 if let Some(tail) = tail
                     && end > feed.lines.len()

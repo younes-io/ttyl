@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::body;
@@ -13,6 +13,7 @@ use crate::draft::Target;
 use crate::emoji::{self, Emoji};
 use crate::fatal;
 use crate::feed;
+use crate::popup;
 use crate::text::Buffer;
 use crate::theme;
 
@@ -384,7 +385,7 @@ impl Composer {
 /// Draws the picker on the rows above the composer, its names lined up under the typed name.
 fn draw_picker(frame: &mut Frame, picker: &mut Picker, colon: u16, bottom: u16) {
     let screen = frame.area();
-    let room = usize::from(bottom.saturating_sub(screen.y + 2 + 2));
+    let room = usize::from(bottom.saturating_sub(screen.y + 2 + 2 + 1));
     let shown = picker.matches.len().min(PICKS_SHOWN).min(room);
     if shown == 0 {
         return;
@@ -402,35 +403,29 @@ fn draw_picker(frame: &mut Frame, picker: &mut Picker, colon: u16, bottom: u16) 
         .map(|emoji| emoji.name.len())
         .max()
         .unwrap_or(0);
-    let width = (PICK_INDENT + names + 2)
+    let width = (PICK_INDENT + names + 3)
         .max(query.width() + count.width() + 2)
         .max(PICK_HINT.width() + 2);
     let width = u16::try_from(width).unwrap_or(u16::MAX).min(screen.width);
     let x = (colon + 1)
         .saturating_sub(u16::try_from(PICK_INDENT + 1).unwrap_or(0))
         .max(screen.x)
-        .min(screen.x + screen.width - width);
+        .min((screen.x + screen.width).saturating_sub(width + 1));
     let height = u16::try_from(shown + 2).unwrap_or(u16::MAX);
     let area = Rect {
         x,
-        y: bottom - height,
+        y: bottom - height - 1,
         width,
         height,
     };
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(theme::RAIL))
-        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND))
+    let block = Block::bordered()
         .title(Span::styled(
             query,
             Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD),
         ))
         .title(Line::styled(count, Style::new().fg(theme::FAINT)).right_aligned())
         .title_bottom(Line::styled(PICK_HINT, Style::new().fg(theme::FAINT)).right_aligned());
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
+    let inner = popup::raise(frame, area, block);
     let rows: Vec<Line> = picker
         .matches
         .iter()
@@ -443,12 +438,18 @@ fn draw_picker(frame: &mut Frame, picker: &mut Picker, colon: u16, bottom: u16) 
 }
 
 fn pick_row(emoji: &Emoji, query: &str, selected: bool, width: u16) -> Line<'static> {
-    let base = if selected {
-        Style::new().bg(theme::MUTED).fg(theme::FOREGROUND)
+    let (base, hit) = if selected {
+        (
+            popup::chosen(),
+            popup::chosen().add_modifier(Modifier::UNDERLINED),
+        )
     } else {
-        Style::new().fg(theme::MUTED_FOREGROUND)
+        let base = Style::new().fg(theme::MUTED_FOREGROUND);
+        (
+            base,
+            base.fg(theme::FOREGROUND).add_modifier(Modifier::BOLD),
+        )
     };
-    let hit = base.fg(theme::FOREGROUND).add_modifier(Modifier::BOLD);
     let pad = 2usize.saturating_sub(emoji.glyph.width());
     let mut spans = vec![Span::styled(
         format!(" {}{} ", emoji.glyph, " ".repeat(pad)),

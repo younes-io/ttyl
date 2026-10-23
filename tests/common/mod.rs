@@ -344,6 +344,18 @@ pub fn press(engine: &mut Engine, keys: &str, at: Instant) -> Vec<Effect> {
     effects
 }
 
+/// The text on the first row that has a chosen option filled in, if any.
+pub fn marked(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Option<String> {
+    let buffer = buffer(engine, width, height, at);
+    (0..height).find_map(|y| {
+        let bar: String = (0..width)
+            .filter(|x| buffer[(*x, y)].bg == ttyl::theme::PRIMARY)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        (!bar.trim().is_empty()).then(|| bar.trim().to_owned())
+    })
+}
+
 pub fn buffer(engine: &mut Engine, width: u16, height: u16, at: Instant) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal

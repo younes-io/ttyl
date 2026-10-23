@@ -90,6 +90,22 @@ impl Feed {
     }
 }
 
+/// Where the card in `rows` of a window drawn in `area` sits on the screen, with the gap above and
+/// below it that the card fills.
+pub fn card_area(area: Rect, rows: &Range<usize>) -> Option<Rect> {
+    if rows.is_empty() {
+        return None;
+    }
+    let row = |at: usize| u16::try_from(at).unwrap_or(u16::MAX);
+    let top = (area.y + row(rows.start)).saturating_sub(1).max(area.y);
+    let bottom = (area.y + row(rows.end) + 1).min(area.bottom());
+    Some(Rect {
+        y: top,
+        height: bottom - top,
+        ..area
+    })
+}
+
 /// Paints `spark` over the card in `rows` of `lines`, drawn in `area`, `elapsed` after it began.
 /// A star flashes twice while sparkles burst out on the row above. A pastel's +1 lights up beside the
 /// star, then floats up a row.

@@ -35,6 +35,8 @@ pub struct ThreadScreen {
     near: Vec<CommitId>,
     laid_out: Option<LaidOut>,
     peek: bool,
+    /// Where the selected card was last drawn, for a box about it to open beside.
+    card: Option<Rect>,
 }
 
 struct Anchor {
@@ -137,6 +139,7 @@ impl ThreadScreen {
             near: Vec::new(),
             laid_out: None,
             peek: false,
+            card: None,
         }
     }
 
@@ -146,6 +149,11 @@ impl ThreadScreen {
             peek: true,
             ..ThreadScreen::new(focus, now)
         }
+    }
+
+    /// Where the selected card was last drawn.
+    pub fn card(&self) -> Option<Rect> {
+        self.card
     }
 
     pub fn opened_at(&self) -> Instant {
@@ -418,6 +426,7 @@ impl ThreadScreen {
         let shown = self.offset.min(end)..end;
         let selected = (!self.peek).then_some(at);
         let rows = feed.card_rows(selected, &shown);
+        self.card = feed::card_area(area, &rows);
         let lines = feed.window(selected, shown, area.width);
         frame.render_widget(Paragraph::new(&lines[..]), area);
         if selected.is_some() {

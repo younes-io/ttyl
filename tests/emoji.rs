@@ -73,7 +73,10 @@ fn typing_a_shortcode_lists_its_matches_above_the_panel() {
         .unwrap_or_else(|| panic!("{rows:#?}"));
     assert!(rows[title + 1].contains("laughing"), "{rows:#?}");
     assert!(rows[title + 2].contains("tab insert"), "{rows:#?}");
-    assert!(rows[title + 3].starts_with(" commit ─"), "{rows:#?}");
+    assert!(
+        rows[title + 4].starts_with(" commit ─"),
+        "a shadow's row above the panel: {rows:#?}"
+    );
 
     press(&mut engine, " ", at);
     assert!(!contains(&screen(&mut engine, 100, 30, at), " :laughi "));

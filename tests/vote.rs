@@ -2,7 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{boot_as, boot_serving, buffer, contains, page, press, runs, screen, tap};
+use common::{boot_as, boot_serving, contains, marked, page, press, runs, screen, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Account, Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
@@ -87,24 +87,12 @@ fn one_run(effects: &[Effect]) -> (ttyl::sched::Ticket, Call) {
 }
 
 /// The option the filled bar is on, or `None` while no poll is being picked in.
-fn marked(engine: &mut Engine, at: Instant) -> Option<String> {
-    let (width, height) = (100, 40);
-    let buffer = buffer(engine, width, height, at);
-    (0..height).find_map(|y| {
-        let bar: String = (0..width)
-            .filter(|x| buffer[(*x, y)].bg == ttyl::theme::PRIMARY)
-            .map(|x| buffer[(x, y)].symbol())
-            .collect();
-        (!bar.trim().is_empty()).then(|| bar.trim().to_owned())
-    })
-}
-
 #[test]
 fn v_turns_the_poll_into_a_picker_in_place_with_the_first_option_on() {
     let at = Instant::now();
     let mut engine = on_poll(at);
     assert!(runs(&press(&mut engine, "v", at)).is_empty());
-    assert_eq!(marked(&mut engine, at).as_deref(), Some("1  tabs"));
+    assert_eq!(marked(&mut engine, 100, 40, at).as_deref(), Some("1  tabs"));
     let rows = screen(&mut engine, 100, 40, at);
     assert!(contains(&rows, "2  spaces"), "{rows:#?}");
     assert!(contains(&rows, "votes are final"), "{rows:#?}");
@@ -139,7 +127,7 @@ fn j_k_and_the_digits_move_the_mark_within_the_options() {
     ] {
         press(&mut engine, keys, at);
         assert_eq!(
-            marked(&mut engine, at).as_deref(),
+            marked(&mut engine, 100, 40, at).as_deref(),
             Some(option),
             "after {keys}"
         );
@@ -153,7 +141,7 @@ fn enter_votes_for_the_marked_option_and_ends_the_pick() {
     press(&mut engine, "vj", at);
     let (_, call) = one_run(&tap(&mut engine, KeyCode::Enter, at));
     assert_eq!(call, vote(SPACES));
-    assert_eq!(marked(&mut engine, at), None);
+    assert_eq!(marked(&mut engine, 100, 40, at), None);
 }
 
 #[test]
@@ -162,7 +150,7 @@ fn esc_backs_out_without_voting() {
     let mut engine = on_poll(at);
     press(&mut engine, "v2", at);
     assert!(runs(&tap(&mut engine, KeyCode::Esc, at)).is_empty());
-    assert_eq!(marked(&mut engine, at), None);
+    assert_eq!(marked(&mut engine, 100, 40, at), None);
     assert!(contains(&screen(&mut engine, 100, 40, at), "v to vote"));
 }
 
@@ -220,6 +208,6 @@ fn v_does_nothing_on_a_closed_poll_a_voted_poll_or_your_own() {
         ("own", own),
     ] {
         assert!(runs(&press(&mut engine, "v", at)).is_empty(), "{why}");
-        assert_eq!(marked(&mut engine, at), None, "{why}");
+        assert_eq!(marked(&mut engine, 100, 40, at), None, "{why}");
     }
 }
