@@ -907,7 +907,13 @@ impl Engine {
                 }
             }
             (Phase::Ready(session), Action::Close) if session.composer.is_some() => {
-                session.composer = None;
+                if session
+                    .composer
+                    .as_mut()
+                    .is_some_and(|composer| !composer.dismiss())
+                {
+                    session.composer = None;
+                }
             }
             (Phase::Ready(session), Action::Send) => {
                 if let Some(composer) = &mut session.composer {

@@ -5,11 +5,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::body;
 use crate::draft::Target;
+use crate::emoji::{self, Emoji};
 use crate::fatal;
 use crate::feed;
 use crate::text::Buffer;
@@ -28,6 +29,10 @@ const RULES: [&str; 2] = [
     "so you can read the commit rules first.",
 ];
 const SAVED: &str = "Your draft is saved.";
+const PICKS_SHOWN: usize = 8;
+const PICK_HINT: &str = " tab insert ";
+/// The border, a space and the two cells of the emoji come before a name in the picker.
+const PICK_INDENT: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
@@ -46,7 +51,27 @@ enum Row {
     Fold,
 }
 
+/// The emoji whose names match the `:name` before the cursor, all of them, in rank order.
+struct Picker {
+    at: usize,
+    query: String,
+    matches: Vec<Emoji>,
+    selected: usize,
+    scroll: usize,
+}
+
+impl Picker {
+    /// Moves the selection one row, wrapping at the ends. The text never changes.
+    fn step(&mut self, down: bool) -> bool {
+        let count = self.matches.len();
+        self.selected = (self.selected + if down { 1 } else { count - 1 }) % count;
+        false
+    }
+}
+
 pub struct Composer {
+    picker: Option<Picker>,
+    dismissed: Option<usize>,
     target: Target,
     title: String,
     text: Buffer,
@@ -65,6 +90,8 @@ impl Composer {
             _ => "commit".to_owned(),
         };
         Composer {
+            picker: None,
+            dismissed: None,
             target,
             title,
             text: Buffer::new(draft.unwrap_or("")),
@@ -88,6 +115,21 @@ impl Composer {
         let before = self.text.text().to_owned();
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let alt = event.modifiers.contains(KeyModifiers::ALT);
+        if let Some(picker) = &mut self.picker {
+            match event.code {
+                KeyCode::Up => return picker.step(false),
+                KeyCode::Down => return picker.step(true),
+                KeyCode::Char('p') if ctrl => return picker.step(false),
+                KeyCode::Char('n') if ctrl => return picker.step(true),
+                KeyCode::Tab | KeyCode::Enter if !ctrl && !alt => {
+                    let (at, glyph) = (picker.at, picker.matches[picker.selected].glyph);
+                    self.text.replace_before(at, glyph);
+                    self.pick();
+                    return self.edited(before);
+                }
+                _ => {}
+            }
+        }
         let text = &mut self.text;
         match event.code {
             KeyCode::Char('w') if ctrl => text.delete_word(),
@@ -107,7 +149,43 @@ impl Composer {
             KeyCode::End => text.end(),
             _ => {}
         }
+        self.pick();
         self.edited(before)
+    }
+
+    /// Hides the emoji picker until the `:name` it was showing is gone, and says whether it was open.
+    pub fn dismiss(&mut self) -> bool {
+        let Some(picker) = self.picker.take() else {
+            return false;
+        };
+        self.dismissed = Some(picker.at);
+        true
+    }
+
+    fn pick(&mut self) {
+        let before = &self.text.text()[..self.text.cursor()];
+        let Some(at) = emoji::trigger(before) else {
+            self.picker = None;
+            self.dismissed = None;
+            return;
+        };
+        let query = &before[at + 1..];
+        if self.dismissed == Some(at)
+            || self
+                .picker
+                .as_ref()
+                .is_some_and(|picker| picker.at == at && picker.query == query)
+        {
+            return;
+        }
+        let matches = emoji::search(query);
+        self.picker = (!matches.is_empty()).then(|| Picker {
+            at,
+            query: query.to_owned(),
+            matches,
+            selected: 0,
+            scroll: 0,
+        });
     }
 
     pub fn paste(&mut self, pasted: &str) -> bool {
@@ -116,6 +194,7 @@ impl Composer {
         }
         let before = self.text.text().to_owned();
         self.text.insert(pasted);
+        self.pick();
         self.edited(before)
     }
 
@@ -123,6 +202,7 @@ impl Composer {
     pub fn replace(&mut self, edited: &str) -> bool {
         let before = self.text.text().to_owned();
         self.text = Buffer::new(edited.trim_end_matches(['\n', '\r']));
+        self.pick();
         self.edited(before)
     }
 
@@ -251,6 +331,11 @@ impl Composer {
             text_area.x + x.min(text_area.width),
             text_area.y + y.min(text_area.height.saturating_sub(1)),
         ));
+        if let Some(picker) = &mut self.picker {
+            let (_, column) = self.text.place(self.width, picker.at);
+            let colon = text_area.x + u16::try_from(column).unwrap_or(u16::MAX);
+            draw_picker(frame, picker, colon, area.y);
+        }
     }
 
     fn status(&self, width: usize) -> Vec<Line<'static>> {
@@ -294,6 +379,93 @@ impl Composer {
         }
         rows.into_iter().map(Line::from).collect()
     }
+}
+
+/// Draws the picker on the rows above the composer, its names lined up under the typed name.
+fn draw_picker(frame: &mut Frame, picker: &mut Picker, colon: u16, bottom: u16) {
+    let screen = frame.area();
+    let room = usize::from(bottom.saturating_sub(screen.y + 2 + 2));
+    let shown = picker.matches.len().min(PICKS_SHOWN).min(room);
+    if shown == 0 {
+        return;
+    }
+    if picker.selected < picker.scroll {
+        picker.scroll = picker.selected;
+    } else if picker.selected >= picker.scroll + shown {
+        picker.scroll = picker.selected + 1 - shown;
+    }
+    let count = format!(" {}/{} ", picker.selected + 1, picker.matches.len());
+    let query = format!(" :{} ", picker.query);
+    let names = picker
+        .matches
+        .iter()
+        .map(|emoji| emoji.name.len())
+        .max()
+        .unwrap_or(0);
+    let width = (PICK_INDENT + names + 2)
+        .max(query.width() + count.width() + 2)
+        .max(PICK_HINT.width() + 2);
+    let width = u16::try_from(width).unwrap_or(u16::MAX).min(screen.width);
+    let x = (colon + 1)
+        .saturating_sub(u16::try_from(PICK_INDENT + 1).unwrap_or(0))
+        .max(screen.x)
+        .min(screen.x + screen.width - width);
+    let height = u16::try_from(shown + 2).unwrap_or(u16::MAX);
+    let area = Rect {
+        x,
+        y: bottom - height,
+        width,
+        height,
+    };
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(theme::RAIL))
+        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND))
+        .title(Span::styled(
+            query,
+            Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD),
+        ))
+        .title(Line::styled(count, Style::new().fg(theme::FAINT)).right_aligned())
+        .title_bottom(Line::styled(PICK_HINT, Style::new().fg(theme::FAINT)).right_aligned());
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    let rows: Vec<Line> = picker
+        .matches
+        .iter()
+        .enumerate()
+        .skip(picker.scroll)
+        .take(shown)
+        .map(|(at, emoji)| pick_row(emoji, &picker.query, at == picker.selected, inner.width))
+        .collect();
+    frame.render_widget(Paragraph::new(rows), inner);
+}
+
+fn pick_row(emoji: &Emoji, query: &str, selected: bool, width: u16) -> Line<'static> {
+    let base = if selected {
+        Style::new().bg(theme::MUTED).fg(theme::FOREGROUND)
+    } else {
+        Style::new().fg(theme::MUTED_FOREGROUND)
+    };
+    let hit = base.fg(theme::FOREGROUND).add_modifier(Modifier::BOLD);
+    let pad = 2usize.saturating_sub(emoji.glyph.width());
+    let mut spans = vec![Span::styled(
+        format!(" {}{} ", emoji.glyph, " ".repeat(pad)),
+        base,
+    )];
+    let query = query.to_lowercase();
+    let start = emoji.name.find(&query).unwrap_or(emoji.name.len());
+    let end = (start + query.len()).min(emoji.name.len());
+    spans.push(Span::styled(emoji.name[..start].to_owned(), base));
+    spans.push(Span::styled(emoji.name[start..end].to_owned(), hit));
+    spans.push(Span::styled(emoji.name[end..].to_owned(), base));
+    let used: usize = spans.iter().map(Span::width).sum();
+    spans.push(Span::styled(
+        " ".repeat(usize::from(width).saturating_sub(used)),
+        base,
+    ));
+    Line::from(spans)
 }
 
 fn rules(width: usize) -> Vec<Line<'static>> {

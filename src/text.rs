@@ -101,6 +101,12 @@ impl Buffer {
         self.remove(start..self.cursor);
     }
 
+    /// Swaps the text from `start` up to the cursor for `text`.
+    pub fn replace_before(&mut self, start: usize, text: &str) {
+        self.remove(start..self.cursor);
+        self.insert(text);
+    }
+
     pub fn up(&mut self, width: usize) {
         self.vertical(width, false);
     }
@@ -134,8 +140,12 @@ impl Buffer {
     }
 
     pub fn row_and_column(&self, width: usize) -> (usize, usize) {
+        self.place(width, self.cursor)
+    }
+
+    pub fn place(&self, width: usize, at: usize) -> (usize, usize) {
         let rows = self.rows(width);
-        locate(&self.text, &rows, self.cursor)
+        locate(&self.text, &rows, at)
     }
 
     pub fn display(&self, row: &Range<usize>) -> String {
