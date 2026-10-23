@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/7124b43c-576d-4beb-b1a2-f0eb014606fe
 You need a recent stable [Rust](https://rustup.rs). Then run:
 
 ```
-cargo install --git https://github.com/younes-io/devnull-tui
+cargo install --git https://github.com/younes-io/ttyl
 ttyl
 ```
 
@@ -88,8 +88,8 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 ## Development
 
 ```
-git clone https://github.com/younes-io/devnull-tui
-cd devnull-tui
+git clone https://github.com/younes-io/ttyl
+cd ttyl
 cargo test
 cargo run
 ```
