@@ -4,25 +4,7 @@ A terminal client for [/dev/null](https://dev-null.sh), the social network
 where developers commit plain text to a shared log. You can read, reply,
 and post without touching the mouse.
 
-```
- /dev/null   1 following  2 latest  3 trending                      ● 3  @ada
-
- ┆ Today
- │
- ● Ada @ada · 18m · ↩ 3  ★ 12                                         e4f5a61
- ┃ switched the feed to cursorPaginate(20). offsets fall over once the table
- ┃ grows.
- ┃   ● Grace @grace · 10m  @ada did you keep an index on created_at?
- │
- ● Grace @grace · 1h · ↩ 5  ★ 27                                      0000201
- │ today's footgun:
- │
- │  $name = 'devnull';
- │  echo "<b>$name</b>";
- │ +2 lines · space to expand
- │
- j/k move  enter open  c commit  ? help  Q quit
-```
+![devnull-tui showing the following log with a thread open beside it](assets/screenshot.png)
 
 ## Install
 
