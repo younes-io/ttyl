@@ -10,6 +10,23 @@ pub const TOAST: Duration = Duration::from_secs(4);
 pub const GLOW: Duration = Duration::from_secs(5);
 pub const FRAME: Duration = Duration::from_millis(100);
 pub const SECOND: Duration = Duration::from_secs(1);
+pub const SPARK_FRAME: Duration = Duration::from_millis(33);
+
+/// A short animation on the selected card after the user stars it or gives it a pastel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Spark {
+    Star,
+    Pastel,
+}
+
+impl Spark {
+    pub fn lasts(self) -> Duration {
+        match self {
+            Spark::Star => Duration::from_millis(400),
+            Spark::Pastel => Duration::from_millis(700),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Timer {
@@ -25,6 +42,7 @@ pub enum Timer {
     More(CommitId),
     Inbox(Filter),
     OlderInbox(Filter),
+    Spark(Spark, CommitId),
 }
 
 #[derive(Default)]
@@ -65,6 +83,14 @@ impl Timers {
 
     pub fn any(&self, matches: impl Fn(&Timer) -> bool) -> bool {
         self.0.keys().any(matches)
+    }
+
+    /// The spark playing on `id`, if any, and how long ago it began.
+    pub fn spark(&self, id: &CommitId, now: Instant) -> Option<(Spark, Duration)> {
+        [Spark::Star, Spark::Pastel].into_iter().find_map(|spark| {
+            let left = self.remaining(&Timer::Spark(spark, id.clone()), now)?;
+            Some((spark, spark.lasts().saturating_sub(left)))
+        })
     }
 
     pub fn next(&self) -> Option<Instant> {

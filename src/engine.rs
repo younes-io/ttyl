@@ -13,7 +13,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::body;
-use crate::clock::{FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, TOAST, Timer, Timers};
+use crate::clock::{
+    FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer, Timers,
+};
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
@@ -614,7 +616,7 @@ impl Engine {
                 Timer::Retry => self.sched.send(Call::Me, Priority::Now),
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
-                Timer::Glow => {}
+                Timer::Glow | Timer::Spark(..) => {}
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
                 Timer::Inbox(filter) => {
                     if let Phase::Ready(session) = &mut self.phase
@@ -661,6 +663,9 @@ impl Engine {
             (!self.thread_wants(now).is_empty()).then_some(now),
             self.placeholder_at().filter(|at| *at > now),
             self.saver.as_ref().map(|_| now + saver::STEP),
+            self.timers
+                .any(|timer| matches!(timer, Timer::Spark(..)))
+                .then(|| now + SPARK_FRAME),
         ]
         .into_iter()
         .flatten()
@@ -1011,11 +1016,20 @@ impl Engine {
         let (id, author, url) = (commit.id, commit.author.username, commit.html_url);
         let (toast, effects) = match act {
             Act::Star => {
-                session.store.star(&id);
+                let spark = Timer::Spark(Spark::Star, id.clone());
+                if session.store.star(&id) == Some(true) {
+                    self.timers.set(spark, now + Spark::Star.lasts());
+                } else {
+                    self.timers.clear(&spark);
+                }
                 (None, Vec::new())
             }
             Act::Pastel => {
                 session.store.give_pastel(&id);
+                self.timers.set(
+                    Timer::Spark(Spark::Pastel, id.clone()),
+                    now + Spark::Pastel.lasts(),
+                );
                 (None, Vec::new())
             }
             Act::Follow => (
@@ -1300,6 +1314,15 @@ impl Engine {
                     | Call::Pastel(_)
                     | Call::Report { .. } => {
                         session.store.refused(&call);
+                        match &call {
+                            Call::Star { id, .. } => {
+                                self.timers.clear(&Timer::Spark(Spark::Star, id.clone()))
+                            }
+                            Call::Pastel(id) => {
+                                self.timers.clear(&Timer::Spark(Spark::Pastel, id.clone()))
+                            }
+                            _ => {}
+                        }
                         let text = match (&error, &call) {
                             (Error::WrongShape(_), Call::Star { id, .. }) => {
                                 format!("fatal: could not star {}", id.short_hash())

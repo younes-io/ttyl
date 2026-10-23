@@ -1,16 +1,17 @@
 mod common;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use common::{
     account, answer, boot, boot_as, buffer, commit, contains, page, press, runs, screen, secs, tap,
 };
+use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
+use ttyl::clock::Spark;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{CommitId, Focus, Reason};
 use ttyl::sched::Ticket;
 use ttyl::theme;
-use ratatui::crossterm::event::KeyCode;
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
 
@@ -81,22 +82,82 @@ fn footer(engine: &mut Engine, at: Instant) -> String {
         .to_owned()
 }
 
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
+/// Grace's star as drawn once any pop has finished.
 fn drawn_star(engine: &mut Engine, width: u16, height: u16, at: Instant) -> (String, bool) {
+    let at = at + Spark::Star.lasts();
+    let buffer = buffer(engine, width, height, at);
+    let star = star_at(engine, width, height, at);
+    let count: String = (star.0 + 2..width)
+        .map(|x| buffer[(x, star.1)].symbol().to_owned())
+        .take_while(|symbol| symbol.chars().all(|c| c.is_ascii_digit()) && !symbol.is_empty())
+        .collect();
+    (count, buffer[star].fg == theme::AMBER)
+}
+
+fn star_at(engine: &mut Engine, width: u16, height: u16, at: Instant) -> (u16, u16) {
     let buffer = buffer(engine, width, height, at);
     let rows = screen(engine, width, height, at);
     let y = rows
         .iter()
         .position(|row| row.ends_with("0000201"))
         .unwrap_or_else(|| panic!("grace's row is on screen: {rows:#?}"));
-    let star = (y..rows.len())
+    (y..rows.len())
         .flat_map(|y| (0..width).map(move |x| (x, y as u16)))
         .find(|at| buffer[*at].symbol() == "★")
-        .unwrap_or_else(|| panic!("grace's row has a star: {rows:#?}"));
-    let count: String = (star.0 + 2..width)
-        .map(|x| buffer[(x, star.1)].symbol().to_owned())
-        .take_while(|symbol| symbol.chars().all(|c| c.is_ascii_digit()) && !symbol.is_empty())
+        .unwrap_or_else(|| panic!("grace's row has a star: {rows:#?}"))
+}
+
+#[test]
+fn a_new_star_pops_in_place_and_settles_amber() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    let (ticket, _) = one_run(&press(&mut engine, "s", at));
+    let star = star_at(&mut engine, 100, 30, at + Spark::Star.lasts());
+    let frames: Vec<(String, bool)> = [0, 100, 170, 250, 400]
+        .map(|n| {
+            let buffer = buffer(&mut engine, 100, 30, at + ms(n));
+            (
+                buffer[star].symbol().to_owned(),
+                buffer[star].fg == theme::AMBER,
+            )
+        })
+        .into_iter()
         .collect();
-    (count, buffer[star].fg == theme::AMBER)
+    assert_eq!(
+        frames,
+        [
+            ("·", false),
+            ("✧", false),
+            ("✦", false),
+            ("★", false),
+            ("★", true)
+        ]
+        .map(|(glyph, amber)| (glyph.to_owned(), amber))
+    );
+    assert!(engine.next_wake(at + ms(100)).unwrap() <= at + ms(133));
+
+    assert!(reply(&mut engine, ticket, Ok(starred(true, 28)), at).is_empty());
+    engine.pump(at + ms(400));
+    let wake = engine.next_wake(at + ms(400));
+    assert!(
+        wake.is_none_or(|wake| wake > at + ms(500)),
+        "frames slow down once the pop is over"
+    );
+}
+
+#[test]
+fn taking_a_star_back_does_not_pop() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "ss", at);
+    let star = star_at(&mut engine, 100, 30, at);
+    let buffer = buffer(&mut engine, 100, 30, at);
+    assert_eq!(buffer[star].symbol(), "★");
+    assert_ne!(buffer[star].fg, theme::AMBER);
 }
 
 #[test]
@@ -181,6 +242,12 @@ fn a_refused_star_goes_back_and_says_why() {
         ("27".to_owned(), false)
     );
     assert_eq!(footer(&mut engine, at), " you can't star this commit");
+    let star = star_at(&mut engine, 100, 30, at);
+    assert_ne!(
+        buffer(&mut engine, 100, 30, at)[star].fg,
+        theme::AMBER,
+        "the pop stops with the star it showed"
+    );
 }
 
 #[test]
@@ -390,6 +457,36 @@ fn a_pastel_is_offered_only_in_pasteis_mode_and_never_on_your_own_commit() {
     press(&mut engine, "gg", at);
     assert!(press(&mut engine, "P", at).is_empty(), "row 0 is ada's own");
     assert!(!contains(&helps(&mut engine, at), "give a pastel"));
+}
+
+#[test]
+fn a_pastel_shows_a_plus_one_that_floats_up_and_goes() {
+    let at = Instant::now();
+    let mut engine = giving_pasteis(at);
+    press(&mut engine, "P", at);
+    let (x, y) = star_at(&mut engine, 100, 30, at);
+    let plus = (x + "★ 27 ".len() as u16 - 2, y);
+    let drawn = |engine: &mut Engine, n: u64, (x, y): (u16, u16)| {
+        let buffer = buffer(engine, 100, 30, at + ms(n));
+        format!("{}{}", buffer[(x, y)].symbol(), buffer[(x + 1, y)].symbol())
+    };
+    assert_eq!(
+        drawn(&mut engine, 0, plus),
+        "+1",
+        "it starts beside the star"
+    );
+    assert_eq!(
+        drawn(&mut engine, 400, (plus.0, y - 1)),
+        "+1",
+        "then floats up a row"
+    );
+    assert_ne!(drawn(&mut engine, 400, plus), "+1");
+    engine.pump(at + Spark::Pastel.lasts());
+    assert_ne!(
+        drawn(&mut engine, 800, (plus.0, y - 1)),
+        "+1",
+        "then it is gone"
+    );
 }
 
 #[test]

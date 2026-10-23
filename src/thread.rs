@@ -412,12 +412,14 @@ impl ThreadScreen {
             .map(|(id, _)| id.clone())
             .collect();
         let end = (self.offset + height).min(total);
-        let lines = feed.window(
-            (!self.peek).then_some(at),
-            self.offset.min(end)..end,
-            area.width,
-        );
-        frame.render_widget(Paragraph::new(lines), area);
+        let shown = self.offset.min(end)..end;
+        let selected = (!self.peek).then_some(at);
+        let rows = feed.card_rows(selected, &shown);
+        let lines = feed.window(selected, shown, area.width);
+        frame.render_widget(Paragraph::new(&lines[..]), area);
+        if let Some((spark, elapsed)) = selected.and_then(|_| timers.spark(&self.selected, now)) {
+            feed::spark(frame.buffer_mut(), area, &lines, rows, spark, elapsed);
+        }
         self.laid_out = Some(laid_out);
     }
 }

@@ -3,12 +3,13 @@ mod common;
 use std::time::Instant;
 
 use common::{account, contains, log_of, not_found, press, screen, tap};
-use ttyl::api::{Call, Error, Reply};
-use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
 use proptest::prelude::*;
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
+use ttyl::api::{Call, Error, Reply};
+use ttyl::clock::Spark;
+use ttyl::engine::{Effect, Engine, Event};
+use ttyl::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
 
 const MAX_DEPTH: usize = 6;
 const KEYS: [&str; 18] = [
@@ -306,6 +307,7 @@ proptest! {
                     );
                 }
                 None => {
+                    let rows = screen(&mut engine, width, height, at + Spark::Star.lasts());
                     prop_assert_eq!(&above_the_hints(&rows), &log, "{:?} came back elsewhere", key);
                     let effects = tap(&mut engine, KeyCode::Enter, at);
                     settle(&mut engine, &tree, effects, size, at);
@@ -316,7 +318,7 @@ proptest! {
             let effects = tap(&mut engine, KeyCode::Esc, at);
             settle(&mut engine, &tree, effects, size, at);
         }
-        let rows = screen(&mut engine, width, height, at);
+        let rows = screen(&mut engine, width, height, at + Spark::Star.lasts());
         prop_assert_eq!(&above_the_hints(&rows), &log);
     }
 }

@@ -7,12 +7,15 @@ use std::ops::Range;
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::bidi;
+use crate::clock::Spark;
 use crate::code;
 use crate::model::{
     Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Quote, Reply, Row, Segment, Shown,
@@ -74,6 +77,92 @@ impl Feed {
             lines[at - window.start].spans[at_rail] = rail.clone();
         }
         lines
+    }
+
+    /// The rows of `window` that the selected card covers, counted from the window's top.
+    pub fn card_rows(&self, selected: Option<usize>, window: &Range<usize>) -> Range<usize> {
+        let Some(entry) = selected.and_then(|at| self.entries.get(at)) else {
+            return 0..0;
+        };
+        let start = entry.header.clamp(window.start, window.end);
+        let end = entry.lines.end.clamp(window.start, window.end);
+        start - window.start..end - window.start
+    }
+}
+
+/// Paints `spark` over the card in `rows` of `lines`, drawn in `area`, `elapsed` after it began.
+/// A star pops in place. A pastel's +1 starts beside the star and floats up a row.
+pub fn spark(
+    buf: &mut Buffer,
+    area: Rect,
+    lines: &[Line],
+    rows: Range<usize>,
+    spark: Spark,
+    elapsed: Duration,
+) {
+    let star = rows.clone().find_map(|row| {
+        let mut col = 0;
+        for span in &lines[row].spans {
+            if let Some(at) = span.content.find('★') {
+                let before = span.content[..at].width();
+                return Some((row, col + before, span.width() - before));
+            }
+            col += span.width();
+        }
+        None
+    });
+    let ms = elapsed.as_millis();
+    let (row, col, text, style) = match spark {
+        Spark::Star => {
+            let Some((row, col, _)) = star else { return };
+            let (glyph, color) = match ms {
+                0..70 => ("·", theme::FOREGROUND),
+                70..140 => ("✧", theme::FOREGROUND),
+                140..210 => ("✦", theme::FOREGROUND),
+                210..300 => ("★", theme::FOREGROUND),
+                _ => ("★", theme::AMBER),
+            };
+            (
+                row,
+                col,
+                glyph,
+                Style::new().fg(color).add_modifier(Modifier::BOLD),
+            )
+        }
+        Spark::Pastel => {
+            let Some((row, col)) = star
+                .map(|(row, col, width)| (row, col + width + 1))
+                .or_else(|| {
+                    let header = lines.get(rows.start)?;
+                    let filled = header
+                        .spans
+                        .iter()
+                        .rposition(|span| !span.content.trim().is_empty())?;
+                    let col = header.spans[..=filled]
+                        .iter()
+                        .map(Span::width)
+                        .sum::<usize>();
+                    Some((rows.start, col + 1))
+                })
+            else {
+                return;
+            };
+            let (row, style) = match ms {
+                0..300 => (
+                    row,
+                    Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+                ),
+                300..500 => (row.saturating_sub(1), Style::new().fg(theme::AMBER)),
+                _ => (row.saturating_sub(1), Style::new().fg(theme::FAINT)),
+            };
+            (row, col, "+1", style)
+        }
+    };
+    let (Ok(row), Ok(col)) = (u16::try_from(row), u16::try_from(col)) else {
+        return;
+    };
+    if row < area.height && col + 2 <= area.width {
+        buf.set_string(area.x + col, area.y + row, text, style);
     }
 }
 

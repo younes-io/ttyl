@@ -374,6 +374,7 @@ impl LogScreen {
                 });
                 let end = (place.offset + height).min(total);
                 let shown = place.offset.min(feed.lines.len())..end.min(feed.lines.len());
+                let rows = feed.card_rows(selected, &shown);
                 let mut lines = feed.window(selected, shown, area.width);
                 if let Some(tail) = tail
                     && end > feed.lines.len()
@@ -381,7 +382,10 @@ impl LogScreen {
                     let from = place.offset.saturating_sub(feed.lines.len());
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
-                frame.render_widget(Paragraph::new(lines), area);
+                frame.render_widget(Paragraph::new(&lines[..]), area);
+                if let Some((spark, elapsed)) = id.and_then(|id| timers.spark(&id, at)) {
+                    feed::spark(frame.buffer_mut(), area, &lines, rows, spark, elapsed);
+                }
                 if pane.is_none() {
                     self.peek = None;
                 }
