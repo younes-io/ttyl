@@ -378,3 +378,30 @@ pub fn tap(engine: &mut Engine, code: KeyCode, at: Instant) -> Vec<Effect> {
     effects.extend(engine.pump(at));
     effects
 }
+
+pub fn profile(username: &str, is_following: bool) -> Reply {
+    let json = serde_json::json!({
+        "data": {
+            "id": format!("u-{username}"),
+            "username": username,
+            "name": username,
+            "avatar_url": null,
+            "html_url": format!("https://dev-null.sh/{username}"),
+            "lane": 0,
+            "bio": null,
+            "company": null,
+            "location": null,
+            "website": null,
+            "created_at": "2025-01-01T00:00:00Z",
+            "commits_count": 0,
+            "followers_count": 0,
+            "following_count": 0,
+        },
+        "is_following": is_following,
+        "follows_you": false,
+        "pinned_commit": null,
+    });
+    Reply::User(Box::new(
+        ttyl::model::Profile::parse(&json.to_string()).unwrap(),
+    ))
+}

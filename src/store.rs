@@ -217,7 +217,9 @@ impl Store {
                 }
             }
             Call::User(username) => {
-                self.follows.remove(username);
+                if let Some(Follow::Asking { .. }) = self.follows.get(username) {
+                    self.follows.remove(username);
+                }
             }
             Call::Delete(id) => {
                 self.deleting.remove(id);
@@ -237,7 +239,9 @@ impl Store {
             | Call::Report { .. }
             | Call::Post { .. }
             | Call::Notifications { .. }
-            | Call::Group { .. } => return,
+            | Call::Group { .. }
+            | Call::Commits { .. }
+            | Call::People { .. } => return,
         }
         self.generation += 1;
     }
@@ -275,7 +279,12 @@ impl Store {
                 self.me.pasteis_remaining = Some(remaining);
                 self.generation += 1;
             }
-            (Call::User(username), Reply::User { is_following }) => {
+            (Call::User(username), Reply::User(profile)) => {
+                let is_following = profile.is_following;
+                if let Some(pinned) = profile.pinned {
+                    self.land_row(pinned);
+                    self.generation += 1;
+                }
                 let want = match self.follows.get(username) {
                     Some(Follow::Asking { odd_presses }) => is_following ^ odd_presses,
                     Some(Follow::Known { want, .. }) => *want,
@@ -288,6 +297,22 @@ impl Store {
                         want,
                     },
                 );
+            }
+            (_, Reply::Rows(page)) => {
+                self.absorb_rows(page.rows);
+            }
+            (_, Reply::People(page)) => {
+                for person in page.people {
+                    if let Some(server) = person.is_followed {
+                        self.follows
+                            .entry(person.user.username)
+                            .or_insert(Follow::Known {
+                                server,
+                                want: server,
+                            });
+                    }
+                }
+                self.generation += 1;
             }
             (Call::Follow { username, on }, Reply::Done) => {
                 if let Some(Follow::Known { server, .. }) = self.follows.get_mut(username) {
@@ -312,7 +337,7 @@ impl Store {
                 | Reply::Replies(_)
                 | Reply::Commit(_)
                 | Reply::Pastel { .. }
-                | Reply::User { .. }
+                | Reply::User(_)
                 | Reply::Notifications(_)
                 | Reply::Group(_)
                 | Reply::Done,
@@ -552,6 +577,12 @@ impl Store {
         listing.next_cursor = page.next_cursor.filter(|_| listing.ids.len() > before);
     }
 
+    /// Keeps rows a screen lists on its own, and returns their ids in order.
+    pub fn absorb_rows(&mut self, rows: Vec<Row>) -> Vec<CommitId> {
+        self.generation += 1;
+        self.absorb(rows)
+    }
+
     fn absorb(&mut self, rows: Vec<Row>) -> Vec<CommitId> {
         rows.into_iter().map(|row| self.land_row(row)).collect()
     }
@@ -658,23 +689,26 @@ impl Store {
         self.rows.get(id)
     }
 
+    /// The rows behind these ids as they are shown now, the deleted ones marked so.
+    pub fn rows_of(&self, ids: &[CommitId]) -> Vec<Row> {
+        ids.iter()
+            .filter_map(|id| {
+                let mut row = self.shown(self.rows.get(id)?).into_owned();
+                if self.gone.contains_key(id) {
+                    row.deletion = Some(Deletion::Done);
+                }
+                Some(row)
+            })
+            .collect()
+    }
+
     pub fn page(&self, log: Log) -> Option<LogPage> {
         let Slot::Loaded(listing) = self.slot(log) else {
             return None;
         };
         Some(LogPage {
             log,
-            rows: listing
-                .ids
-                .iter()
-                .filter_map(|id| {
-                    let mut row = self.shown(self.rows.get(id)?).into_owned();
-                    if self.gone.contains_key(id) {
-                        row.deletion = Some(Deletion::Done);
-                    }
-                    Some(row)
-                })
-                .collect(),
+            rows: self.rows_of(&listing.ids),
             next_cursor: listing.next_cursor.clone(),
             is_ranked: listing.is_ranked,
             new_commits_count: None,

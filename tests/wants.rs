@@ -1,3 +1,6 @@
+mod common;
+
+use common::profile;
 use ttyl::api::{Account, Call, Me, Reply};
 use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row};
 use ttyl::sched::CallKey;
@@ -155,12 +158,7 @@ fn a_follow_with_no_known_state_asks_the_server_first() {
     assert_eq!(store.follow("grace"), None);
     assert_eq!(store.writes(idle), vec![Call::User("grace".to_owned())]);
 
-    store.apply(
-        &Call::User("grace".to_owned()),
-        Reply::User {
-            is_following: false,
-        },
-    );
+    store.apply(&Call::User("grace".to_owned()), profile("grace", false));
     assert_eq!(store.following("grace"), Some(true));
     let follow = Call::Follow {
         username: "grace".to_owned(),
@@ -177,10 +175,7 @@ fn a_follow_with_no_known_state_asks_the_server_first() {
 fn a_refused_follow_goes_back_to_what_the_server_has() {
     let mut store = store();
     store.follow("grace");
-    store.apply(
-        &Call::User("grace".to_owned()),
-        Reply::User { is_following: true },
-    );
+    store.apply(&Call::User("grace".to_owned()), profile("grace", true));
     assert_eq!(store.following("grace"), Some(false));
     let unfollow = Call::Follow {
         username: "grace".to_owned(),

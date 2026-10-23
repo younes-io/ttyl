@@ -1224,8 +1224,8 @@ impl Engine {
         }
         let Call::Page(log) = call else {
             let answered = match (call, &reply) {
-                (Call::User(username), Reply::User { is_following }) => {
-                    Some((username, *is_following))
+                (Call::User(username), Reply::User(profile)) => {
+                    Some((username, profile.is_following))
                 }
                 _ => None,
             };
@@ -1398,6 +1398,7 @@ impl Engine {
                         }
                         offline
                     }
+                    Call::Commits { .. } | Call::People { .. } => offline,
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {

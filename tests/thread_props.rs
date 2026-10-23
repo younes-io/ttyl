@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{account, contains, log_of, not_found, press, screen, tap};
+use common::{account, contains, log_of, not_found, press, profile, screen, tap};
 use proptest::prelude::*;
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
@@ -161,9 +161,7 @@ impl Tree {
                     replies_count: page.replies_count,
                 })))
             }
-            Call::User(_) => Ok(Reply::User {
-                is_following: false,
-            }),
+            Call::User(_) => Ok(profile("grace", false)),
             Call::Follow { .. } | Call::Report { .. } => Ok(Reply::Done),
             other => panic!("not a call the log or a thread makes: {other:?}"),
         }

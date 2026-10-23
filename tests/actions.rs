@@ -3,7 +3,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    account, answer, boot, boot_as, buffer, commit, contains, page, press, runs, screen, secs, tap,
+    account, answer, boot, boot_as, buffer, commit, contains, page, press, profile, runs, screen,
+    secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
@@ -309,14 +310,7 @@ fn follow_asks_who_the_user_follows_first_then_toggles_at_once() {
     let (ticket, call) = one_run(&press(&mut engine, "f", at));
     assert_eq!(call, Call::User("grace".to_owned()));
 
-    let effects = reply(
-        &mut engine,
-        ticket,
-        Ok(Reply::User {
-            is_following: false,
-        }),
-        at,
-    );
+    let effects = reply(&mut engine, ticket, Ok(profile("grace", false)), at);
     assert_eq!(runs(&effects), [&follow(true)]);
     assert_eq!(footer(&mut engine, at), " following @grace · f to undo");
     let (ticket, _) = one_run(&effects);
@@ -332,12 +326,7 @@ fn a_refused_follow_says_why() {
     let at = Instant::now();
     let mut engine = on_grace(at);
     let (ticket, _) = one_run(&press(&mut engine, "f", at));
-    let effects = reply(
-        &mut engine,
-        ticket,
-        Ok(Reply::User { is_following: true }),
-        at,
-    );
+    let effects = reply(&mut engine, ticket, Ok(profile("grace", true)), at);
     assert_eq!(runs(&effects), [&follow(false)]);
     let (ticket, _) = one_run(&effects);
     reply(&mut engine, ticket, Err(refused("slow down")), at);

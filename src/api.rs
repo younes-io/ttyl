@@ -12,8 +12,8 @@ use ureq::http::Request;
 use crate::device::{DeviceKey, Nonce};
 use crate::draft::Target;
 use crate::model::{
-    CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId, NotificationPage,
-    Reason, RepliesPage,
+    Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId,
+    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -73,6 +73,17 @@ pub enum Call {
         on: bool,
     },
     User(String),
+    /// Someone's commits, or with `replies` their replies, as their profile lists them.
+    Commits {
+        username: String,
+        replies: bool,
+        cursor: Option<String>,
+    },
+    People {
+        username: String,
+        circle: Circle,
+        cursor: Option<String>,
+    },
     Delete(CommitId),
     Pastel(CommitId),
     Vote {
@@ -107,7 +118,9 @@ pub enum Reply {
     Replies(RepliesPage),
     Commit(Box<Focus>),
     Pastel { commit: Box<Focus>, remaining: u32 },
-    User { is_following: bool },
+    User(Box<Profile>),
+    Rows(RowPage),
+    People(PeoplePage),
     Notifications(NotificationPage),
     Group(GroupPage),
     Done,
@@ -255,7 +268,21 @@ impl Client {
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
-            Call::User(username) => self.user(username),
+            Call::User(username) => self.user(username).map(|profile| Reply::User(Box::new(profile))),
+            Call::Commits {
+                username,
+                replies,
+                cursor,
+            } => self
+                .commits(username, *replies, cursor.as_deref())
+                .map(Reply::Rows),
+            Call::People {
+                username,
+                circle,
+                cursor,
+            } => self
+                .people(username, *circle, cursor.as_deref())
+                .map(Reply::People),
             Call::Delete(id) => {
                 let path = format!("/api/v1/commits/{}", escape(&id.0));
                 self.send("DELETE", &path, String::new())
@@ -328,17 +355,42 @@ impl Client {
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
-    fn user(&self, username: &str) -> Result<Reply, Error> {
-        #[derive(Deserialize)]
-        struct Wire {
-            is_following: bool,
-        }
-
+    pub fn user(&self, username: &str) -> Result<Profile, Error> {
         let path = format!("/api/v1/users/{}", escape(username));
         let (status, text) = self.send("GET", &path, String::new())?;
-        parse::<Wire>(status, &text).map(|wire| Reply::User {
-            is_following: wire.is_following,
-        })
+        Profile::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn commits(
+        &self,
+        username: &str,
+        replies: bool,
+        cursor: Option<&str>,
+    ) -> Result<RowPage, Error> {
+        let mut path = format!(
+            "/api/v1/users/{}/commits?replies={}",
+            escape(username),
+            u8::from(replies)
+        );
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("&cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        RowPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn people(
+        &self,
+        username: &str,
+        circle: Circle,
+        cursor: Option<&str>,
+    ) -> Result<PeoplePage, Error> {
+        let mut path = format!("/api/v1/users/{}/{}", escape(username), circle.slug());
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("?cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        PeoplePage::parse(&text).map_err(|error| unreadable(status, error))
     }
 
     fn pastel(&self, id: &CommitId) -> Result<Reply, Error> {

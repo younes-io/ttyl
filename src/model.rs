@@ -574,3 +574,108 @@ impl GroupPage {
         })
     }
 }
+
+/// Someone as their profile and the lists of people show them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Person {
+    #[serde(flatten)]
+    pub user: User,
+    pub bio: Option<String>,
+    pub company: Option<String>,
+    pub location: Option<String>,
+    pub website: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub commits_count: Option<u32>,
+    pub followers_count: Option<u32>,
+    pub following_count: Option<u32>,
+    pub is_followed: Option<bool>,
+    pub follows_you: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Profile {
+    pub person: Person,
+    pub is_following: bool,
+    pub follows_you: bool,
+    pub pinned: Option<Row>,
+}
+
+impl Profile {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Person,
+            is_following: bool,
+            follows_you: bool,
+            pinned_commit: Option<Row>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(Profile {
+            person: wire.data,
+            is_following: wire.is_following,
+            follows_you: wire.follows_you,
+            pinned: wire.pinned_commit,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RowPage {
+    pub rows: Vec<Row>,
+    pub next_cursor: Option<String>,
+}
+
+impl RowPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Row>,
+            meta: Meta,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(RowPage {
+            rows: wire.data,
+            next_cursor: wire.meta.next_cursor,
+        })
+    }
+}
+
+/// The people on either side of someone's follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Circle {
+    Followers,
+    Following,
+}
+
+impl Circle {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Circle::Followers => "followers",
+            Circle::Following => "following",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeoplePage {
+    pub people: Vec<Person>,
+    pub next_cursor: Option<String>,
+}
+
+impl PeoplePage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Person>,
+            meta: Meta,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(PeoplePage {
+            people: wire.data,
+            next_cursor: wire.meta.next_cursor,
+        })
+    }
+}

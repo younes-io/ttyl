@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::api::Call;
 use crate::draft::Target;
-use crate::model::{CommitId, Filter, Log, NotificationId};
+use crate::model::{Circle, CommitId, Filter, Log, NotificationId};
 
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
@@ -31,6 +31,16 @@ pub enum CallKey {
     Star(CommitId),
     Follow(String),
     User(String),
+    Commits {
+        username: String,
+        replies: bool,
+        older: bool,
+    },
+    People {
+        username: String,
+        circle: Circle,
+        older: bool,
+    },
     Delete(CommitId),
     Pastel(CommitId),
     Vote(CommitId),
@@ -54,6 +64,24 @@ impl Call {
             Call::Star { id, .. } => CallKey::Star(id.clone()),
             Call::Follow { username, .. } => CallKey::Follow(username.clone()),
             Call::User(username) => CallKey::User(username.clone()),
+            Call::Commits {
+                username,
+                replies,
+                cursor,
+            } => CallKey::Commits {
+                username: username.clone(),
+                replies: *replies,
+                older: cursor.is_some(),
+            },
+            Call::People {
+                username,
+                circle,
+                cursor,
+            } => CallKey::People {
+                username: username.clone(),
+                circle: *circle,
+                older: cursor.is_some(),
+            },
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
             Call::Vote { id, .. } => CallKey::Vote(id.clone()),
