@@ -117,12 +117,17 @@ fn a_new_star_pops_in_place_and_settles_amber() {
     let mut engine = on_grace(at);
     let (ticket, _) = one_run(&press(&mut engine, "s", at));
     let star = star_at(&mut engine, 100, 30, at + Spark::Star.lasts());
-    let frames: Vec<(String, bool)> = [0, 300, 500, 800, 1200]
+    let frames: Vec<(String, bool, String)> = [0, 300, 500, 800, 1200]
         .map(|n| {
             let buffer = buffer(&mut engine, 100, 30, at + ms(n));
             (
                 buffer[star].symbol().to_owned(),
-                buffer[star].fg == theme::AMBER,
+                buffer[star].bg == theme::AMBER,
+                (star.0 - 6..=star.0 + 6)
+                    .map(|x| buffer[(x, star.1 - 1)].symbol())
+                    .collect::<String>()
+                    .trim()
+                    .to_owned(),
             )
         })
         .into_iter()
@@ -130,13 +135,14 @@ fn a_new_star_pops_in_place_and_settles_amber() {
     assert_eq!(
         frames,
         [
-            ("·", false),
-            ("✧", false),
-            ("✦", false),
-            ("★", false),
-            ("★", true)
+            ("★", true, "✦"),
+            ("★", false, "✧ · ✧"),
+            ("★", true, "✦       ✦"),
+            ("★", false, "·           ·"),
+            ("★", false, ""),
         ]
-        .map(|(glyph, amber)| (glyph.to_owned(), amber))
+        .map(|(glyph, lit, above)| (glyph.to_owned(), lit, above.to_owned())),
+        "the star flashes twice while sparkles burst out above it"
     );
     assert!(engine.next_wake(at + ms(1200)).unwrap() <= at + ms(1233));
 

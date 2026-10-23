@@ -9,7 +9,7 @@ use std::time::Duration;
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -91,7 +91,8 @@ impl Feed {
 }
 
 /// Paints `spark` over the card in `rows` of `lines`, drawn in `area`, `elapsed` after it began.
-/// A star pops in place. A pastel's +1 starts beside the star and floats up a row.
+/// A star flashes twice while sparkles burst out on the row above. A pastel's +1 lights up beside the
+/// star, then floats up a row.
 pub fn spark(
     buf: &mut Buffer,
     area: Rect,
@@ -112,22 +113,47 @@ pub fn spark(
         None
     });
     let ms = elapsed.as_millis();
-    let (row, col, text, style) = match spark {
+    let lit = Style::new()
+        .fg(theme::BACKGROUND)
+        .bg(theme::AMBER)
+        .add_modifier(Modifier::BOLD);
+    let bold = Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD);
+    // A mark with a margin paints only where its cells and that many on each side are blank, so it
+    // never lands inside text.
+    let marks: Vec<(isize, isize, &str, Style, Option<isize>)> = match spark {
         Spark::Star => {
             let Some((row, col, _)) = star else { return };
-            let (glyph, color) = match ms {
-                0..200 => ("·", theme::FOREGROUND),
-                200..400 => ("✧", theme::FOREGROUND),
-                400..600 => ("✦", theme::FOREGROUND),
-                600..1000 => ("★", theme::FOREGROUND),
-                _ => ("★", theme::AMBER),
+            let (row, col) = (row as isize, col as isize);
+            let mut marks = match ms {
+                0..250 | 450..700 => vec![
+                    (row, col - 1, " ", lit, Some(0)),
+                    (row, col, "★", lit, None),
+                    (row, col + 1, " ", lit, Some(0)),
+                ],
+                _ => vec![(row, col, "★", bold, None)],
             };
-            (
-                row,
-                col,
-                glyph,
-                Style::new().fg(color).add_modifier(Modifier::BOLD),
-            )
+            let burst: &[(isize, &str, Color)] = match ms {
+                0..250 => &[(0, "✦", theme::AMBER)],
+                250..500 => &[
+                    (-2, "✧", theme::AMBER),
+                    (0, "·", theme::AMBER),
+                    (2, "✧", theme::AMBER),
+                ],
+                500..800 => &[(-4, "✦", theme::AMBER), (4, "✦", theme::AMBER)],
+                800..1100 => &[(-6, "·", theme::FAINT), (6, "·", theme::FAINT)],
+                _ => &[],
+            };
+            marks.extend(burst.iter().map(|&(dx, glyph, color)| {
+                let margin = 7 - dx.abs();
+                (
+                    row - 1,
+                    col + dx,
+                    glyph,
+                    Style::new().fg(color),
+                    Some(margin),
+                )
+            }));
+            marks
         }
         Spark::Pastel => {
             let Some((row, col)) = star
@@ -147,22 +173,38 @@ pub fn spark(
             else {
                 return;
             };
-            let (row, style) = match ms {
-                0..600 => (
-                    row,
-                    Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
-                ),
-                600..1100 => (row.saturating_sub(1), Style::new().fg(theme::AMBER)),
-                _ => (row.saturating_sub(1), Style::new().fg(theme::FAINT)),
-            };
-            (row, col, "+1", style)
+            let (row, col) = (row as isize, col as isize);
+            match ms {
+                0..600 => vec![
+                    (row, col - 1, " ", lit, Some(0)),
+                    (row, col, "+1", lit, None),
+                    (row, col + 2, " ", lit, Some(0)),
+                ],
+                600..1100 => vec![(row - 1, col, "+1", bold, Some(1))],
+                _ => vec![(row - 1, col, "+1", Style::new().fg(theme::FAINT), Some(1))],
+            }
         }
     };
-    let (Ok(row), Ok(col)) = (u16::try_from(row), u16::try_from(col)) else {
-        return;
-    };
-    if row < area.height && col + 2 <= area.width {
-        buf.set_string(area.x + col, area.y + row, text, style);
+    // Every mark checks the buffer as the frame left it, before any mark paints.
+    let fits: Vec<_> = marks
+        .into_iter()
+        .filter_map(|(row, col, text, style, margin)| {
+            let (row, col) = (u16::try_from(row).ok()?, u16::try_from(col).ok()?);
+            let width = text.width() as u16;
+            if row >= area.height || col + width > area.width {
+                return None;
+            }
+            let (x, y) = (area.x + col, area.y + row);
+            let blank = |m: isize| {
+                let from = (x as isize - m).max(area.x as isize) as u16;
+                let to = (x + width + m as u16).min(area.right());
+                (from..to).all(|x| buf[(x, y)].symbol() == " ")
+            };
+            (!margin.is_some_and(|m| !blank(m))).then_some((x, y, text, style))
+        })
+        .collect();
+    for (x, y, text, style) in fits {
+        buf.set_string(x, y, text, style);
     }
 }
 
