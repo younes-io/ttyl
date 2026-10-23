@@ -403,42 +403,52 @@ fn the_selected_header_is_always_on_screen() {
 fn the_top_bar_never_overlaps_and_shrinks_the_logo_to_its_mark_then_drops_the_handle_then_the_count()
  {
     let mut app = app();
-    press(&mut app, "2");
-    let full = " // /dev/null   1 following  2 latest  3 trending";
-    for width in [100u16, 70] {
-        let top = &screen(&mut app, width, 20)[0];
-        assert!(top.starts_with(full), "{width}: {top:?}");
-        assert!(top.ends_with("● 3  @ada"), "{width}: {top:?}");
-        assert_eq!(
-            top.chars().count(),
-            usize::from(width) - 1,
-            "{width}: {top:?}"
-        );
+    let rows = [
+        (100, " // /dev/null"),
+        (26, " // /dev/null   ● 3  @ada"),
+        (25, " //            ● 3  @ada"),
+        (16, " //   ● 3  @ada"),
+        (15, " //       ● 3"),
+        (10, " //     ●"),
+        (7, "     ●"),
+    ];
+    for (width, top) in rows {
+        let row = &screen(&mut app, width, 20)[0];
+        assert!(row.starts_with(top), "{width}: {row:?}");
     }
-    let top = &screen(&mut app, 60, 20)[0];
-    assert_eq!(
-        top, " //   1 following  2 latest  3 trending           ● 3  @ada",
-        "{top:?}"
-    );
-    let top = &screen(&mut app, 44, 20)[0];
-    assert_eq!(
-        top, " //   1 following  2 latest  3 trending   ●",
-        "{top:?}"
-    );
-    let top = &screen(&mut app, 30, 20)[0];
-    assert_eq!(top, " //   1  2  3               ●", "{top:?}");
-    let buffer = common::buffer(&mut app.0, 30, 20, app.1);
+    let top = &screen(&mut app, 100, 20)[0];
+    assert!(top.ends_with("● 3  @ada"), "{top:?}");
+    assert_eq!(top.chars().count(), 99, "{top:?}");
+}
+
+#[test]
+fn the_logs_are_the_feed_box_top_edge_with_the_open_one_slashed() {
+    let mut app = app();
+    press(&mut app, "2");
+    let rows = screen(&mut app, 120, 12);
+    assert!(rows[1].is_empty(), "{rows:#?}");
     assert!(
-        buffer[(9, 0)]
-            .modifier
-            .contains(ratatui::style::Modifier::BOLD),
-        "the active log stays bold when the labels shorten"
+        rows[2].starts_with(" ╭─ following ── /latest ── trending ───"),
+        "{rows:#?}"
     );
-    assert!(
-        !buffer[(6, 0)]
-            .modifier
-            .contains(ratatui::style::Modifier::BOLD)
+    let buffer = common::buffer(&mut app.0, 120, 12, app.1);
+    let bold = ratatui::style::Modifier::BOLD;
+    assert_eq!(buffer[(17, 2)].symbol(), "/");
+    assert_eq!(buffer[(17, 2)].fg, theme::ACCENT);
+    assert_eq!(buffer[(18, 2)].fg, theme::FOREGROUND);
+    assert!(buffer[(18, 2)].modifier.contains(bold));
+    assert_eq!(buffer[(4, 2)].fg, theme::FAINT);
+    assert!(!buffer[(4, 2)].modifier.contains(bold));
+    assert_eq!(buffer[(2, 2)].fg, theme::PRIMARY);
+
+    let rows = screen(&mut app, 100, 12);
+    assert_eq!(
+        rows[1],
+        format!(" ─ following ── /latest ── trending {}", "─".repeat(63)),
+        "a feed too narrow for its box keeps the edge as a rule"
     );
+    let rows = screen(&mut app, 30, 12);
+    assert_eq!(rows[1], format!(" ─ 1 ── /2 ── 3 {}", "─".repeat(13)));
 }
 
 #[test]

@@ -7,10 +7,10 @@ use common::{
     account, boot, boot_serving, contains, following_nobody, key, open_browser, page, press, runs,
     screen, secs, serve,
 };
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::Log;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn fresh(at: Instant) -> (Engine, ttyl::sched::Ticket) {
     let mut engine = Engine::new("ttyl".to_owned(), at);
@@ -79,7 +79,7 @@ fn the_me_poll_lands_in_the_store_wherever_the_user_went() {
     );
 
     let rows = screen(&mut engine, 80, 40, at + secs(31));
-    assert!(rows[0].contains("3 trending"), "{:?}", rows[0]);
+    assert!(rows[1].contains("/trending"), "{:?}", rows[1]);
     assert!(rows[0].ends_with("● 5  @ada"), "{:?}", rows[0]);
     assert!(
         contains(&rows, "@margaret"),
@@ -520,7 +520,7 @@ fn an_approved_link_redeems_the_code_and_the_app_opens_without_a_restart() {
     );
     serve(&mut engine, at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));
-    assert!(rows[0].contains("1 following"), "{:?}", rows[0]);
+    assert!(rows[1].contains("/following"), "{:?}", rows[1]);
     assert!(rows[0].ends_with("● 2  @ada"), "{:?}", rows[0]);
     press(&mut engine, "2", at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));

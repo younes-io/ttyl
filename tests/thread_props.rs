@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use ttyl::api::{Call, Error, Reply};
 use ttyl::clock::Spark;
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{CommitId, CommitPage, Focus, LogPage, RepliesPage};
+use ttyl::model::{CommitId, CommitPage, Focus, Log, LogPage, RepliesPage};
 
 const MAX_DEPTH: usize = 6;
 const KEYS: [&str; 18] = [
@@ -269,6 +269,19 @@ fn reporting(rows: &[String]) -> bool {
         .is_some_and(|hints| hints.contains("esc cancel"))
 }
 
+/// The first log's screen as it reads with the open log's tab marked instead, since every log
+/// serves the same tree.
+fn open(log: &[String], engine: &Engine) -> Vec<String> {
+    let mut log = log.to_vec();
+    if engine
+        .log()
+        .is_some_and(|screen| screen.active() == Log::Latest)
+    {
+        log[1] = log[1].replace("/following ── latest", "following ── /latest");
+    }
+    log
+}
+
 fn above_the_hints(rows: &[String]) -> Vec<String> {
     rows[..rows.len() - 1].to_vec()
 }
@@ -308,7 +321,7 @@ proptest! {
                 }
                 None => {
                     let rows = screen(&mut engine, width, height, at + Spark::Star.lasts());
-                    prop_assert_eq!(&above_the_hints(&rows), &log, "{:?} came back elsewhere", key);
+                    prop_assert_eq!(&above_the_hints(&rows), &open(&log, &engine), "{:?} came back elsewhere", key);
                     let effects = tap(&mut engine, KeyCode::Enter, at);
                     settle(&mut engine, &tree, effects, size, at);
                 }
@@ -319,6 +332,6 @@ proptest! {
             settle(&mut engine, &tree, effects, size, at);
         }
         let rows = screen(&mut engine, width, height, at + Spark::Star.lasts());
-        prop_assert_eq!(&above_the_hints(&rows), &log);
+        prop_assert_eq!(&above_the_hints(&rows), &open(&log, &engine));
     }
 }

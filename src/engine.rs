@@ -1477,11 +1477,25 @@ impl Engine {
                 if let Some(group) = session.group() {
                     frame.render_widget(group.banner(), banner);
                 }
-                if let Some(listing) = loaded
-                    && listing.new_commits > 0
-                    && on_log
-                {
-                    frame.render_widget(pill(listing.new_commits), banner);
+                if on_log {
+                    let fresh = loaded.map_or(0, |listing| listing.new_commits);
+                    let news = Style::new().fg(theme::PRIMARY);
+                    if session.log.has_pane(inset(body), &session.store) {
+                        if fresh > 0 {
+                            frame.render_widget(
+                                Line::styled(news_of(fresh), news).centered(),
+                                banner,
+                            );
+                        }
+                    } else {
+                        let tail = if fresh > 0 {
+                            vec![Span::styled(format!(" {} ─", news_of(fresh)), news)]
+                        } else {
+                            Vec::new()
+                        };
+                        let banner = inset(banner);
+                        frame.render_widget(session.log.rule(banner.width, tail), banner);
+                    }
                 }
                 let retry = Retry {
                     page: self.timers.remaining(&Timer::Reload(active), now),
@@ -1557,7 +1571,7 @@ impl Engine {
                             wall,
                         );
                         if let Some(panes) = pane {
-                            log::draw_box(frame, panes.feed, active.slug(), false);
+                            session.log.draw_box(frame, panes.feed, false);
                             let inner = log::draw_box(frame, panes.pane, "thread", true);
                             thread.draw(frame, inner, &session.store, &self.timers, now, wall);
                         }
@@ -1583,7 +1597,7 @@ impl Engine {
                             wall,
                         );
                         if let Some(panes) = pane {
-                            log::draw_box(frame, panes.feed, active.slug(), true);
+                            session.log.draw_box(frame, panes.feed, true);
                             session.log.draw_peek(
                                 frame,
                                 panes.pane,
@@ -1649,13 +1663,9 @@ impl Engine {
     }
 }
 
-fn pill(count: u32) -> Line<'static> {
+fn news_of(count: u32) -> String {
     let noun = if count == 1 { "commit" } else { "commits" };
-    Line::styled(
-        format!("↑ {count} new {noun} · R to load"),
-        Style::new().fg(theme::PRIMARY),
-    )
-    .centered()
+    format!("↑ {count} new {noun} · R to load")
 }
 
 fn draw_help(frame: &mut Frame, session: &Session) {

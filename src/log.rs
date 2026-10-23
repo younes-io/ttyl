@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Wrap};
 
@@ -71,17 +71,10 @@ enum Cut {
     Wordmark,
     Handle,
     Number,
-    Slugs,
     Mark,
 }
 
-const CUTS: [Cut; 5] = [
-    Cut::Wordmark,
-    Cut::Handle,
-    Cut::Number,
-    Cut::Slugs,
-    Cut::Mark,
-];
+const CUTS: [Cut; 4] = [Cut::Wordmark, Cut::Handle, Cut::Number, Cut::Mark];
 
 impl Default for LogScreen {
     fn default() -> Self {
@@ -206,7 +199,7 @@ impl LogScreen {
         }
     }
 
-    /// One row: the brand and the tabs on the left, unread and the handle on the right,
+    /// One row: the brand and any title on the left, unread and the handle on the right,
     /// giving up `CUTS` in order until it fits.
     pub fn top_bar(
         &self,
@@ -247,38 +240,12 @@ impl LogScreen {
         if kept(Cut::Mark) {
             left.push(Span::raw(" "));
         }
-        let bold = Style::new()
-            .fg(theme::FOREGROUND)
-            .add_modifier(Modifier::BOLD);
-        let lead = |index: usize| {
-            if index == 0 && !kept(Cut::Mark) {
-                " "
-            } else {
-                "  "
-            }
-        };
         if let Some(title) = title {
-            left.push(Span::styled(format!("{}{title}", lead(0)), bold));
-        }
-        if title.is_none() {
-            left.push(Span::raw(&lead(0)[1..]));
-        }
-        let pill = Style::new()
-            .fg(theme::BACKGROUND)
-            .bg(theme::PRIMARY)
-            .add_modifier(Modifier::BOLD);
-        for (index, log) in LOGS.iter().enumerate().filter(|_| title.is_none()) {
-            let label = if kept(Cut::Slugs) {
-                format!(" {} {} ", index + 1, log.slug())
-            } else {
-                format!(" {} ", index + 1)
-            };
-            let style = if *log == self.active {
-                pill
-            } else {
-                theme::muted()
-            };
-            left.push(Span::styled(label, style));
+            let lead = if kept(Cut::Mark) { "  " } else { " " };
+            let bold = Style::new()
+                .fg(theme::FOREGROUND)
+                .add_modifier(Modifier::BOLD);
+            left.push(Span::styled(format!("{lead}{title}"), bold));
         }
         let mut right = Vec::new();
         if store.unread > 0 {
@@ -300,6 +267,60 @@ impl LogScreen {
             ));
         }
         (Line::from(left), Line::from(right))
+    }
+
+    /// The three logs as the top edge of the feed's box, the open one marked with the brand's
+    /// slash. Names give way to their keys when they don't fit in `room`.
+    pub fn tabs(&self, focused: bool, room: usize) -> Line<'static> {
+        let edge = Style::new().fg(edge(focused));
+        let slash = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
+        let lit = if focused {
+            theme::FOREGROUND
+        } else {
+            theme::MUTED_FOREGROUND
+        };
+        let lit = Style::new().fg(lit).add_modifier(Modifier::BOLD);
+        let tabs = |named: bool| {
+            let mut spans = vec![Span::styled("─ ", edge)];
+            for (index, log) in LOGS.iter().enumerate() {
+                if index > 0 {
+                    spans.push(Span::styled(" ── ", edge));
+                }
+                let name = if named {
+                    log.slug().to_string()
+                } else {
+                    (index + 1).to_string()
+                };
+                if *log == self.active {
+                    spans.push(Span::styled("/", slash));
+                    spans.push(Span::styled(name, lit));
+                } else {
+                    spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
+                }
+            }
+            spans.push(Span::styled(" ", edge));
+            Line::from(spans)
+        };
+        Some(tabs(true))
+            .filter(|tabs| tabs.width() <= room)
+            .unwrap_or_else(|| tabs(false))
+    }
+
+    /// The tabs as a rule across a row, for a feed too narrow for its box, with `tail` at the end.
+    pub fn rule(&self, width: u16, tail: Vec<Span<'static>>) -> Line<'static> {
+        let tail = Line::from(tail);
+        let width = usize::from(width).saturating_sub(tail.width());
+        let mut rule = self.tabs(true, width.saturating_sub(1));
+        let fill = width.saturating_sub(rule.width());
+        rule.push_span(Span::styled("─".repeat(fill), Style::new().fg(edge(true))));
+        rule.spans.extend(tail.spans);
+        rule
+    }
+
+    /// Draws the feed's box with the tabs along its top and returns the inside.
+    pub fn draw_box(&self, frame: &mut Frame, area: Rect, focused: bool) -> Rect {
+        let tabs = self.tabs(focused, usize::from(area.width.saturating_sub(2)));
+        render_box(frame, area, tabs, focused)
     }
 
     /// Whether a feed in this area shows the selected commit's thread beside it.
@@ -435,28 +456,38 @@ pub struct Panes {
     pub pane: Rect,
 }
 
-fn frame_block(title: &str, focused: bool) -> Block<'static> {
-    let (border, label) = if focused {
-        (
-            theme::PRIMARY,
-            Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD),
-        )
-    } else {
-        (theme::RAIL, Style::new().fg(theme::FAINT))
-    };
+fn edge(focused: bool) -> Color {
+    if focused { theme::PRIMARY } else { theme::RAIL }
+}
+
+fn frame_block(title: Line<'static>, focused: bool) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(border))
-        .title(Span::styled(format!(" {title} "), label))
+        .border_style(Style::new().fg(edge(focused)))
+        .title(title)
         .padding(Padding::horizontal(1))
 }
 
 fn boxed(area: Rect) -> Rect {
-    frame_block("", false).inner(area)
+    frame_block(Line::default(), false).inner(area)
 }
 
 /// The box whose border is lit holds the keys.
 pub fn draw_box(frame: &mut Frame, area: Rect, title: &str, focused: bool) -> Rect {
+    let label = if focused {
+        Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(theme::FAINT)
+    };
+    render_box(
+        frame,
+        area,
+        Line::styled(format!(" {title} "), label),
+        focused,
+    )
+}
+
+fn render_box(frame: &mut Frame, area: Rect, title: Line<'static>, focused: bool) -> Rect {
     let block = frame_block(title, focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
