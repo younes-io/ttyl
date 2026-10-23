@@ -221,6 +221,7 @@ impl ThreadScreen {
             | Action::StartOver
             | Action::Confirm
             | Action::Pick(_)
+            | Action::Choose(_)
             | Action::Commit(_)
             | Action::Compose
             | Action::Send

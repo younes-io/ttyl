@@ -75,6 +75,10 @@ pub enum Call {
     User(String),
     Delete(CommitId),
     Pastel(CommitId),
+    Vote {
+        id: CommitId,
+        option: String,
+    },
     Report {
         id: CommitId,
         reason: Reason,
@@ -258,6 +262,9 @@ impl Client {
                     .map(|_| Reply::Done)
             }
             Call::Pastel(id) => self.pastel(id),
+            Call::Vote { id, option } => self
+                .vote(id, option)
+                .map(|focus| Reply::Commit(Box::new(focus))),
             Call::Report {
                 id,
                 reason,
@@ -306,6 +313,18 @@ impl Client {
 
         let path = format!("/api/v1/commits/{}/star", escape(&id.0));
         let (status, text) = self.send(if on { "POST" } else { "DELETE" }, &path, String::new())?;
+        parse::<Wire>(status, &text).map(|wire| wire.data)
+    }
+
+    fn vote(&self, id: &CommitId, option: &str) -> Result<Focus, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Focus,
+        }
+
+        let path = format!("/api/v1/commits/{}/poll/votes", escape(&id.0));
+        let body = serde_json::json!({ "option": option }).to_string();
+        let (status, text) = self.send("POST", &path, body)?;
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 

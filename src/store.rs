@@ -233,6 +233,7 @@ impl Store {
             | Call::Since { .. }
             | Call::Commit(_)
             | Call::Replies { .. }
+            | Call::Vote { .. }
             | Call::Report { .. }
             | Call::Post { .. }
             | Call::Notifications { .. }
@@ -260,7 +261,7 @@ impl Store {
             (Call::Replies { id, cursor }, Reply::Replies(page)) => {
                 self.land_replies(id, cursor.as_deref(), page);
             }
-            (Call::Star { .. }, Reply::Commit(focus)) => {
+            (Call::Star { .. } | Call::Vote { .. }, Reply::Commit(focus)) => {
                 self.keep_counted(focus.card, Some(focus.replies_count));
                 self.generation += 1;
             }

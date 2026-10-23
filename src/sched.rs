@@ -33,6 +33,7 @@ pub enum CallKey {
     User(String),
     Delete(CommitId),
     Pastel(CommitId),
+    Vote(CommitId),
     Report(CommitId),
     Post(Target),
     Notifications(Filter),
@@ -55,6 +56,7 @@ impl Call {
             Call::User(username) => CallKey::User(username.clone()),
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
+            Call::Vote { id, .. } => CallKey::Vote(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
             Call::Post { target, .. } => CallKey::Post(target.clone()),
             Call::Notifications {

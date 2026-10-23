@@ -743,7 +743,7 @@ fn poll_lines<Tz: TimeZone>(
         meta.push(format!("closes in {}", until(closes, now)));
     }
     if !poll.is_closed && !poll.has_voted {
-        meta.push("O to vote in the browser".to_owned());
+        meta.push("v to vote".to_owned());
     }
     out.push(fit(
         vec![Span::raw(indent), Span::styled(meta.join(" · "), faint)],

@@ -26,6 +26,7 @@ pub enum Action {
     Commit(Act),
     Confirm,
     Pick(Reason),
+    Choose(usize),
     Compose,
     Send,
     Editor,
@@ -44,6 +45,7 @@ pub enum Act {
     Report,
     Reply,
     Quote,
+    Vote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,7 @@ pub enum Scope {
     Confirm,
     Report,
     Details,
+    Vote,
     Composer,
     Secret,
     Rules,
@@ -73,6 +76,7 @@ pub const GATE_SCOPES: &[Scope] = &[Scope::Gate, Scope::Always];
 pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
+pub const VOTE_SCOPES: &[Scope] = &[Scope::Vote, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
@@ -118,6 +122,7 @@ pub const UNIONS: &[&[Scope]] = &[
     HELP_SCOPES,
     CONFIRM_SCOPES,
     REPORT_SCOPES,
+    VOTE_SCOPES,
     DETAILS_SCOPES,
     COMPOSER_SCOPES,
     SECRET_SCOPES,
@@ -467,6 +472,13 @@ pub const TABLE: &[Binding] = &[
         help: "quote",
     },
     Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('v')]],
+        action: Action::Commit(Act::Vote),
+        hint: None,
+        help: "vote in the poll",
+    },
+    Binding {
         scope: Scope::Confirm,
         chords: &[&[Key::ch('y')]],
         action: Action::Confirm,
@@ -521,6 +533,62 @@ pub const TABLE: &[Binding] = &[
         action: Action::Confirm,
         hint: Some("enter next"),
         help: "next",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('1')]],
+        action: Action::Choose(0),
+        hint: Some("1-4 pick"),
+        help: "option 1",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('2')]],
+        action: Action::Choose(1),
+        hint: None,
+        help: "option 2",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('3')]],
+        action: Action::Choose(2),
+        hint: None,
+        help: "option 3",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('4')]],
+        action: Action::Choose(3),
+        hint: None,
+        help: "option 4",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('j')], &[Key::code(KeyCode::Down)]],
+        action: Action::Down,
+        hint: None,
+        help: "move down",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::ch('k')], &[Key::code(KeyCode::Up)]],
+        action: Action::Up,
+        hint: None,
+        help: "move up",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter vote"),
+        help: "vote, which is final",
+    },
+    Binding {
+        scope: Scope::Vote,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
     },
     Binding {
         scope: Scope::Details,

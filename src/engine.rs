@@ -23,11 +23,12 @@ use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
     HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, REPORT_SCOPES,
-    RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
+    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Poll, Reason, Row, Shown, Status,
+    User,
 };
 use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
@@ -117,6 +118,11 @@ enum Overlay {
         id: CommitId,
         reason: Reason,
         text: String,
+    },
+    Vote {
+        id: CommitId,
+        poll: Poll,
+        at: usize,
     },
 }
 
@@ -211,13 +217,17 @@ impl Session {
                         Act::Delete => own,
                         Act::Report => !own,
                         Act::Reply | Act::Quote => true,
+                        Act::Vote => {
+                            !own && (row.media.poll.as_ref())
+                                .is_some_and(|poll| !poll.is_closed && !poll.has_voted)
+                        }
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow => commit.author.username != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
-                Act::Star | Act::Pastel | Act::Delete | Act::Report => false,
+                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote => false,
             },
             Some(Selected::Person(user)) => act == Act::Follow && user.username != *me,
             None => false,
@@ -264,6 +274,7 @@ impl Session {
             Some(Overlay::Help) => HELP_SCOPES,
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
+            Some(Overlay::Vote { .. }) => VOTE_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
@@ -284,7 +295,9 @@ impl Session {
             {
                 InputMode::Text
             }
-            Some(Overlay::Help | Overlay::Reason { .. }) | None => InputMode::Commands,
+            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {
+                InputMode::Commands
+            }
         }
     }
 
@@ -315,7 +328,7 @@ impl Session {
                 }
                 _ => {}
             },
-            Some(Overlay::Help | Overlay::Reason { .. }) | None => {}
+            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {}
         }
     }
 
@@ -358,6 +371,21 @@ impl Session {
                 }),
                 None,
             ),
+            (Overlay::Vote { id, poll, at }, Action::Down) => {
+                let at = (at + 1).min(poll.options.len().saturating_sub(1));
+                (Some(Overlay::Vote { id, poll, at }), None)
+            }
+            (Overlay::Vote { id, poll, at }, Action::Up) => {
+                let at = at.saturating_sub(1);
+                (Some(Overlay::Vote { id, poll, at }), None)
+            }
+            (Overlay::Vote { id, poll, .. }, Action::Choose(at)) if at < poll.options.len() => {
+                (Some(Overlay::Vote { id, poll, at }), None)
+            }
+            (Overlay::Vote { id, poll, at }, Action::Confirm) => {
+                let option = poll.options.get(at).map(|option| option.id.clone());
+                (None, option.map(|option| Call::Vote { id, option }))
+            }
             (Overlay::Details { id, reason, text }, Action::Confirm) => {
                 let details = text.trim();
                 let details = (!details.is_empty()).then(|| details.to_owned());
@@ -387,7 +415,13 @@ impl Session {
                     format!("delete {short}? [y/N]")
                 })
             }
-            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Details { .. }) | None => None,
+            Some(
+                Overlay::Help
+                | Overlay::Reason { .. }
+                | Overlay::Vote { .. }
+                | Overlay::Details { .. },
+            )
+            | None => None,
         }
     }
 }
@@ -1086,6 +1120,16 @@ impl Engine {
                 session.overlay = Some(Overlay::Reason { id, at: 0 });
                 (None, Vec::new())
             }
+            Act::Vote => {
+                if let Some(poll) = session
+                    .store
+                    .row(&id)
+                    .and_then(|row| row.media.poll.clone())
+                {
+                    session.overlay = Some(Overlay::Vote { id, poll, at: 0 });
+                }
+                (None, Vec::new())
+            }
             Act::Reply | Act::Quote => {
                 let target = match act {
                     Act::Reply => Target::Reply(id),
@@ -1194,10 +1238,27 @@ impl Engine {
                 (Call::Report { id, .. }, Reply::Done) => {
                     Some(format!("reported {}. thanks.", id.short_hash()))
                 }
+                (Call::Vote { option, .. }, Reply::Commit(focus)) => {
+                    let poll = focus.card.media.poll.as_ref();
+                    let chosen =
+                        poll.and_then(|poll| poll.options.iter().find(|each| each.id == *option));
+                    Some(match chosen {
+                        Some(chosen) => format!("voted for {}", chosen.label),
+                        None => "voted".to_owned(),
+                    })
+                }
                 _ => None,
             };
             let unread = session.store.unread;
             session.store.apply(call, reply);
+            // The results come out with the vote, so its bars fill in now.
+            if let Call::Vote { id, .. } = call {
+                session.filled.insert(id.clone());
+                self.timers.set(
+                    Timer::Spark(Spark::Fill, id.clone()),
+                    now + Spark::Fill.lasts(),
+                );
+            }
             if session.store.unread > unread {
                 self.timers.set(Timer::Glow, now + GLOW);
                 // A new notification may be a reply in the thread on screen.
@@ -1347,6 +1408,7 @@ impl Engine {
                     | Call::User(_)
                     | Call::Delete(_)
                     | Call::Pastel(_)
+                    | Call::Vote { .. }
                     | Call::Report { .. } => {
                         session.store.refused(&call);
                         match &call {
@@ -1663,6 +1725,7 @@ impl Engine {
                 match &session.overlay {
                     Some(Overlay::Help) => draw_help(frame, session),
                     Some(Overlay::Reason { id, at }) => draw_report(frame, id, *at, None),
+                    Some(Overlay::Vote { id, poll, at }) => draw_vote(frame, id, poll, *at),
                     Some(Overlay::Details { id, reason, text }) => {
                         let at = Reason::ALL.iter().position(|each| each == reason);
                         draw_report(frame, id, at.unwrap_or(0), Some(text.as_str()));
@@ -1805,6 +1868,41 @@ fn draw_report(frame: &mut Frame, id: &CommitId, at: usize, details: Option<&str
     if !picking && row < inner.height {
         frame.set_cursor_position((inner.x + cursor.min(inner.width), inner.y + row));
     }
+}
+
+fn draw_vote(frame: &mut Frame, id: &CommitId, poll: &Poll, at: usize) {
+    let area = frame.area();
+    let area = Rect {
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    let width = 48.min(area.width.saturating_sub(2));
+    let rows = u16::try_from(poll.options.len()).unwrap_or(u16::MAX);
+    let height = rows.saturating_add(6).min(area.height);
+    let box_area = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, box_area);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .title(format!(" vote {} ", id.short_hash()))
+        .style(Style::new().bg(theme::BACKGROUND).fg(theme::FOREGROUND));
+    let inner = block.inner(box_area);
+    frame.render_widget(block, box_area);
+    let mut lines = vec![Line::raw("")];
+    lines.extend(poll.options.iter().enumerate().map(|(each, option)| {
+        let marker = if each == at { "›" } else { " " };
+        Line::from(vec![
+            Span::styled(format!(" {marker} "), Style::new().fg(theme::PRIMARY)),
+            Span::raw(format!("{}  {}", each + 1, option.label)),
+        ])
+    }));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(" votes are final", theme::muted()));
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Each hint's key stands out from what it does.
