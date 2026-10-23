@@ -301,16 +301,15 @@ fn links_images_and_polls_each_lead_with_their_icon() {
         ),
         "{rows:#?}"
     );
-    // A narrow screen shortens the description and keeps the size and the key whole.
-    for (width, desk) in [
-        (100, "a desk with two monitors"),
-        (44, "a desk with two monito…"),
-    ] {
+    for width in [100, 44] {
         let rows = screen(&mut app, width, 120);
         let images = commit_rows(&rows, "0000701");
         for line in [
-            format!("│ {} {desk} · 1600×1200 i1", theme::icons().image),
-            format!("│ {} no description · 1200×1600 i2", theme::icons().image),
+            format!(
+                "│ {} a desk with two monitors · 1600×1200",
+                theme::icons().image
+            ),
+            format!("│ {} no description · 1200×1600", theme::icons().image),
         ] {
             assert!(contains(&images, &line), "{line}: {images:#?}");
         }
@@ -323,6 +322,13 @@ fn links_images_and_polls_each_lead_with_their_icon() {
             assert!(contains(&poll, &line), "{line}: {poll:#?}");
         }
     }
+    // A narrow screen shortens the description and keeps the size whole.
+    let rows = screen(&mut app, 41, 120);
+    let cut = format!(
+        "│ {} a desk with two monito… · 1600×1200",
+        theme::icons().image
+    );
+    assert!(contains(&rows, &cut), "{rows:#?}");
 }
 
 #[test]

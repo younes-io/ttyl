@@ -120,7 +120,7 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
         "expand the selected commit",
         "open the thread",
         "vote in the poll",
-        "open an image",
+        "open the images",
     ] {
         assert_eq!(
             help_entry(&mut engine, at, dimmed),

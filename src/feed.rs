@@ -17,7 +17,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::bidi;
 use crate::clock::Spark;
 use crate::code;
-use crate::keys::{self, Act, Action};
 use crate::model::{
     Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment, Shown,
     Status,
@@ -664,10 +663,9 @@ fn media<Tz: TimeZone>(
 ) {
     let icons = theme::icons();
     let faint = Style::new().fg(theme::FAINT);
-    for (at, image) in media.images.iter().enumerate() {
-        let key = keys::key_for(Action::Commit(Act::Image(at))).unwrap_or_default();
-        let tail = format!(" · {}×{} {key}", image.width, image.height);
-        // The size and the key stay whole, and a long description gives way to them.
+    for image in &media.images {
+        let tail = format!(" · {}×{}", image.width, image.height);
+        // The size stays whole, and a long description gives way to it.
         let room = width.saturating_sub(2 + tail.width());
         let description = match &image.description {
             Some(description) => Span::styled(description.clone(), theme::muted()),

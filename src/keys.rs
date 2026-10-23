@@ -58,8 +58,8 @@ pub enum Act {
     Reply,
     Quote,
     Vote,
-    /// Opens the commit's image at this place, counted from zero.
-    Image(usize),
+    /// Opens every image the commit has.
+    Images,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -603,24 +603,10 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Commit,
-        chords: &[&[Key::ch('i'), Key::ch('1')]],
-        action: Action::Commit(Act::Image(0)),
-        hint: None,
-        help: "open an image",
-    },
-    Binding {
-        scope: Scope::Commit,
-        chords: &[&[Key::ch('i'), Key::ch('2')]],
-        action: Action::Commit(Act::Image(1)),
-        hint: None,
-        help: "open an image",
-    },
-    Binding {
-        scope: Scope::Commit,
-        chords: &[&[Key::ch('i'), Key::ch('3')]],
-        action: Action::Commit(Act::Image(2)),
-        hint: None,
-        help: "open an image",
+        chords: &[&[Key::ch('i')]],
+        action: Action::Commit(Act::Images),
+        hint: Some("i images"),
+        help: "open the images",
     },
     Binding {
         scope: Scope::Confirm,
@@ -1035,7 +1021,7 @@ pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'st
     {
         let keys: Vec<String> = binding.chords.iter().map(|chord| label(chord)).collect();
         let live = can(binding.action);
-        // Neighbours that say the same thing, like i1 to i3, share a row.
+        // Neighbours that say the same thing share a row.
         match listed.last_mut() {
             Some((shown, _, on))
                 if last.is_some_and(|l| l.scope == binding.scope && l.help == binding.help) =>

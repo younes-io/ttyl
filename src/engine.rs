@@ -288,14 +288,14 @@ impl Session {
                             !own && (row.media.poll.as_ref())
                                 .is_some_and(|poll| !poll.is_closed && !poll.has_voted)
                         }
-                        Act::Image(at) => at < row.media.images.len(),
+                        Act::Images => !row.media.images.is_empty(),
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow => commit.author.username != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
-                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote | Act::Image(_) => {
+                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote | Act::Images => {
                     false
                 }
             },
@@ -1331,14 +1331,16 @@ impl Engine {
                 Some("opened in the browser".to_owned()),
                 vec![Effect::Open(url)],
             ),
-            Act::Image(at) => {
-                match (session.store.row(&id)).and_then(|row| row.media.images.get(at)) {
-                    Some(image) => (
-                        Some(format!("opened image {} in the browser", at + 1)),
-                        vec![Effect::Open(image.url.clone())],
-                    ),
-                    None => (None, Vec::new()),
-                }
+            Act::Images => {
+                let urls: Vec<String> = (session.store.row(&id).into_iter())
+                    .flat_map(|row| row.media.images.iter().map(|image| image.url.clone()))
+                    .collect();
+                let said = match urls.len() {
+                    0 => None,
+                    1 => Some("opened the image in the browser".to_owned()),
+                    n => Some(format!("opened {n} images in the browser")),
+                };
+                (said, urls.into_iter().map(Effect::Open).collect())
             }
             Act::Delete => {
                 session.overlay = Some(Overlay::Delete(id));
