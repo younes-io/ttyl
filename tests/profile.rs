@@ -165,3 +165,22 @@ fn esc_leaves_the_profile_for_the_log() {
     let rows = screen(&mut engine, 100, 30, at);
     assert!(rows[1].contains("/latest"), "{rows:#?}");
 }
+
+#[test]
+fn space_expands_a_folded_commit_and_folds_it_back() {
+    let at = Instant::now();
+    let mut engine = on_profile(at);
+    press(&mut engine, "jj", at);
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "space to expand"
+    ));
+    press(&mut engine, " ", at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "space to expand"), "{rows:#?}");
+    press(&mut engine, " ", at);
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "space to expand"
+    ));
+}

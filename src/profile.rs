@@ -131,6 +131,8 @@ struct Paged {
     asked_at: Option<Instant>,
     selected: usize,
     offset: usize,
+    expanded: HashSet<CommitId>,
+    folded: Vec<bool>,
 }
 
 impl Paged {
@@ -141,10 +143,21 @@ impl Paged {
     }
 
     fn can(&self, action: Action) -> bool {
-        matches!(
-            action,
-            Action::Down | Action::Up | Action::Top | Action::Bottom
-        ) && !self.items().is_empty()
+        match action {
+            Action::Down | Action::Up | Action::Top | Action::Bottom => !self.items().is_empty(),
+            Action::Expand => {
+                self.folded.get(self.selected) == Some(&true)
+                    || self.commit().is_some_and(|id| self.expanded.contains(id))
+            }
+            _ => false,
+        }
+    }
+
+    fn commit(&self) -> Option<&CommitId> {
+        match self.items().get(self.selected)? {
+            Item::Commit(id) => Some(id),
+            Item::Person(_) => None,
+        }
     }
 
     fn act(&mut self, action: Action) {
@@ -154,6 +167,13 @@ impl Paged {
             Action::Up => self.selected = self.selected.saturating_sub(1),
             Action::Top => self.selected = 0,
             Action::Bottom => self.selected = last,
+            Action::Expand => {
+                if let Some(id) = self.commit().cloned()
+                    && !self.expanded.remove(&id)
+                {
+                    self.expanded.insert(id);
+                }
+            }
             _ => {}
         }
     }
@@ -416,8 +436,8 @@ impl ProfileScreen {
                 Item::Person(_) => None,
             })
             .collect();
-        let feed = if ids.is_empty() {
-            people(items, store, area.width)
+        let (feed, folded) = if ids.is_empty() {
+            (people(items, store, area.width), Vec::new())
         } else {
             let page = LogPage {
                 log: Log::Latest,
@@ -427,8 +447,9 @@ impl ProfileScreen {
                 new_commits_count: None,
                 suggestions: Vec::new(),
             };
-            feed::layout(&page, area.width, &HashSet::new(), true, wall).0
+            feed::layout(&page, area.width, &list.expanded, true, wall)
         };
+        list.folded = folded;
         list.selected = list.selected.min(feed.entries.len().saturating_sub(1));
         let selected = Some(list.selected);
         let total = feed.lines.len();

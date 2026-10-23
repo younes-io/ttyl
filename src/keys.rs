@@ -422,6 +422,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Profile,
+        chords: &[&[Key::ch(' ')]],
+        action: Action::Expand,
+        hint: None,
+        help: "expand the selected commit",
+    },
+    Binding {
+        scope: Scope::Profile,
         chords: &[&[Key::code(KeyCode::Tab)]],
         action: Action::NextFilter,
         hint: Some("tab tabs"),
