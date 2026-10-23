@@ -1,5 +1,6 @@
 mod common;
 
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
@@ -7,7 +8,7 @@ use std::time::Duration;
 
 use common::openssh_accepts;
 use ttyl::api::{Call, Client, Error, Reply};
-use ttyl::attach::{self, Attachment, Poll};
+use ttyl::attach::{self, Attachment, Image, Poll};
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{CommitId, Filter, Log, NotificationId};
@@ -15,6 +16,7 @@ use ttyl::model::{CommitId, Filter, Log, NotificationId};
 struct Seen {
     head: String,
     body: String,
+    raw: Vec<u8>,
 }
 
 impl Seen {
@@ -49,13 +51,15 @@ fn serve(status: &str, body: &str) -> (String, JoinHandle<Seen>) {
         let mut seen = Seen {
             head,
             body: String::new(),
+            raw: Vec::new(),
         };
         let length = seen
             .header("Content-Length")
             .map_or(0, |length| length.parse().unwrap());
         let mut body = vec![0; length];
         reader.read_exact(&mut body).unwrap();
-        seen.body = String::from_utf8(body).unwrap();
+        seen.body = String::from_utf8_lossy(&body).into_owned();
+        seen.raw = body;
         stream.write_all(response.as_bytes()).unwrap();
         seen
     });
@@ -350,6 +354,155 @@ fn a_poll_goes_with_the_body_and_lasts_in_minutes() {
         sent["poll"],
         serde_json::json!({"options": ["vim", "emacs"], "duration": 4320})
     );
+}
+
+/// Each part of a multipart body, as its field name, file name and type, and its bytes.
+fn parts(seen: &Seen) -> Vec<(String, Vec<u8>)> {
+    let boundary = (seen.header("Content-Type").unwrap())
+        .strip_prefix("multipart/form-data; boundary=")
+        .unwrap();
+    let delimiter = format!("--{boundary}");
+    let raw = &seen.raw;
+    let mut starts: Vec<usize> = (0..raw.len())
+        .filter(|&at| raw[at..].starts_with(delimiter.as_bytes()))
+        .collect();
+    assert!(raw[starts.pop().unwrap()..].starts_with(format!("{delimiter}--\r\n").as_bytes()));
+    let ends = starts
+        .iter()
+        .skip(1)
+        .copied()
+        .chain([raw.len() - delimiter.len() - 4]);
+    (starts.iter().zip(ends))
+        .map(|(&start, end)| {
+            let part = &raw[start + delimiter.len() + 2..end - 2];
+            let split = (0..part.len())
+                .find(|&at| part[at..].starts_with(b"\r\n\r\n"))
+                .unwrap();
+            let head = String::from_utf8(part[..split].to_vec()).unwrap();
+            let name = head
+                .split("name=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            let file = head
+                .split("filename=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            let mime = head.split("Content-Type: ").nth(1).unwrap();
+            (format!("{name} {file} {mime}"), part[split + 4..].to_vec())
+        })
+        .collect()
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    let mut child = std::process::Command::new("sha256sum")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    out.split_whitespace().next().unwrap().to_owned()
+}
+
+#[test]
+fn images_go_as_multipart_signed_over_their_hashes() {
+    let dir = common::scratch("api-images");
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x02\0\0\0\x03".to_vec();
+    png.extend([0xff, 0x00, 0x0d, 0x0a, 0x2d, 0x2d]);
+    let webp = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0\x09\0\0\x04\0\0".to_vec();
+    fs::write(dir.join("my screenshot.png"), &png).unwrap();
+    fs::write(dir.join("cat.webp"), &webp).unwrap();
+    let (base, server) = serve(
+        "422 Unprocessable Content",
+        r#"{"message":"no","errors":{"body":["no"]}}"#,
+    );
+    let post = Call::Post {
+        target: Target::New,
+        body: "look".to_owned(),
+        attachment: Attachment::Images(vec![
+            Image {
+                path: dir.join("my screenshot.png"),
+                description: "a terminal".to_owned(),
+            },
+            Image {
+                path: dir.join("cat.webp"),
+                description: String::new(),
+            },
+        ]),
+    };
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    client.call(&post).unwrap_err();
+    let seen = server.join().unwrap();
+
+    let parts = parts(&seen);
+    let heads: Vec<&str> = parts.iter().map(|(head, _)| head.as_str()).collect();
+    assert_eq!(
+        heads,
+        [
+            "payload payload.json application/json",
+            "images[] image-1.png image/png",
+            "images[] image-2.webp image/webp",
+        ],
+        "the payload comes first and no local file name leaves the machine"
+    );
+    assert_eq!(parts[1].1, png);
+    assert_eq!(parts[2].1, webp);
+    let payload = String::from_utf8(parts[0].1.clone()).unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(sent["body"], "look");
+    assert_eq!(
+        sent["image_descriptions"],
+        serde_json::json!(["a terminal", ""])
+    );
+
+    let message = format!(
+        "{}\n{}\nPOST\n/api/v1/commits\n{},{}\n{payload}",
+        seen.header("X-Devnull-Timestamp").unwrap(),
+        seen.header("X-Devnull-Nonce").unwrap(),
+        sha256(&png),
+        sha256(&webp),
+    );
+    let signature = seen.header("X-SSH-Signature").unwrap();
+    assert!(openssh_accepts(
+        client.key(),
+        signature,
+        &message,
+        "devnull-api-images",
+        "api-images-sig"
+    ));
+    assert!(!openssh_accepts(
+        client.key(),
+        signature,
+        &message,
+        "devnull-api",
+        "api-images-plain"
+    ));
+}
+
+#[test]
+fn an_image_gone_from_disk_is_named_and_nothing_is_sent() {
+    let post = Call::Post {
+        target: Target::New,
+        body: String::new(),
+        attachment: Attachment::Images(vec![Image {
+            path: "/nonexistent/ttyl/shot.png".into(),
+            description: String::new(),
+        }]),
+    };
+    let error = Client::new("http://127.0.0.1:9", DeviceKey::generate().unwrap())
+        .call(&post)
+        .unwrap_err();
+    assert!(
+        error.to_string().starts_with("can't read shot.png: "),
+        "{error}"
+    );
+    assert!(!error.may_have_landed());
 }
 
 #[test]

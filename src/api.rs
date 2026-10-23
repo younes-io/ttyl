@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::fmt;
-use std::io;
+use std::fmt::{self, Write as _};
 use std::time::Duration;
+use std::{fs, io};
 
 use chrono::Utc;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use ssh_key::sha2::{Digest, Sha256};
 use ureq::Agent;
 use ureq::http::Request;
 
-use crate::attach::Attachment;
-use crate::device::{DeviceKey, Nonce};
+use crate::attach::{self, Attachment, Image};
+use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
     Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId,
@@ -18,6 +19,8 @@ use crate::model::{
 };
 
 pub const BASE: &str = "https://dev-null.sh";
+/// Up to 30 MB of images can take a slow uplink well past the 30 seconds the JSON requests get.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Talks to the API as one device. Every request carries that device's signature.
 pub struct Client {
@@ -141,6 +144,8 @@ pub enum Error {
     /// The server answered with something other than the JSON it documents, such as a proxy's error page.
     Unexpected(u16),
     WrongShape(String),
+    /// An image could not be read from disk, so nothing was sent.
+    Image(String),
 }
 
 impl Error {
@@ -168,7 +173,7 @@ impl Error {
                     | io::ErrorKind::AddrNotAvailable
             ),
             Error::Http(_) | Error::WrongShape(_) | Error::Unexpected(502 | 504) => true,
-            Error::Api { .. } | Error::Unexpected(_) => false,
+            Error::Api { .. } | Error::Unexpected(_) | Error::Image(_) => false,
         }
     }
 
@@ -190,6 +195,7 @@ impl fmt::Display for Error {
                 "/dev/null answered {status} with a page instead of data. The site may be down for maintenance."
             ),
             Error::WrongShape(detail) => write!(f, "can't read what /dev/null sent: {detail}"),
+            Error::Image(message) => f.write_str(message),
         }
     }
 }
@@ -212,7 +218,7 @@ impl Failure {
                 error => error.to_string(),
             }),
             Error::Api { message, .. } => Failure::Refused(message.clone()),
-            Error::WrongShape(_) => Failure::Refused(error.to_string()),
+            Error::WrongShape(_) | Error::Image(_) => Failure::Refused(error.to_string()),
         }
     }
 }
@@ -335,11 +341,21 @@ impl Client {
         };
         let mut json =
             serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted });
-        if let Attachment::Poll(poll) = attachment {
-            json["poll"] =
-                serde_json::json!({ "options": poll.options, "duration": poll.duration.minutes() });
-        }
-        let (status, text) = self.send("POST", "/api/v1/commits", json.to_string())?;
+        let (status, text) = match attachment {
+            Attachment::None => self.send("POST", "/api/v1/commits", json.to_string())?,
+            Attachment::Poll(poll) => {
+                json["poll"] = serde_json::json!({ "options": poll.options, "duration": poll.duration.minutes() });
+                self.send("POST", "/api/v1/commits", json.to_string())?
+            }
+            Attachment::Images(images) => {
+                let descriptions: Vec<&str> = images
+                    .iter()
+                    .map(|image| image.description.as_str())
+                    .collect();
+                json["image_descriptions"] = serde_json::json!(descriptions);
+                self.send_images("POST", "/api/v1/commits", json.to_string(), images)?
+            }
+        };
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
@@ -490,17 +506,106 @@ impl Client {
         let signed = self
             .key
             .sign(method, path, &body, Utc::now().timestamp(), Nonce::random());
+        let request = self.request(method, path, "application/json", &signed, body.into_bytes())?;
+        self.exchange(request)
+    }
+
+    /// Sends a JSON payload with images as multipart: the payload in a part of its own, the images in `images[]`.
+    fn send_images(
+        &self,
+        method: &str,
+        path: &str,
+        payload: String,
+        images: &[Image],
+    ) -> Result<(u16, String), Error> {
+        let files = (images.iter())
+            .map(|image| {
+                fs::read(&image.path).map_err(|error| {
+                    let name = image.path.file_name().unwrap_or(image.path.as_os_str());
+                    Error::Image(format!("can't read {}: {error}", name.display()))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let hashes: Vec<String> = (files.iter())
+            .map(|bytes| {
+                Sha256::digest(bytes)
+                    .iter()
+                    .fold(String::new(), |mut hex, byte| {
+                        let _ = write!(hex, "{byte:02x}");
+                        hex
+                    })
+            })
+            .collect();
+        let signed = self.key.sign_with_images(
+            method,
+            path,
+            &hashes,
+            &payload,
+            Utc::now().timestamp(),
+            Nonce::random(),
+        );
+        let boundary = format!("ttyl-{}", Nonce::random());
+        let mut body = Vec::new();
+        let mut part = |name: &str, file: &str, mime: &str, content: &[u8]| {
+            body.extend(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{file}\"\r\nContent-Type: {mime}\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend(content);
+            body.extend(b"\r\n");
+        };
+        part(
+            "payload",
+            "payload.json",
+            "application/json",
+            payload.as_bytes(),
+        );
+        // A generic name, so the server never learns what the files were called on this machine.
+        for (at, bytes) in files.iter().enumerate() {
+            let kind = attach::probe(bytes).map(|probe| probe.kind);
+            let (extension, mime) = kind.map_or(("bin", "application/octet-stream"), |kind| {
+                (kind.extension(), kind.mime())
+            });
+            part(
+                "images[]",
+                &format!("image-{}.{extension}", at + 1),
+                mime,
+                bytes,
+            );
+        }
+        body.extend(format!("--{boundary}--\r\n").as_bytes());
+        let content_type = format!("multipart/form-data; boundary={boundary}");
+        let request = self.request(method, path, &content_type, &signed, body)?;
+        let request = (self.agent.configure_request(request))
+            .timeout_global(Some(UPLOAD_TIMEOUT))
+            .build();
+        self.exchange(request)
+    }
+
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        signed: &Signed,
+        body: Vec<u8>,
+    ) -> Result<Request<Vec<u8>>, Error> {
         let mut request = Request::builder()
             .method(method)
             .uri(format!("{}{path}", self.base))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", content_type)
             .header("Accept", "application/json");
         for (name, value) in signed.headers() {
             request = request.header(name, value);
         }
-        let request = request
+        request
             .body(body)
-            .map_err(|error| Error::Http(error.into()))?;
+            .map_err(|error| Error::Http(error.into()))
+    }
+
+    fn exchange(&self, request: Request<Vec<u8>>) -> Result<(u16, String), Error> {
         let mut response = self.agent.run(request).map_err(Error::Http)?;
         let status = response.status().as_u16();
         let text = response.body_mut().read_to_string().map_err(Error::Http)?;

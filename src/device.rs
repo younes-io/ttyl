@@ -9,6 +9,8 @@ use ssh_key::rand_core::{OsRng, RngCore};
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey};
 
 const NAMESPACE: &str = "devnull-api";
+/// A request with images is signed under its own namespace, so the signature states which format it covers.
+const IMAGES_NAMESPACE: &str = "devnull-api-images";
 
 /// The ed25519 key this install signs every API request with. The server knows it by its fingerprint once the user
 /// approves it.
@@ -63,12 +65,32 @@ impl DeviceKey {
         timestamp: i64,
         nonce: Nonce,
     ) -> Signed {
+        self.sign_lines(NAMESPACE, &[method, path_and_query, body], timestamp, nonce)
+    }
+
+    /// Signs a request with images, whose message has one more line before the JSON payload: the SHA-256 of each
+    /// image in lowercase hex, comma-separated in the order they are attached.
+    pub fn sign_with_images(
+        &self,
+        method: &str,
+        path_and_query: &str,
+        hashes: &[String],
+        payload: &str,
+        timestamp: i64,
+        nonce: Nonce,
+    ) -> Signed {
+        let hashes = hashes.join(",");
+        let lines = [method, path_and_query, &hashes, payload];
+        self.sign_lines(IMAGES_NAMESPACE, &lines, timestamp, nonce)
+    }
+
+    fn sign_lines(&self, namespace: &str, lines: &[&str], timestamp: i64, nonce: Nonce) -> Signed {
         let timestamp = timestamp.to_string();
         let nonce = nonce.to_string();
-        let message = [timestamp.as_str(), &nonce, method, path_and_query, body].join("\n");
+        let message = [&[timestamp.as_str(), &nonce], lines].concat().join("\n");
         let pem = self
             .0
-            .sign(NAMESPACE, HashAlg::Sha512, message.as_bytes())
+            .sign(namespace, HashAlg::Sha512, message.as_bytes())
             .and_then(|signature| signature.to_pem(LineEnding::LF))
             .expect("an ed25519 key signs any message");
         Signed {
