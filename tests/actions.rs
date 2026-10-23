@@ -10,7 +10,7 @@ use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::clock::Spark;
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{CommitId, Focus, Reason};
+use ttyl::model::{CommitId, Focus, Log, Reason};
 use ttyl::sched::Ticket;
 use ttyl::theme;
 
@@ -859,4 +859,22 @@ fn on_a_short_terminal_the_report_dialog_keeps_its_field_and_the_hint_line() {
         assert!(contains(&rows, "> why"), "{rows:#?}");
         assert_eq!(rows[usize::from(height) - 1], DETAILS_HINT, "{rows:#?}");
     }
+}
+
+#[test]
+fn i_and_a_number_open_that_image_and_only_one_the_commit_has() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let at_desk = page(Log::Latest)
+        .rows
+        .iter()
+        .position(|row| row.commit.id.0.ends_with("0000701"))
+        .expect("the fixture has a commit with two images");
+    press(&mut engine, &format!("2{}", "j".repeat(at_desk)), at);
+    let effects = press(&mut engine, "i2", at);
+    let url = "https://dev-null.sh/commit-images/7a000000-0000-4000-8000-000000000702";
+    assert_eq!(effects, [Effect::Open(url.to_owned())]);
+    assert_eq!(footer(&mut engine, at), " opened image 2 in the browser");
+    assert_eq!(help_entry(&mut engine, at, "open an image"), Some(true));
+    assert!(press(&mut engine, "i3", at).is_empty());
 }

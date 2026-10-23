@@ -57,6 +57,8 @@ pub enum Act {
     Reply,
     Quote,
     Vote,
+    /// Opens the commit's image at this place, counted from zero.
+    Image(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -599,6 +601,27 @@ pub const TABLE: &[Binding] = &[
         help: "vote in the poll",
     },
     Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('i'), Key::ch('1')]],
+        action: Action::Commit(Act::Image(0)),
+        hint: None,
+        help: "open an image",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('i'), Key::ch('2')]],
+        action: Action::Commit(Act::Image(1)),
+        hint: None,
+        help: "open an image",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('i'), Key::ch('3')]],
+        action: Action::Commit(Act::Image(2)),
+        hint: None,
+        help: "open an image",
+    },
+    Binding {
         scope: Scope::Confirm,
         chords: &[&[Key::ch('y')]],
         action: Action::Confirm,
@@ -843,6 +866,20 @@ pub const TABLE: &[Binding] = &[
         help: "close",
     },
     Binding {
+        scope: Scope::Help,
+        chords: &[&[Key::ch('j')], &[Key::code(KeyCode::Down)]],
+        action: Action::Down,
+        hint: Some("j/k scroll"),
+        help: "scroll down",
+    },
+    Binding {
+        scope: Scope::Help,
+        chords: &[&[Key::ch('k')], &[Key::code(KeyCode::Up)]],
+        action: Action::Up,
+        hint: None,
+        help: "scroll up",
+    },
+    Binding {
         scope: Scope::Gate,
         chords: &[&[Key::code(KeyCode::Enter)]],
         action: Action::SignIn,
@@ -982,14 +1019,27 @@ pub fn fit(hints: &str, width: usize) -> String {
 /// Every key in `scopes`, each with whether it works right now, so help can show a key
 /// like `v` dimmed instead of hiding it until a poll is selected.
 pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str, bool)> {
-    let listed: Vec<(String, &'static str, bool)> = TABLE
+    let mut listed: Vec<(String, &'static str, bool)> = Vec::new();
+    let mut last: Option<&Binding> = None;
+    for binding in TABLE
         .iter()
         .filter(|binding| scopes.contains(&binding.scope))
-        .map(|binding| {
-            let keys: Vec<String> = binding.chords.iter().map(|chord| label(chord)).collect();
-            (keys.join("/"), binding.help, can(binding.action))
-        })
-        .collect();
+    {
+        let keys: Vec<String> = binding.chords.iter().map(|chord| label(chord)).collect();
+        let live = can(binding.action);
+        // Neighbours that say the same thing, like i1 to i3, share a row.
+        match listed.last_mut() {
+            Some((shown, _, on))
+                if last.is_some_and(|l| l.scope == binding.scope && l.help == binding.help) =>
+            {
+                shown.push('/');
+                shown.push_str(&keys.join("/"));
+                *on |= live;
+            }
+            _ => listed.push((keys.join("/"), binding.help, live)),
+        }
+        last = Some(binding);
+    }
     let mut shown: Vec<&'static str> = Vec::new();
     listed
         .iter()

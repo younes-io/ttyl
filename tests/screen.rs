@@ -301,18 +301,19 @@ fn links_images_and_polls_each_lead_with_their_icon() {
         ),
         "{rows:#?}"
     );
-    for width in [100, 44] {
+    // A narrow screen shortens the description and keeps the size and the key whole.
+    for (width, desk) in [
+        (100, "a desk with two monitors"),
+        (44, "a desk with two monito…"),
+    ] {
         let rows = screen(&mut app, width, 120);
-        assert!(
-            contains(
-                &commit_rows(&rows, "0000701"),
-                &format!(
-                    "│ {} 2 images · O to open in the browser",
-                    theme::icons().image
-                )
-            ),
-            "{rows:#?}"
-        );
+        let images = commit_rows(&rows, "0000701");
+        for line in [
+            format!("│ {} {desk} · 1600×1200 i1", theme::icons().image),
+            format!("│ {} no description · 1200×1600 i2", theme::icons().image),
+        ] {
+            assert!(contains(&images, &line), "{line}: {images:#?}");
+        }
         let poll = commit_rows(&rows, "0000801");
         for line in [
             format!("│ {} ○ tabs", theme::icons().poll),

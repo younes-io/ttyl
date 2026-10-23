@@ -120,6 +120,7 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
         "expand the selected commit",
         "open the thread",
         "vote in the poll",
+        "open an image",
     ] {
         assert_eq!(
             help_entry(&mut engine, at, dimmed),
@@ -130,10 +131,24 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");
-    for shown in ["following", "refresh this log", "quit", "these keys"] {
+    for shown in ["following", "refresh this log", "↓ more", "j/k scroll"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
     assert!(contains(&rows, "? close"), "{rows:#?}");
+    // A short terminal scrolls the list to its last keys and stops there.
+    press(&mut engine, &"j".repeat(40), at);
+    let rows = screen(&mut engine, 80, 30, at);
+    for shown in ["quit", "these keys", "screensaver"] {
+        assert!(contains(&rows, shown), "{shown}: {rows:#?}");
+    }
+    assert!(!contains(&rows, "↓ more"), "{rows:#?}");
+    press(&mut engine, "k", at);
+    assert!(contains(&screen(&mut engine, 80, 30, at), "↓ more"));
+    let rows = screen(&mut engine, 100, 50, at);
+    assert!(
+        !contains(&rows, "j/k scroll"),
+        "a tall screen has nothing to scroll: {rows:#?}"
+    );
 
     press(&mut engine, "j", at);
     assert_eq!(engine.log().unwrap().active(), Log::Following);

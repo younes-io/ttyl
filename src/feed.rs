@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::bidi;
 use crate::clock::Spark;
 use crate::code;
+use crate::keys::{self, Act, Action};
 use crate::model::{
     Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment, Shown,
     Status,
@@ -663,19 +664,19 @@ fn media<Tz: TimeZone>(
 ) {
     let icons = theme::icons();
     let faint = Style::new().fg(theme::FAINT);
-    let images = match media.images.len() {
-        0 => None,
-        1 => Some("1 image".to_owned()),
-        count => Some(format!("{count} images")),
-    };
-    if let Some(images) = images {
-        out.push(fit(
-            vec![
-                Span::styled(format!("{} ", icons.image), theme::muted()),
-                Span::styled(format!("{images} · O to open in the browser"), faint),
-            ],
-            width,
-        ));
+    for (at, image) in media.images.iter().enumerate() {
+        let key = keys::key_for(Action::Commit(Act::Image(at))).unwrap_or_default();
+        let tail = format!(" · {}×{} {key}", image.width, image.height);
+        // The size and the key stay whole, and a long description gives way to them.
+        let room = width.saturating_sub(2 + tail.width());
+        let description = match &image.description {
+            Some(description) => Span::styled(description.clone(), theme::muted()),
+            None => Span::styled("no description", faint.add_modifier(Modifier::ITALIC)),
+        };
+        let mut line = vec![Span::styled(format!("{} ", icons.image), theme::muted())];
+        line.extend(fit(vec![description], room));
+        line.push(Span::styled(tail, faint));
+        out.push(fit(line, width));
     }
     if let Some(poll) = &media.poll {
         poll_lines(poll, width, now, out);

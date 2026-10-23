@@ -111,7 +111,12 @@ enum Screen {
 }
 
 enum Overlay {
-    Help,
+    /// The key list, scrolled `top` rows down. Drawing sets `last`, the furthest it can scroll on
+    /// this screen, so a short terminal can still reach every key.
+    Help {
+        top: usize,
+        last: usize,
+    },
     Delete(CommitId),
     Reason {
         id: CommitId,
@@ -273,13 +278,16 @@ impl Session {
                             !own && (row.media.poll.as_ref())
                                 .is_some_and(|poll| !poll.is_closed && !poll.has_voted)
                         }
+                        Act::Image(at) => at < row.media.images.len(),
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow => commit.author.username != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
-                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote => false,
+                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote | Act::Image(_) => {
+                    false
+                }
             },
             Some(Selected::Person(user)) => act == Act::Follow && user.username != *me,
             None => false,
@@ -318,12 +326,18 @@ impl Session {
             return self.overlay.is_none()
                 && self.composer.as_ref().is_some_and(Composer::can_poll);
         }
+        if let Some(Overlay::Help { last, .. }) = self.overlay {
+            return match action {
+                Action::Down | Action::Up => last > 0,
+                _ => true,
+            };
+        }
         self.overlay.is_some() || self.composer.is_some() || self.screen_allows(action)
     }
 
     fn scopes(&self) -> &'static [Scope] {
         match self.overlay {
-            Some(Overlay::Help) => HELP_SCOPES,
+            Some(Overlay::Help { .. }) => HELP_SCOPES,
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
@@ -347,7 +361,7 @@ impl Session {
             {
                 InputMode::Text
             }
-            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {
+            Some(Overlay::Help { .. } | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {
                 InputMode::Commands
             }
         }
@@ -380,7 +394,7 @@ impl Session {
                 }
                 _ => {}
             },
-            Some(Overlay::Help | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {}
+            Some(Overlay::Help { .. } | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {}
         }
     }
 
@@ -389,6 +403,20 @@ impl Session {
         let last = Reason::ALL.len() - 1;
         let (next, call) = match (overlay, action) {
             (_, Action::Close) => (None, None),
+            (Overlay::Help { top, last }, Action::Down) => (
+                Some(Overlay::Help {
+                    top: (top + 1).min(last),
+                    last,
+                }),
+                None,
+            ),
+            (Overlay::Help { top, last }, Action::Up) => (
+                Some(Overlay::Help {
+                    top: top.saturating_sub(1),
+                    last,
+                }),
+                None,
+            ),
             (Overlay::Delete(id), Action::Confirm) => {
                 self.store.start_delete(&id);
                 (None, Some(Call::Delete(id)))
@@ -475,7 +503,7 @@ impl Session {
                 })
             }
             Some(
-                Overlay::Help
+                Overlay::Help { .. }
                 | Overlay::Reason { .. }
                 | Overlay::Vote { .. }
                 | Overlay::Details { .. },
@@ -1069,7 +1097,9 @@ impl Engine {
                 self.toast("opened in the browser".to_owned(), now);
                 return vec![Effect::Open(format!("{}/", api::BASE))];
             }
-            (Phase::Ready(session), Action::Help) => session.overlay = Some(Overlay::Help),
+            (Phase::Ready(session), Action::Help) => {
+                session.overlay = Some(Overlay::Help { top: 0, last: 0 });
+            }
             (Phase::Ready(_), Action::Saver) => self.saver = Some(saver::Saver::new(now)),
             (Phase::Ready(session), Action::Compose) => {
                 let draft = self.drafts.get(&Target::New);
@@ -1254,6 +1284,15 @@ impl Engine {
                 Some("opened in the browser".to_owned()),
                 vec![Effect::Open(url)],
             ),
+            Act::Image(at) => {
+                match (session.store.row(&id)).and_then(|row| row.media.images.get(at)) {
+                    Some(image) => (
+                        Some(format!("opened image {} in the browser", at + 1)),
+                        vec![Effect::Open(image.url.clone())],
+                    ),
+                    None => (None, Vec::new()),
+                }
+            }
             Act::Delete => {
                 session.overlay = Some(Overlay::Delete(id));
                 (None, Vec::new())
@@ -1698,6 +1737,20 @@ impl Engine {
         if let Some(saver) = &mut self.saver {
             return saver.draw(frame, now);
         }
+        if let Phase::Ready(session) = &mut self.phase
+            && let Some(Overlay::Help { top, .. }) = session.overlay
+        {
+            // Measured before the footer, which offers scrolling only when the list overflows.
+            let screen = Rect {
+                height: frame.area().height.saturating_sub(1),
+                ..frame.area()
+            };
+            let (_, _, last) = help_layout(screen, session);
+            session.overlay = Some(Overlay::Help {
+                top: top.min(last),
+                last,
+            });
+        }
         let room =
             usize::from(frame.area().width).saturating_sub(HINT_INDENT.len() + SPINNER_CELLS);
         let sending = self.sending();
@@ -1927,9 +1980,9 @@ impl Engine {
                 };
                 let card = session.card();
                 match &session.overlay {
-                    Some(Overlay::Help) => {
+                    Some(Overlay::Help { top, .. }) => {
                         popup::dim(frame.buffer_mut(), screen, None);
-                        draw_help(frame, screen, session);
+                        draw_help(frame, screen, session, *top);
                     }
                     Some(Overlay::Reason { id, at }) => {
                         popup::dim(frame.buffer_mut(), screen, card);
@@ -1976,7 +2029,11 @@ fn news_of(count: u32) -> String {
     format!("↑ {count} new {noun} · R to load")
 }
 
-fn draw_help(frame: &mut Frame, screen: Rect, session: &Session) {
+/// The keys help lists, the box they go in, and the furthest row the list can scroll to.
+fn help_layout(
+    screen: Rect,
+    session: &Session,
+) -> (Vec<(String, &'static str, bool)>, Rect, usize) {
     let allows = |action| session.screen_allows(action);
     let rows = keys::help(session.screen_scopes(), &allows);
     let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
@@ -1986,26 +2043,43 @@ fn draw_help(frame: &mut Frame, screen: Rect, session: &Session) {
         .max()
         .unwrap_or(0)
         + 6;
-    let height = rows.len() + 4;
     let width = u16::try_from(width).unwrap_or(u16::MAX);
-    let height = u16::try_from(height).unwrap_or(u16::MAX);
-    let block = Block::bordered()
-        .title(Span::styled(
-            " keys ",
-            Style::new()
-                .fg(theme::FOREGROUND)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .padding(Padding::new(2, 2, 1, 1));
+    let height = u16::try_from(rows.len() + 4).unwrap_or(u16::MAX);
     let area = popup::place(screen, width, height, None);
-    let block = if area.height < height {
+    let last = if area.height < height {
+        rows.len()
+            .saturating_sub(usize::from(area.height.saturating_sub(2)))
+    } else {
+        0
+    };
+    (rows, area, last)
+}
+
+/// Draws the keys from row `top`, which the caller has already held within reach.
+fn draw_help(frame: &mut Frame, screen: Rect, session: &Session, top: usize) {
+    let (rows, area, last) = help_layout(screen, session);
+    let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
+    let block = Block::bordered().title(Span::styled(
+        " keys ",
+        Style::new()
+            .fg(theme::FOREGROUND)
+            .add_modifier(Modifier::BOLD),
+    ));
+    // A list too tall for the screen gives up its blank rows before it scrolls.
+    let block = if last > 0 {
         block.padding(Padding::horizontal(2))
+    } else {
+        block.padding(Padding::new(2, 2, 1, 1))
+    };
+    let block = if top < last {
+        block.title_bottom(Line::styled(" ↓ more ", theme::muted()).right_aligned())
     } else {
         block
     };
     let inner = popup::raise(frame, area, block);
     let lines: Vec<Line> = rows
         .into_iter()
+        .skip(top)
         .map(|(key, help, live)| {
             let (key_style, help_style) = if live {
                 (

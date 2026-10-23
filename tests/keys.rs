@@ -148,8 +148,8 @@ fn the_question_mark_opens_help_and_closes_it() {
             HELP_SCOPES,
             &all
         ),
-        Resolve::Ignored,
-        "the list under the overlay does not move"
+        Resolve::Act(Action::Down),
+        "j scrolls the keys, not the list under them"
     );
 }
 
