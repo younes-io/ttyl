@@ -735,3 +735,29 @@ fn poll_bars_add_up_to_their_percentages() {
     assert_eq!(bar(&rows, "spaces"), "▇▇░░░░░░░░  25%", "{rows:#?}");
 }
 
+#[test]
+fn a_poll_fills_its_bars_the_first_time_the_cursor_lands_on_it() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, voted_poll);
+    common::press(&mut engine, "2jjjjjjj", at);
+    let tabs = |engine: &mut Engine, after: u64| {
+        bar(
+            &common::screen(engine, 100, 60, at + Duration::from_millis(after)),
+            "tabs",
+        )
+    };
+    assert_eq!(tabs(&mut engine, 0), "░░░░░░░░░░   0%");
+    let half = tabs(&mut engine, 300);
+    assert!(
+        half != "░░░░░░░░░░   0%" && half != "▇▇▇▇▇▇▇▇░░  75%",
+        "midway: {half}"
+    );
+    assert_eq!(tabs(&mut engine, 2000), "▇▇▇▇▇▇▇▇░░  75%");
+
+    common::press(&mut engine, "kj", at + secs(3));
+    assert_eq!(
+        tabs(&mut engine, 3000),
+        "▇▇▇▇▇▇▇▇░░  75%",
+        "it fills only once"
+    );
+}

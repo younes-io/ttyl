@@ -135,13 +135,20 @@ fn a_new_star_pops_in_place_and_settles_amber() {
     assert_eq!(
         frames,
         [
-            (true, "✦"),
-            (false, "✧ · ✧"),
-            (true, "✦       ✦"),
-            (false, "·           ·"),
+            (true, "S"),
+            (false, "T S T"),
+            (true, "S M   M S"),
+            (false, "T M       M T"),
             (false, ""),
         ]
-        .map(|(lit, above)| (theme::icons().star.to_owned(), lit, above.to_owned())),
+        .map(|(lit, above)| {
+            let icons = theme::icons();
+            let above = above
+                .replace('S', icons.sparkle)
+                .replace('T', icons.twinkle)
+                .replace('M', icons.mote);
+            (icons.star.to_owned(), lit, above)
+        }),
         "the star flashes twice while sparkles burst out above it"
     );
     assert!(engine.next_wake(at + ms(1200)).unwrap() <= at + ms(1233));

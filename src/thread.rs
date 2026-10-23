@@ -417,8 +417,17 @@ impl ThreadScreen {
         let rows = feed.card_rows(selected, &shown);
         let lines = feed.window(selected, shown, area.width);
         frame.render_widget(Paragraph::new(&lines[..]), area);
-        if let Some((spark, elapsed)) = selected.and_then(|_| timers.spark(&self.selected, now)) {
-            feed::spark(frame.buffer_mut(), area, &lines, rows, spark, elapsed);
+        if selected.is_some() {
+            for (spark, elapsed) in timers.sparks(&self.selected, now) {
+                feed::spark(
+                    frame.buffer_mut(),
+                    area,
+                    &lines,
+                    rows.clone(),
+                    spark,
+                    elapsed,
+                );
+            }
         }
         self.laid_out = Some(laid_out);
     }

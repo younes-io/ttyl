@@ -12,17 +12,20 @@ pub const FRAME: Duration = Duration::from_millis(100);
 pub const SECOND: Duration = Duration::from_secs(1);
 pub const SPARK_FRAME: Duration = Duration::from_millis(33);
 
-/// A short animation on the selected card after the user stars it or gives it a pastel.
+/// A short animation on the selected card after the user stars it or gives it a pastel, or the first
+/// time it lands on a poll whose results show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Spark {
     Star,
     Pastel,
+    Fill,
 }
 
 impl Spark {
     pub fn lasts(self) -> Duration {
         match self {
             Spark::Star | Spark::Pastel => Duration::from_millis(1500),
+            Spark::Fill => Duration::from_millis(1300),
         }
     }
 }
@@ -84,12 +87,15 @@ impl Timers {
         self.0.keys().any(matches)
     }
 
-    /// The spark playing on `id`, if any, and how long ago it began.
-    pub fn spark(&self, id: &CommitId, now: Instant) -> Option<(Spark, Duration)> {
-        [Spark::Star, Spark::Pastel].into_iter().find_map(|spark| {
-            let left = self.remaining(&Timer::Spark(spark, id.clone()), now)?;
-            Some((spark, spark.lasts().saturating_sub(left)))
-        })
+    /// The sparks playing on `id`, and how long ago each began.
+    pub fn sparks(&self, id: &CommitId, now: Instant) -> Vec<(Spark, Duration)> {
+        [Spark::Fill, Spark::Star, Spark::Pastel]
+            .into_iter()
+            .filter_map(|spark| {
+                let left = self.remaining(&Timer::Spark(spark, id.clone()), now)?;
+                Some((spark, spark.lasts().saturating_sub(left)))
+            })
+            .collect()
     }
 
     pub fn next(&self) -> Option<Instant> {

@@ -88,6 +88,8 @@ pub struct Session {
     overlay: Option<Overlay>,
     composer: Option<Composer>,
     asked_to_refresh: HashSet<Refresh>,
+    /// Polls whose bars have filled in once.
+    filled: HashSet<CommitId>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -545,6 +547,32 @@ impl Engine {
     }
 
     pub fn update(&mut self, event: Event, now: Instant) -> Vec<Effect> {
+        let effects = self.handle(event, now);
+        self.fill_poll(now);
+        effects
+    }
+
+    /// The first time the cursor lands on a poll whose results show, its bars fill in.
+    fn fill_poll(&mut self, now: Instant) {
+        let Phase::Ready(session) = &mut self.phase else {
+            return;
+        };
+        let Some(Selected::Row(row)) = session.selected() else {
+            return;
+        };
+        let shown = (row.media.poll.as_ref()).is_some_and(|poll| {
+            poll.options
+                .iter()
+                .any(|option| option.percentage.is_some())
+        });
+        let id = row.commit.id.clone();
+        if shown && session.filled.insert(id.clone()) {
+            self.timers
+                .set(Timer::Spark(Spark::Fill, id), now + Spark::Fill.lasts());
+        }
+    }
+
+    fn handle(&mut self, event: Event, now: Instant) -> Vec<Effect> {
         match event {
             Event::Key(key) => self.key(key, now),
             Event::Paste(text) => {
@@ -1202,6 +1230,7 @@ impl Engine {
             overlay: None,
             composer: None,
             asked_to_refresh: HashSet::new(),
+            filled: HashSet::new(),
         }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);

@@ -136,15 +136,27 @@ pub fn spark(
                 ],
                 _ => vec![(row, col, icons.star, bold, None)],
             };
+            let (sparkle, twinkle, mote) = (icons.sparkle, icons.twinkle, icons.mote);
             let burst: &[(isize, &str, Color)] = match ms {
-                0..250 => &[(0, "✦", theme::AMBER)],
-                250..500 => &[
-                    (-2, "✧", theme::AMBER),
-                    (0, "·", theme::AMBER),
-                    (2, "✧", theme::AMBER),
+                0..150 => &[(0, sparkle, theme::AMBER)],
+                150..350 => &[
+                    (-2, twinkle, theme::AMBER),
+                    (0, sparkle, theme::AMBER),
+                    (2, twinkle, theme::AMBER),
                 ],
-                500..800 => &[(-4, "✦", theme::AMBER), (4, "✦", theme::AMBER)],
-                800..1100 => &[(-6, "·", theme::FAINT), (6, "·", theme::FAINT)],
+                350..600 => &[
+                    (-4, sparkle, theme::AMBER),
+                    (-2, mote, theme::AMBER),
+                    (2, mote, theme::AMBER),
+                    (4, sparkle, theme::AMBER),
+                ],
+                600..850 => &[
+                    (-6, twinkle, theme::AMBER),
+                    (-4, mote, theme::FAINT),
+                    (4, mote, theme::FAINT),
+                    (6, twinkle, theme::AMBER),
+                ],
+                850..1100 => &[(-7, mote, theme::FAINT), (7, mote, theme::FAINT)],
                 _ => &[],
             };
             marks.extend(burst.iter().map(|&(dx, glyph, color)| {
@@ -159,6 +171,7 @@ pub fn spark(
             }));
             marks
         }
+        Spark::Fill => return fill(buf, area, lines, rows, elapsed),
         Spark::Pastel => {
             let Some((row, col)) = find(icons.pastel)
                 .or(star)
@@ -179,13 +192,30 @@ pub fn spark(
                 return;
             };
             let (row, col) = (row as isize, col as isize);
+            let lit = lit.bg(theme::ACCENT);
+            let crumb = Style::new().fg(theme::ACCENT);
             match ms {
-                0..600 => vec![
+                0..250 => vec![
                     (row, col - 1, " ", lit, Some(0)),
                     (row, col, "+1", lit, None),
                     (row, col + 2, " ", lit, Some(0)),
+                    (row - 1, col - 1, icons.mote, crumb, Some(1)),
+                    (row - 1, col + 3, icons.mote, crumb, Some(1)),
                 ],
-                600..1100 => vec![(row - 1, col, "+1", bold, Some(1))],
+                250..600 => vec![
+                    (row, col - 1, " ", lit, Some(0)),
+                    (row, col, "+1", lit, None),
+                    (row, col + 2, " ", lit, Some(0)),
+                    (row - 1, col - 2, icons.mote, theme::muted(), Some(1)),
+                    (row - 1, col + 4, icons.mote, theme::muted(), Some(1)),
+                ],
+                600..1100 => vec![(
+                    row - 1,
+                    col,
+                    "+1",
+                    crumb.add_modifier(Modifier::BOLD),
+                    Some(1),
+                )],
                 _ => vec![(row - 1, col, "+1", Style::new().fg(theme::FAINT), Some(1))],
             }
         }
@@ -210,6 +240,77 @@ pub fn spark(
         .collect();
     for (x, y, text, style) in fits {
         buf.set_string(x, y, text, style);
+    }
+}
+
+/// Fills each poll bar in `rows` from empty, the way a game fills an XP bar. Each option starts a beat
+/// after the one above, its percentage counts up with it, and the bar's leading cell glints until it
+/// lands. The option the user voted for flashes its check once full.
+fn fill(buf: &mut Buffer, area: Rect, lines: &[Line], rows: Range<usize>, elapsed: Duration) {
+    const RUN: f32 = 600.0;
+    const STAGGER: u128 = 90;
+    let is_bar = |span: &Span| span.content.chars().all(|c| c == '▇' || c == '░');
+    let options = rows.filter_map(|row| {
+        let spans = &lines.get(row)?.spans;
+        let at = spans
+            .iter()
+            .position(|span| span.content.starts_with(['▇', '░']))?;
+        let bar = spans[at..].iter().take_while(|span| is_bar(span)).count();
+        let col: usize = spans[..at].iter().map(Span::width).sum();
+        let filled = spans[at..at + bar]
+            .iter()
+            .flat_map(|span| span.content.chars())
+            .filter(|c| *c == '▇')
+            .count();
+        let percentage: u32 = spans
+            .get(at + bar)?
+            .content
+            .trim()
+            .strip_suffix('%')?
+            .parse()
+            .ok()?;
+        let check = spans
+            .iter()
+            .position(|span| span.content == " ✓")
+            .map(|check| spans[..check].iter().map(Span::width).sum::<usize>() + 1);
+        Some((row, col, filled, percentage, check))
+    });
+    for (nth, (row, col, filled, percentage, check)) in options.enumerate() {
+        let ms = elapsed.as_millis().saturating_sub(nth as u128 * STAGGER);
+        let t = (ms as f32 / RUN).min(1.0);
+        let eased = 1.0 - (1.0 - t).powi(3);
+        let shown = (filled as f32 * eased).round() as usize;
+        let y = area.y + row as u16;
+        if y >= area.bottom() {
+            continue;
+        }
+        let x = |offset: usize| {
+            Some(area.x + u16::try_from(col + offset).ok()?).filter(|x| *x < area.right())
+        };
+        for cell in shown..filled {
+            if let Some(x) = x(cell) {
+                buf[(x, y)].set_symbol("░").set_fg(theme::RAIL);
+            }
+        }
+        if t < 1.0
+            && let Some(x) = shown.checked_sub(1).and_then(x)
+        {
+            buf[(x, y)].set_fg(theme::FOREGROUND);
+        }
+        let count = format!(" {:>3}%", (percentage as f32 * eased).round() as u32);
+        if let Some(x) = x(BAR) {
+            buf.set_stringn(x, y, count, (area.right() - x) as usize, theme::muted());
+        }
+        if let Some(x) = check.and_then(x)
+            && (RUN as u128..RUN as u128 + 250).contains(&ms)
+        {
+            buf[(x, y)].set_style(
+                Style::new()
+                    .fg(theme::BACKGROUND)
+                    .bg(theme::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
     }
 }
 

@@ -417,8 +417,15 @@ impl LogScreen {
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
                 frame.render_widget(Paragraph::new(&lines[..]), area);
-                if let Some((spark, elapsed)) = id.and_then(|id| timers.spark(&id, at)) {
-                    feed::spark(frame.buffer_mut(), area, &lines, rows, spark, elapsed);
+                for (spark, elapsed) in id.map(|id| timers.sparks(&id, at)).unwrap_or_default() {
+                    feed::spark(
+                        frame.buffer_mut(),
+                        area,
+                        &lines,
+                        rows.clone(),
+                        spark,
+                        elapsed,
+                    );
                 }
                 if pane.is_none() {
                     self.peek = None;

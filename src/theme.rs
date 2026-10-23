@@ -165,6 +165,9 @@ pub struct Icons {
     pub link: &'static str,
     pub image: &'static str,
     pub poll: &'static str,
+    pub sparkle: &'static str,
+    pub twinkle: &'static str,
+    pub mote: &'static str,
 }
 
 // Most monospace fonts lack ★, ❝ and ⇗, so terminals draw them from a fallback font at a fraction of
@@ -177,6 +180,9 @@ const NERD: Icons = Icons {
     link: "\u{f08e}",
     image: "\u{f03e}",
     poll: "\u{f080}",
+    sparkle: "\u{f0ae2}",
+    twinkle: "\u{f0ae3}",
+    mote: "\u{f09de}",
 };
 
 const PLAIN: Icons = Icons {
@@ -187,6 +193,9 @@ const PLAIN: Icons = Icons {
     link: "⇗",
     image: "▣",
     poll: "≡",
+    sparkle: "✦",
+    twinkle: "✧",
+    mote: "·",
 };
 
 /// Nerd Font icons, or plain Unicode when `TTYL_ICONS=plain`.
