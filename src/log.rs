@@ -176,6 +176,8 @@ impl LogScreen {
             | Action::Confirm
             | Action::Pick(_)
             | Action::Choose(_)
+            | Action::Next
+            | Action::Previous
             | Action::Commit(_)
             | Action::Profile
             | Action::Compose

@@ -18,6 +18,9 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::layout::Size;
+use ratatui_image::FontSize;
+use ratatui_image::picker::Picker;
 use ttyl::api::{self, Call, Client};
 use ttyl::attach::{self, Attachment};
 use ttyl::desktop::{self, Clipped};
@@ -25,7 +28,7 @@ use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{Effect, Engine, Event, WORKERS};
 use ttyl::sched::Ticket;
-use ttyl::{editor, signin, welcome};
+use ttyl::{editor, signin, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 
@@ -57,8 +60,10 @@ fn start() -> Result<(), String> {
         key,
     ));
     let mut terminal = ratatui::init();
+    // Asked before input is read on another thread, which would take the terminal's answer.
+    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
     let _ = execute!(io::stdout(), EnableBracketedPaste);
-    let result = run(&mut terminal, client);
+    let result = run(&mut terminal, client, picker);
     let _ = execute!(io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     result.map_err(|error| error.to_string())
@@ -72,9 +77,10 @@ struct Runtime {
     input: Sender<Pause>,
     device_name: String,
     drafts: Option<PathBuf>,
+    font: FontSize,
 }
 
-fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
+fn run(terminal: &mut DefaultTerminal, client: Arc<Client>, picker: Picker) -> io::Result<()> {
     let (events, inbox) = mpsc::channel();
     let jobs = spawn_workers(Arc::clone(&client), events.clone());
     let input = spawn_input(events.clone());
@@ -85,7 +91,10 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>) -> io::Result<()> {
         prune(dir, &saved);
     }
     let mut runtime = Runtime {
-        engine: Engine::new(device_name.clone(), Instant::now()).with_drafts(Drafts::new(saved)),
+        font: picker.font_size(),
+        engine: Engine::new(device_name.clone(), Instant::now())
+            .with_drafts(Drafts::new(saved))
+            .with_picker(picker),
         client,
         events,
         jobs,
@@ -146,6 +155,19 @@ impl Runtime {
                 }
                 Effect::Copy(text) => desktop::copy(&text),
                 Effect::Open(url) => desktop::open(&url),
+                Effect::Fetch(url) => {
+                    let cells = terminal.size().unwrap_or_default();
+                    let bound = Size::new(
+                        cells.width.saturating_mul(self.font.width),
+                        cells.height.saturating_mul(self.font.height),
+                    );
+                    let (client, events) = (Arc::clone(&self.client), self.events.clone());
+                    thread::spawn(move || {
+                        let image = (client.picture(&url).map_err(|error| error.to_string()))
+                            .and_then(|bytes| viewer::decode(&bytes, bound));
+                        let _ = events.send(Event::Fetched(url, image));
+                    });
+                }
                 Effect::Edit(text) => {
                     let event = match self.edit(terminal, &text) {
                         Some(edited) => Event::Edited(edited),

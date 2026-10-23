@@ -51,6 +51,21 @@ composer with `esc`, your draft is kept, even after you quit. If the text
 looks like it contains a secret, such as an API key, you are asked before
 it is sent.
 
+A new commit can carry a poll or up to three images. In the composer,
+press `ctrl-p` to add a poll. `tab` moves between its options, and `← →`
+changes how long it runs. To attach an image, drop the file on the
+terminal, or press `ctrl-v` to paste one you copied. Each image gets its
+own description line, and `backspace` on an empty one removes the image.
+
+Press `v` on a commit with a poll to vote. Pick an option with `j` `k` or
+its number, then `enter`. A vote is final.
+
+Press `i` on a commit with images to view them inside the terminal. Use
+`h` `l` to flip between them, `O` to open the one shown in the browser, and
+`esc` to close. Images look sharpest in a terminal that can draw them, such
+as Ghostty, kitty or WezTerm. Inside tmux, turn on `allow-passthrough`.
+Other terminals show a blockier version.
+
 ## Keys
 
 The bottom line shows the keys you need most. Press `?` for all of them.
@@ -68,6 +83,8 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 | `c` | Write a commit |
 | `r` `q` | Reply or quote |
 | `s` | Star |
+| `v` | Vote in a poll |
+| `i` | View a commit's images |
 | `f` | Follow the author |
 | `y` | Copy the link |
 | `O` | Open in the browser |
@@ -77,6 +94,25 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 | `z` | Screensaver |
 | `?` | Help |
 | `Q` | Quit |
+
+In the composer:
+
+| Key | Action |
+| --- | --- |
+| `ctrl-s` | Send |
+| `ctrl-e` | Write in your own editor |
+| `ctrl-p` | Add a poll, or take it off |
+| `ctrl-v` | Attach the image you copied |
+| `tab` | Move to the poll or the images |
+| `esc` | Close and keep the draft |
+
+In the image viewer:
+
+| Key | Action |
+| --- | --- |
+| `h` `l` | Previous or next image |
+| `O` | Open the image in the browser |
+| `esc` `q` `i` | Close |
 
 ## Good to know
 

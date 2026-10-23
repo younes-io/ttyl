@@ -7,7 +7,9 @@ license = "Apache-2.0"
 [dependencies]
 base64ct = { version = "1.8.3", features = ["alloc"] }
 chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 ratatui = "0.30.2"
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 ssh-key = { version = "0.6.7", default-features = false, features = ["ed25519", "getrandom", "std"] }

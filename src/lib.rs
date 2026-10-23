@@ -27,4 +27,5 @@ pub mod store;
 pub mod text;
 pub mod theme;
 pub mod thread;
+pub mod viewer;
 pub mod welcome;

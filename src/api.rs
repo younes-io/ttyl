@@ -605,6 +605,19 @@ impl Client {
             .map_err(|error| Error::Http(error.into()))
     }
 
+    /// The bytes of an image a commit carries. Its address is public, so the request goes unsigned.
+    pub fn picture(&self, url: &str) -> Result<Vec<u8>, Error> {
+        let mut response = self.agent.get(url).call().map_err(Error::Http)?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            return Err(Error::Image(format!("/dev/null answered {status} for it.")));
+        }
+        (response.body_mut().with_config())
+            .limit(attach::MAX_BYTES)
+            .read_to_vec()
+            .map_err(Error::Http)
+    }
+
     fn exchange(&self, request: Request<Vec<u8>>) -> Result<(u16, String), Error> {
         let mut response = self.agent.run(request).map_err(Error::Http)?;
         let status = response.status().as_u16();

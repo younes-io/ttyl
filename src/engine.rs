@@ -26,7 +26,7 @@ use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
     HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PROFILE_PEOPLE_SCOPES,
     PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope,
-    THREAD_SCOPES, VOTE_SCOPES,
+    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
@@ -41,7 +41,9 @@ use crate::signin::Callback;
 use crate::store::{Node, Slot, Store};
 use crate::theme;
 use crate::thread::ThreadScreen;
+use crate::viewer::Gallery;
 use crate::welcome::{self, Step, Wait};
+use ratatui_image::picker::Picker;
 
 pub const WORKERS: usize = 2;
 pub const AHEAD: usize = 5;
@@ -69,6 +71,8 @@ pub enum Event {
     Read(Vec<(PathBuf, Look)>, Option<String>),
     /// The clipboard held nothing to attach, and why.
     Unclipped(String),
+    /// An image fetched for the viewer, or why it couldn't be.
+    Fetched(String, Result<image::DynamicImage, String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -85,6 +89,8 @@ pub enum Effect {
     Read(Vec<PathBuf>, Option<String>),
     /// Takes an image, or the files or text, from the clipboard.
     Clip,
+    /// Fetches an image for the viewer.
+    Fetch(String),
 }
 
 pub enum Phase {
@@ -141,6 +147,11 @@ enum Overlay {
     Vote {
         id: CommitId,
         options: usize,
+    },
+    /// Looking at image `at` of the ones in `id`.
+    Viewer {
+        id: CommitId,
+        at: usize,
     },
 }
 
@@ -331,6 +342,10 @@ impl Session {
         None
     }
 
+    fn images(&self, id: &CommitId) -> &[model::Image] {
+        (self.store.row(id)).map_or(&[], |row| row.media.images.as_slice())
+    }
+
     fn can(&self, action: Action) -> bool {
         if action == Action::Poll {
             return self.overlay.is_none()
@@ -339,6 +354,12 @@ impl Session {
         if let Some(Overlay::Help { last, .. }) = self.overlay {
             return match action {
                 Action::Down | Action::Up => last > 0,
+                _ => true,
+            };
+        }
+        if let Some(Overlay::Viewer { id, .. }) = &self.overlay {
+            return match action {
+                Action::Next | Action::Previous => self.images(id).len() > 1,
                 _ => true,
             };
         }
@@ -351,6 +372,7 @@ impl Session {
             Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
+            Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
@@ -371,9 +393,13 @@ impl Session {
             {
                 InputMode::Text
             }
-            Some(Overlay::Help { .. } | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {
-                InputMode::Commands
-            }
+            Some(
+                Overlay::Help { .. }
+                | Overlay::Reason { .. }
+                | Overlay::Vote { .. }
+                | Overlay::Viewer { .. },
+            )
+            | None => InputMode::Commands,
         }
     }
 
@@ -404,7 +430,13 @@ impl Session {
                 }
                 _ => {}
             },
-            Some(Overlay::Help { .. } | Overlay::Reason { .. } | Overlay::Vote { .. }) | None => {}
+            Some(
+                Overlay::Help { .. }
+                | Overlay::Reason { .. }
+                | Overlay::Vote { .. }
+                | Overlay::Viewer { .. },
+            )
+            | None => {}
         }
     }
 
@@ -492,6 +524,17 @@ impl Session {
                     }),
                 )
             }
+            (Overlay::Viewer { id, at }, Action::Next | Action::Previous) => {
+                let count = self.images(&id).len().max(1);
+                let by = if action == Action::Next { 1 } else { count - 1 };
+                (
+                    Some(Overlay::Viewer {
+                        at: (at + by) % count,
+                        id,
+                    }),
+                    None,
+                )
+            }
             (overlay, _) => (Some(overlay), None),
         };
         if !matches!(next, Some(Overlay::Vote { .. })) && self.store.picking().is_some() {
@@ -516,7 +559,8 @@ impl Session {
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
                 | Overlay::Vote { .. }
-                | Overlay::Details { .. },
+                | Overlay::Details { .. }
+                | Overlay::Viewer { .. },
             )
             | None => None,
         }
@@ -654,6 +698,7 @@ pub struct Engine {
     start: Instant,
     drafts: Drafts,
     saver: Option<saver::Saver>,
+    gallery: Gallery,
 }
 
 impl Engine {
@@ -671,6 +716,15 @@ impl Engine {
             start: now,
             drafts: Drafts::default(),
             saver: None,
+            gallery: Gallery::new(Picker::halfblocks()),
+        }
+    }
+
+    /// Draws images the way this terminal knows best, found by asking it.
+    pub fn with_picker(self, picker: Picker) -> Self {
+        Engine {
+            gallery: Gallery::new(picker),
+            ..self
         }
     }
 
@@ -776,6 +830,10 @@ impl Engine {
             Event::Edited(text) => self.edit(|composer| composer.replace(&text)),
             Event::Read(looks, pasted) => {
                 self.edit(|composer| composer.read(looks, pasted.as_deref()))
+            }
+            Event::Fetched(url, image) => {
+                self.gallery.fetched(url, image);
+                Vec::new()
             }
             Event::Unclipped(why) => {
                 if let Phase::Ready(session) = &mut self.phase
@@ -1085,6 +1143,12 @@ impl Engine {
     fn act(&mut self, action: Action, now: Instant) -> Vec<Effect> {
         match (&mut self.phase, action) {
             (_, Action::Quit) => return vec![Effect::Quit],
+            (Phase::Ready(session), Action::Commit(Act::Browse))
+                if let Some(Overlay::Viewer { id, at }) = &session.overlay =>
+            {
+                let url = session.images(id).get(*at).map(|image| image.url.clone());
+                return url.map(Effect::Open).into_iter().collect();
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1332,15 +1396,18 @@ impl Engine {
                 vec![Effect::Open(url)],
             ),
             Act::Images => {
-                let urls: Vec<String> = (session.store.row(&id).into_iter())
-                    .flat_map(|row| row.media.images.iter().map(|image| image.url.clone()))
+                let urls: Vec<String> = (session.images(&id).iter())
+                    .map(|image| image.url.clone())
                     .collect();
-                let said = match urls.len() {
-                    0 => None,
-                    1 => Some("opened the image in the browser".to_owned()),
-                    n => Some(format!("opened {n} images in the browser")),
-                };
-                (said, urls.into_iter().map(Effect::Open).collect())
+                session.overlay = Some(Overlay::Viewer { id, at: 0 });
+                (
+                    None,
+                    self.gallery
+                        .want(&urls)
+                        .into_iter()
+                        .map(Effect::Fetch)
+                        .collect(),
+                )
             }
             Act::Delete => {
                 session.overlay = Some(Overlay::Delete(id));
@@ -2043,6 +2110,10 @@ impl Engine {
                         let at = Reason::ALL.iter().position(|each| each == reason);
                         popup::dim(frame.buffer_mut(), screen, card);
                         draw_report(frame, screen, card, id, at.unwrap_or(0), Some(text));
+                    }
+                    Some(Overlay::Viewer { id, at }) => {
+                        popup::dim(frame.buffer_mut(), screen, None);
+                        (self.gallery).draw(frame, screen, id, session.images(id), *at);
                     }
                     Some(Overlay::Delete(_) | Overlay::Vote { .. }) | None => {}
                 }

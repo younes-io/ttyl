@@ -28,6 +28,8 @@ pub enum Action {
     Confirm,
     Pick(Reason),
     Choose(usize),
+    Next,
+    Previous,
     Compose,
     Send,
     Editor,
@@ -58,7 +60,7 @@ pub enum Act {
     Reply,
     Quote,
     Vote,
-    /// Opens every image the commit has.
+    /// Shows the commit's images.
     Images,
 }
 
@@ -82,6 +84,7 @@ pub enum Scope {
     Report,
     Details,
     Vote,
+    Viewer,
     Composer,
     Secret,
     Rules,
@@ -93,6 +96,7 @@ pub const HELP_SCOPES: &[Scope] = &[Scope::Help, Scope::Always];
 pub const CONFIRM_SCOPES: &[Scope] = &[Scope::Confirm, Scope::Always];
 pub const REPORT_SCOPES: &[Scope] = &[Scope::Report, Scope::Always];
 pub const VOTE_SCOPES: &[Scope] = &[Scope::Vote, Scope::Always];
+pub const VIEWER_SCOPES: &[Scope] = &[Scope::Viewer, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
@@ -153,6 +157,7 @@ pub const UNIONS: &[&[Scope]] = &[
     CONFIRM_SCOPES,
     REPORT_SCOPES,
     VOTE_SCOPES,
+    VIEWER_SCOPES,
     DETAILS_SCOPES,
     COMPOSER_SCOPES,
     SECRET_SCOPES,
@@ -605,8 +610,8 @@ pub const TABLE: &[Binding] = &[
         scope: Scope::Commit,
         chords: &[&[Key::ch('i')]],
         action: Action::Commit(Act::Images),
-        hint: Some("i images"),
-        help: "open the images",
+        hint: Some("i view"),
+        help: "view the images",
     },
     Binding {
         scope: Scope::Confirm,
@@ -719,6 +724,34 @@ pub const TABLE: &[Binding] = &[
         action: Action::Close,
         hint: Some("esc cancel"),
         help: "cancel",
+    },
+    Binding {
+        scope: Scope::Viewer,
+        chords: &[&[Key::ch('l')], &[Key::code(KeyCode::Right)]],
+        action: Action::Next,
+        hint: Some("h/l flip"),
+        help: "next image",
+    },
+    Binding {
+        scope: Scope::Viewer,
+        chords: &[&[Key::ch('h')], &[Key::code(KeyCode::Left)]],
+        action: Action::Previous,
+        hint: None,
+        help: "previous image",
+    },
+    Binding {
+        scope: Scope::Viewer,
+        chords: &[&[Key::ch('O')]],
+        action: Action::Commit(Act::Browse),
+        hint: Some("O browser"),
+        help: "open the image in the browser",
+    },
+    Binding {
+        scope: Scope::Viewer,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::ch('q')], &[Key::ch('i')]],
+        action: Action::Close,
+        hint: Some("esc close"),
+        help: "close",
     },
     Binding {
         scope: Scope::Details,

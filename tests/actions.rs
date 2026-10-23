@@ -862,7 +862,7 @@ fn on_a_short_terminal_the_report_dialog_keeps_its_field_and_the_hint_line() {
 }
 
 #[test]
-fn i_opens_every_image_the_commit_has() {
+fn i_shows_the_commit_s_images_in_the_terminal() {
     let at = Instant::now();
     let mut engine = boot(at);
     let at_desk = page(Log::Latest)
@@ -874,9 +874,45 @@ fn i_opens_every_image_the_commit_has() {
     let effects = press(&mut engine, "i", at);
     let url =
         |n| format!("https://dev-null.sh/commit-images/7a000000-0000-4000-8000-00000000070{n}");
-    assert_eq!(effects, [Effect::Open(url(1)), Effect::Open(url(2))]);
-    assert_eq!(footer(&mut engine, at), " opened 2 images in the browser");
-    assert_eq!(help_entry(&mut engine, at, "open the images"), Some(true));
+    assert_eq!(effects, [Effect::Fetch(url(1)), Effect::Fetch(url(2))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "1 of 2"), "{rows:#?}");
+    assert!(contains(&rows, "loading…"), "{rows:#?}");
+    assert_eq!(
+        footer(&mut engine, at),
+        " h/l flip  O browser  esc close  Q quit"
+    );
+
+    let picture = image::DynamicImage::new_rgb8(40, 20);
+    engine.update(Event::Fetched(url(1), Ok(picture)), at);
+    assert!(!contains(&screen(&mut engine, 100, 30, at), "loading…"));
+
+    press(&mut engine, "l", at);
+    assert!(contains(&screen(&mut engine, 100, 30, at), "2 of 2"));
+    let failed = Err("/dev/null answered 404 for it.".to_owned());
+    engine.update(Event::Fetched(url(2), failed), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "can't show this image"), "{rows:#?}");
+    assert_eq!(press(&mut engine, "O", at), [Effect::Open(url(2))]);
+    press(&mut engine, "l", at);
+    assert!(contains(&screen(&mut engine, 100, 30, at), "1 of 2"));
+
+    for (n, close) in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('i')]
+        .into_iter()
+        .enumerate()
+    {
+        tap(&mut engine, close, at);
+        assert!(!contains(&screen(&mut engine, 100, 30, at), "of 2"), "{n}");
+        let refetched = press(&mut engine, "i", at);
+        let expected: &[Effect] = if n == 0 {
+            &[Effect::Fetch(url(2))]
+        } else {
+            &[]
+        };
+        assert_eq!(refetched, expected, "only the failed one, once");
+    }
+    tap(&mut engine, KeyCode::Esc, at);
+    assert_eq!(help_entry(&mut engine, at, "view the images"), Some(true));
     press(&mut engine, "k", at);
     assert!(press(&mut engine, "i", at).is_empty());
 }
