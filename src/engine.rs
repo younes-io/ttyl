@@ -303,15 +303,20 @@ impl Session {
                                 .is_some_and(|poll| !poll.is_closed && !poll.has_voted)
                         }
                         Act::Images => !row.media.images.is_empty(),
+                        Act::OpenQuote => matches!(row.quoted_commit, Some(Shown::Live(_))),
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow => commit.author.username != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
-                Act::Star | Act::Pastel | Act::Delete | Act::Report | Act::Vote | Act::Images => {
-                    false
-                }
+                Act::Star
+                | Act::Pastel
+                | Act::Delete
+                | Act::Report
+                | Act::Vote
+                | Act::Images
+                | Act::OpenQuote => false,
             },
             Some(Selected::Person(user)) => act == Act::Follow && user.username != *me,
             None => false,
@@ -1464,6 +1469,18 @@ impl Engine {
                         .map(Effect::Fetch)
                         .collect(),
                 )
+            }
+            Act::OpenQuote => {
+                if let Some(Shown::Live(quote)) =
+                    (session.store.row(&id)).and_then(|row| row.quoted_commit.as_ref())
+                {
+                    let id = quote.commit.id.clone();
+                    session
+                        .stack
+                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
+                    fetch_thread(&mut self.sched, &mut self.timers, id);
+                }
+                (None, Vec::new())
             }
             Act::Delete => {
                 session.overlay = Some(Overlay::Delete(id));

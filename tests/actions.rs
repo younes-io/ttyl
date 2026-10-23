@@ -916,3 +916,37 @@ fn i_shows_the_commit_s_images_in_the_terminal() {
     press(&mut engine, "k", at);
     assert!(press(&mut engine, "i", at).is_empty());
 }
+
+#[test]
+fn gq_opens_the_quoted_commit_only_while_it_is_there() {
+    let at = Instant::now();
+    let margaret = CommitId("4e5f6071-0000-4000-8000-000000000401".to_owned());
+    let mut engine = boot(at);
+    press(&mut engine, "2j", at);
+    assert!(contains(&screen(&mut engine, 160, 40, at), "gq quoted"));
+    assert_eq!(
+        help_entry(&mut engine, at, "gq  open the quoted commit"),
+        Some(true)
+    );
+    let effects = press(&mut engine, "gq", at);
+    assert!(
+        runs(&effects).contains(&&Call::Commit(margaret)),
+        "{effects:?}"
+    );
+    answer(&mut engine, effects, at);
+    assert!(contains(
+        &screen(&mut engine, 100, 40, at),
+        "notes from rewriting our scheduler"
+    ));
+
+    for rows in ["2jj", "2jjjjjjjjj"] {
+        let mut engine = boot(at);
+        press(&mut engine, rows, at);
+        assert!(!contains(&screen(&mut engine, 160, 40, at), "gq quoted"));
+        assert_eq!(
+            help_entry(&mut engine, at, "gq  open the quoted commit"),
+            Some(false)
+        );
+        assert!(runs(&press(&mut engine, "gq", at)).is_empty());
+    }
+}

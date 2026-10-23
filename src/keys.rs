@@ -62,6 +62,8 @@ pub enum Act {
     Vote,
     /// Shows the commit's images.
     Images,
+    /// Opens the thread of the commit it quotes.
+    OpenQuote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,6 +579,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Images),
         hint: Some("i view"),
         help: "view the images",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('g'), Key::ch('q')]],
+        action: Action::Commit(Act::OpenQuote),
+        hint: Some("gq quoted"),
+        help: "open the quoted commit",
     },
     Binding {
         scope: Scope::Confirm,
