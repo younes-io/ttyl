@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use common::{
     account, answer, boot, boot_as, buffer, commit, contains, help_entry, marked, page, press,
-    profile, runs, screen, secs, tap,
+    profile, reload, runs, screen, secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
@@ -290,7 +290,7 @@ fn a_star_that_could_not_reach_the_server_stays_and_is_sent_once_it_is_back() {
         ("28".to_owned(), true)
     );
 
-    let effects = press(&mut engine, "R", at + secs(1));
+    let effects = reload(&mut engine, at + secs(1));
     let [Effect::Run(page, Call::Page(log))] = effects.as_slice() else {
         panic!("{effects:?}");
     };

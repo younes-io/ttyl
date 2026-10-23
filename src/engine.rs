@@ -2148,7 +2148,7 @@ impl Engine {
 
 fn news_of(count: u32) -> String {
     let noun = if count == 1 { "commit" } else { "commits" };
-    format!("↑ {count} new {noun} · R to load")
+    format!("↑ {count} new {noun} · ctrl-r to load")
 }
 
 /// The keys help lists, the box they go in, and the furthest row the list can scroll to.

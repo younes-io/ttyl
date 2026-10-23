@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{answer, boot, contains, press, runs, screen, secs, tap};
+use common::{answer, boot, contains, press, reload, runs, screen, secs, tap};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error};
 use ttyl::draft::Target;
@@ -152,7 +152,7 @@ fn a_commit_with_no_answer_is_not_resent_when_the_connection_comes_back() {
     refuse(&mut engine, ticket, timed_out(), at);
     let effects = tap(&mut engine, KeyCode::Esc, at);
     assert!(runs(&effects).is_empty());
-    let mut effects = press(&mut engine, "R", at);
+    let mut effects = reload(&mut engine, at);
     effects.extend(engine.pump(at));
     assert!(
         !runs(&effects).is_empty(),

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use common::{
     account, boot, boot_serving, contains, following_nobody, help_entry, key, open_browser, page,
-    press, runs, screen, secs, serve,
+    press, reload, runs, screen, secs, serve,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Call, Error, Reply};
@@ -131,7 +131,7 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");
-    for shown in ["following", "refresh this log", "↓ more", "j/k scroll"] {
+    for shown in ["following", "reload everything", "↓ more", "j/k scroll"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
     assert!(contains(&rows, "? close"), "{rows:#?}");
@@ -181,7 +181,7 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
 fn a_429_holds_every_call_until_retry_after_passes() {
     let at = Instant::now();
     let mut engine = boot(at);
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -200,7 +200,8 @@ fn a_429_holds_every_call_until_retry_after_passes() {
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "rate limited, retrying in 7s"), "{rows:#?}");
 
-    assert!(press(&mut engine, "2R", at + secs(1)).is_empty());
+    assert!(press(&mut engine, "2", at + secs(1)).is_empty());
+    assert!(reload(&mut engine, at + secs(1)).is_empty());
     assert!(engine.pump(at + secs(6)).is_empty());
     assert_eq!(engine.next_wake(at + secs(6)), Some(at + secs(7)));
     assert_eq!(
@@ -220,7 +221,7 @@ fn maintenance_before_the_first_load_fills_the_screen_and_retries() {
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
     assert!(contains(&rows, "retrying in 30s"), "{rows:#?}");
-    assert!(contains(&rows, "R retry now  Q quit"), "{rows:#?}");
+    assert!(contains(&rows, "ctrl-r retry now  Q quit"), "{rows:#?}");
     assert!(!contains(&rows, "following"), "no tab bar: {rows:#?}");
 
     assert_eq!(
@@ -233,7 +234,7 @@ fn maintenance_before_the_first_load_fills_the_screen_and_retries() {
 
     let (mut engine, me) = fresh(at);
     engine.update(Event::Reply(me, Err(maintenance())), at);
-    assert_eq!(runs(&press(&mut engine, "R", at)), [&Call::Me]);
+    assert_eq!(runs(&reload(&mut engine, at)), [&Call::Me]);
     assert!(
         engine.pump(at + secs(30)).is_empty(),
         "the retry the user took replaces the timer"
@@ -462,7 +463,7 @@ fn revoked_mid_flight(at: Instant) -> (Engine, ttyl::sched::Ticket) {
         Event::Reply(*since, Ok(Reply::Page(page(Log::Following)))),
         at + secs(30),
     );
-    let effects = press(&mut engine, "R", at + secs(30));
+    let effects = reload(&mut engine, at + secs(30));
     let [Effect::Run(following, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -574,7 +575,7 @@ fn a_denied_link_says_so_and_offers_to_try_again() {
 fn refresh_toasts_then_the_hints_come_back() {
     let at = Instant::now();
     let mut engine = boot(at);
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -612,7 +613,7 @@ fn a_refresh_folded_into_a_call_in_flight_still_answers_the_user() {
         panic!("{effects:?}");
     };
     assert!(
-        press(&mut engine, "R", at).is_empty(),
+        reload(&mut engine, at).is_empty(),
         "the page is already on its way"
     );
     engine.update(
@@ -647,7 +648,7 @@ fn a_refresh_folded_into_a_call_in_flight_still_answers_the_user() {
     else {
         panic!("{effects:?}");
     };
-    press(&mut engine, "R", at);
+    reload(&mut engine, at);
     engine.update(Event::Reply(*following, Err(maintenance())), at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));
     assert!(contains(&rows, "the site is in maintenance"), "{rows:#?}");
@@ -681,7 +682,7 @@ fn quit_works_in_every_phase() {
 fn another_logs_failure_stays_off_the_active_logs_footer() {
     let at = Instant::now();
     let mut engine = boot(at);
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -709,7 +710,7 @@ fn a_failed_refresh_keeps_its_error_until_its_own_reload_answers() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "2", at);
-    let effects = press(&mut engine, "R", at + secs(10));
+    let effects = reload(&mut engine, at + secs(10));
     let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -841,7 +842,7 @@ fn an_offline_older_page_speaks_only_at_the_end_of_the_feed() {
 fn the_help_overlay_footer_names_the_key_that_closes_it() {
     let at = Instant::now();
     let mut engine = boot(at);
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -859,7 +860,7 @@ fn a_failing_footer_keeps_help_wherever_a_working_one_does() {
     let at = Instant::now();
     let mut working = boot(at);
     let mut failing = boot(at);
-    let effects = press(&mut failing, "R", at);
+    let effects = reload(&mut failing, at);
     let [Effect::Run(ticket, Call::Page(Log::Following))] = effects.as_slice() else {
         panic!("{effects:?}");
     };

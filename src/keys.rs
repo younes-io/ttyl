@@ -320,13 +320,6 @@ pub const TABLE: &[Binding] = &[
         help: "next log",
     },
     Binding {
-        scope: Scope::Log,
-        chords: &[&[Key::ch('R')]],
-        action: Action::Refresh,
-        hint: None,
-        help: "refresh this log",
-    },
-    Binding {
         scope: Scope::Thread,
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
@@ -369,13 +362,6 @@ pub const TABLE: &[Binding] = &[
         help: "next log",
     },
     Binding {
-        scope: Scope::Thread,
-        chords: &[&[Key::ch('R')]],
-        action: Action::Refresh,
-        hint: None,
-        help: "reload this thread",
-    },
-    Binding {
         scope: Scope::Inbox,
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
@@ -404,13 +390,6 @@ pub const TABLE: &[Binding] = &[
         help: "back",
     },
     Binding {
-        scope: Scope::Inbox,
-        chords: &[&[Key::ch('R')]],
-        action: Action::Refresh,
-        hint: None,
-        help: "reload notifications",
-    },
-    Binding {
         scope: Scope::Group,
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
@@ -423,13 +402,6 @@ pub const TABLE: &[Binding] = &[
         action: Action::Back,
         hint: Some("esc back"),
         help: "back",
-    },
-    Binding {
-        scope: Scope::Group,
-        chords: &[&[Key::ch('R')]],
-        action: Action::Refresh,
-        hint: None,
-        help: "reload this group",
     },
     Binding {
         scope: Scope::Profile,
@@ -465,13 +437,6 @@ pub const TABLE: &[Binding] = &[
         action: Action::Back,
         hint: Some("esc back"),
         help: "back",
-    },
-    Binding {
-        scope: Scope::Profile,
-        chords: &[&[Key::ch('R')]],
-        action: Action::Refresh,
-        hint: None,
-        help: "reload this profile",
     },
     Binding {
         scope: Scope::Profile,
@@ -873,6 +838,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Global,
+        chords: &[&[Key::ctrl('r')]],
+        action: Action::Refresh,
+        hint: None,
+        help: "reload everything",
+    },
+    Binding {
+        scope: Scope::Global,
         chords: &[&[Key::ch('z')]],
         action: Action::Saver,
         hint: None,
@@ -922,9 +894,9 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Splash,
-        chords: &[&[Key::ch('R')]],
+        chords: &[&[Key::ctrl('r')]],
         action: Action::Refresh,
-        hint: Some("R retry now"),
+        hint: Some("ctrl-r retry now"),
         help: "retry now",
     },
     Binding {

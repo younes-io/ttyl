@@ -4,14 +4,14 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use common::{
-    account, boot_serving, contains, from_world, older, press, replies, runs, screen, tap,
+    account, boot_serving, contains, from_world, older, press, reload, replies, runs, screen, tap,
     world_log,
 };
+use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::clock::POLL;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{CommitId, Log, LogPage, Shown};
-use ratatui::crossterm::event::KeyCode;
 
 const ADA: &str = "9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61";
 const PAGED: &str = "4e5f6071-0000-4000-8000-000000000401";
@@ -166,7 +166,7 @@ fn opening_spends_the_reserve_and_nested_lists_wait_for_it() {
     let at = Instant::now();
     let mut engine = boot_serving(at, world_pages);
     for _ in 0..80 {
-        let effects = tap(&mut engine, KeyCode::Char('R'), at);
+        let effects = reload(&mut engine, at);
         settle(&mut engine, effects, HEIGHT, at);
     }
     let effects = tap(&mut engine, KeyCode::Enter, at);
@@ -309,7 +309,7 @@ fn a_failed_list_retries_on_its_timer_and_clears_only_on_its_own_success() {
 fn a_failed_reload_keeps_what_was_listed() {
     let (mut engine, at) = opened("", HEIGHT);
     let before = screen(&mut engine, WIDTH, HEIGHT, at);
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let list = replies_of(ADA, None);
     let effects = reply(&mut engine, effects, &list, Err(server_error()), at);
     settle(&mut engine, effects, HEIGHT, at);
@@ -339,7 +339,7 @@ fn refresh_reloads_the_commit_and_every_loaded_list() {
         })
         .collect();
     assert!(lists.len() > 3, "{lists:?}");
-    let effects = press(&mut engine, "R", at);
+    let effects = reload(&mut engine, at);
     let calls = settle(&mut engine, effects, HEIGHT, at);
     assert!(calls.contains(&Call::Commit(id(ADA))));
     for owner in lists {
@@ -400,7 +400,7 @@ fn refreshing_the_log_reloads_every_list_in_the_peeked_thread() {
         })
         .collect();
     assert!(lists.len() > 1, "{lists:?}");
-    let effects = press(&mut engine, "R", later);
+    let effects = reload(&mut engine, later);
     let calls = settle_at(&mut engine, effects, WIDE, HEIGHT, later);
     assert!(calls.contains(&Call::Page(Log::Following)), "{calls:?}");
     assert!(calls.contains(&Call::Commit(id(ADA))), "{calls:?}");

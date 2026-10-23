@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{account, contains, log_of, not_found, press, profile, screen, tap};
+use common::{account, contains, log_of, not_found, press, profile, reload, screen, tap};
 use proptest::prelude::*;
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
@@ -240,6 +240,7 @@ fn hit(engine: &mut Engine, key: &str, at: Instant) -> Vec<Effect> {
         "enter" => tap(engine, KeyCode::Enter, at),
         "esc" => tap(engine, KeyCode::Esc, at),
         "backspace" => tap(engine, KeyCode::Backspace, at),
+        "R" => reload(engine, at),
         keys => press(engine, keys, at),
     }
 }

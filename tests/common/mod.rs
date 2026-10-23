@@ -388,6 +388,16 @@ pub fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
 
+/// Presses ctrl-r, which reloads everything.
+pub fn reload(engine: &mut Engine, at: Instant) -> Vec<Effect> {
+    let mut effects = engine.update(
+        Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+        at,
+    );
+    effects.extend(engine.pump(at));
+    effects
+}
+
 pub fn tap(engine: &mut Engine, code: KeyCode, at: Instant) -> Vec<Effect> {
     let mut effects = engine.update(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), at);
     effects.extend(engine.pump(at));

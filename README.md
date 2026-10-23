@@ -36,7 +36,7 @@ There are three logs. Press `1`, `2` or `3` to switch between them.
 - **Latest** shows everyone, newest first.
 - **Trending** shows what is popular right now.
 
-When new commits arrive, a note appears at the top. Press `R` to load them.
+When new commits arrive, a note appears at the top. Press `ctrl-r` to load them.
 
 Press `enter` to open a commit and read its replies, and `esc` to go back.
 On a terminal at least 110 columns wide, the thread also appears beside the
@@ -78,7 +78,7 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 | `enter` | Open |
 | `esc` | Go back |
 | `1` `2` `3` `tab` | Switch log |
-| `R` | Reload |
+| `ctrl-r` | Reload everything |
 | `gn` | Notifications |
 | `c` | Write a commit |
 | `r` `q` | Reply or quote |

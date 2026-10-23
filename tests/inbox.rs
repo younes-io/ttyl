@@ -2,7 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{account, boot, contains, press, runs, screen, secs, tap};
+use common::{account, boot, contains, press, reload, runs, screen, secs, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
@@ -308,7 +308,7 @@ fn a_failed_reload_keeps_the_rows_and_says_so_in_the_hint() {
     let at = Instant::now();
     let mut engine = boot(at);
     opened(&mut engine, at);
-    let (ticket, _, _) = list_call(&press(&mut engine, "R", at));
+    let (ticket, _, _) = list_call(&reload(&mut engine, at));
     engine.update(Event::Reply(ticket, Err(Error::Unexpected(502))), at);
 
     let rows = screen(&mut engine, 100, 30, at);
@@ -606,7 +606,7 @@ fn a_refresh_says_so_when_the_list_lands_and_opening_stays_quiet() {
         !contains(&screen(&mut engine, 100, 30, at), "refreshed"),
         "opening is not a refresh"
     );
-    let (ticket, _, _) = list_call(&press(&mut engine, "R", at + secs(1)));
+    let (ticket, _, _) = list_call(&reload(&mut engine, at + secs(1)));
     land(
         &mut engine,
         ticket,

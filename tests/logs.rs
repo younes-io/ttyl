@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{account, boot, contains, cursor, older, page, press, runs, screen, secs};
+use common::{account, boot, contains, cursor, older, page, press, reload, runs, screen, secs};
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{Log, LogPage};
@@ -198,7 +198,7 @@ fn new_commits_show_a_pill_and_leave_the_feed_where_it_is() {
     let after = screen(&mut engine, 100, 30, at + secs(30));
     assert!(after[1].contains(" /latest "), "{:?}", after[1]);
     assert!(
-        after[1].ends_with(" ↑ 2 new commits · R to load ─"),
+        after[1].ends_with(" ↑ 2 new commits · ctrl-r to load ─"),
         "{:?}",
         after[1]
     );
@@ -217,7 +217,7 @@ fn r_loads_the_new_commits_above_and_keeps_the_cursor_on_its_commit() {
     let line = |rows: &[String]| rows.iter().position(|row| row.contains(&hash));
     let before = screen(&mut engine, 100, 40, at + secs(30));
 
-    let effects = press(&mut engine, "R", at + secs(30));
+    let effects = reload(&mut engine, at + secs(30));
     let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
@@ -259,9 +259,9 @@ fn each_log_keeps_its_own_count_across_tab_switches() {
     new_commits(&mut engine, ticket, Log::Following, 1, at + secs(60));
 
     let pill = |engine: &mut Engine| screen(engine, 100, 20, at + secs(60))[1].clone();
-    assert!(pill(&mut engine).ends_with(" ↑ 1 new commit · R to load ─"));
+    assert!(pill(&mut engine).ends_with(" ↑ 1 new commit · ctrl-r to load ─"));
     press(&mut engine, "2", at + secs(60));
-    assert!(pill(&mut engine).ends_with(" ↑ 2 new commits · R to load ─"));
+    assert!(pill(&mut engine).ends_with(" ↑ 2 new commits · ctrl-r to load ─"));
     press(&mut engine, "3", at + secs(60));
     assert!(!pill(&mut engine).contains("new commit"));
 }

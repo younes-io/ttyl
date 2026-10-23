@@ -503,7 +503,7 @@ fn a_narrow_footer_error_still_ends_in_help() {
     let at = Instant::now();
     let mut engine = boot(at);
     common::press(&mut engine, "2", at);
-    let effects = common::press(&mut engine, "R", at);
+    let effects = common::reload(&mut engine, at);
     let [Effect::Run(ticket, Call::Page(Log::Latest))] = effects.as_slice() else {
         panic!("{effects:?}");
     };
