@@ -33,6 +33,15 @@ pub enum Action {
     Editor,
     Site,
     Saver,
+    Link(Link),
+}
+
+/// A place of the person a profile is about, out in the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    Website,
+    GitHub,
+    Page,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +463,27 @@ pub const TABLE: &[Binding] = &[
         action: Action::Refresh,
         hint: None,
         help: "reload this profile",
+    },
+    Binding {
+        scope: Scope::Profile,
+        chords: &[&[Key::ch('g'), Key::ch('w')]],
+        action: Action::Link(Link::Website),
+        hint: None,
+        help: "open their website",
+    },
+    Binding {
+        scope: Scope::Profile,
+        chords: &[&[Key::ch('g'), Key::ch('h')]],
+        action: Action::Link(Link::GitHub),
+        hint: None,
+        help: "open their GitHub",
+    },
+    Binding {
+        scope: Scope::Profile,
+        chords: &[&[Key::ch('g'), Key::ch('d')]],
+        action: Action::Link(Link::Page),
+        hint: None,
+        help: "open their dev-null page",
     },
     Binding {
         scope: Scope::Person,
@@ -891,6 +921,12 @@ impl Keymap {
         }
         Resolve::Ignored
     }
+}
+
+/// The first chord that does `action`, as help shows it.
+pub fn key_for(action: Action) -> Option<String> {
+    let binding = TABLE.iter().find(|binding| binding.action == action)?;
+    Some(label(binding.chords.first()?))
 }
 
 pub fn label(chord: &[Key]) -> String {

@@ -1031,6 +1031,18 @@ impl Engine {
                     composer.answered();
                 }
             }
+            (Phase::Ready(session), Action::Link(link)) => {
+                if let Some(url) = session.profile().and_then(|profile| profile.link(link)) {
+                    let shown = url
+                        .trim_start_matches("https://")
+                        .trim_start_matches("http://");
+                    self.toast(
+                        format!("opened {} in the browser", shown.trim_end_matches('/')),
+                        now,
+                    );
+                    return vec![Effect::Open(url)];
+                }
+            }
             (Phase::Ready(_), Action::Site) => {
                 self.toast("opened in the browser".to_owned(), now);
                 return vec![Effect::Open(format!("{}/", api::BASE))];

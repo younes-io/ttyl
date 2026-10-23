@@ -584,6 +584,8 @@ pub struct Person {
     pub company: Option<String>,
     pub location: Option<String>,
     pub website: Option<String>,
+    #[serde(default)]
+    pub github_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub commits_count: Option<u32>,
     pub followers_count: Option<u32>,

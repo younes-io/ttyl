@@ -2,11 +2,11 @@ mod common;
 
 use std::time::Instant;
 
-use common::{boot, contains, page, press, profile, runs, screen, tap};
+use common::{boot, contains, help_entry, page, press, profile, runs, screen, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{Circle, Log, PeoplePage, Person, RowPage};
+use ttyl::model::{Circle, Log, PeoplePage, Person, Profile, RowPage};
 use ttyl::sched::Ticket;
 
 /// The first latest commit by someone other than the signed-in @ada.
@@ -52,11 +52,20 @@ fn person(username: &str) -> Person {
 
 /// Opens someone else's profile and answers its header and commits.
 fn on_profile(at: Instant) -> Engine {
+    on_profile_with(at, |_| {})
+}
+
+/// Opens someone else's profile, answering its header as `edit` leaves it.
+fn on_profile_with(at: Instant, edit: impl FnOnce(&mut Profile)) -> Engine {
     let mut engine = boot(at);
     let effects = press(&mut engine, &keys(), at);
     let user = ticket(&effects, |call| matches!(call, Call::User(_)));
     let commits = ticket(&effects, |call| matches!(call, Call::Commits { .. }));
-    engine.update(Event::Reply(user, Ok(profile(&author(), true))), at);
+    let Reply::User(mut header) = profile(&author(), true) else {
+        unreachable!("profile builds a user reply");
+    };
+    edit(&mut header);
+    engine.update(Event::Reply(user, Ok(Reply::User(header))), at);
     let rows = page(Log::Latest).rows[..3].to_vec();
     let reply = Reply::Rows(RowPage {
         rows,
@@ -183,4 +192,65 @@ fn space_expands_a_folded_commit_and_folds_it_back() {
         &screen(&mut engine, 100, 30, at),
         "space to expand"
     ));
+}
+
+fn opened(effects: &[Effect]) -> Vec<&str> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Open(url) => Some(url.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn their_pinned_commit_comes_first_and_opens_like_any_other() {
+    let at = Instant::now();
+    let pinned = page(Log::Latest).rows[5].clone();
+    let id = pinned.commit.id.clone();
+    let mut engine = on_profile_with(at, |header| header.pinned = Some(pinned));
+    let rows = screen(&mut engine, 100, 40, at);
+    let label = rows.iter().position(|row| row.contains("┆ pinned"));
+    let day = rows
+        .iter()
+        .position(|row| row.contains("┆ ") && !row.contains("pinned"));
+    assert!(label.is_some() && label < day, "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        runs(&effects).contains(&&Call::Commit(id)),
+        "{:#?}",
+        runs(&effects)
+    );
+}
+
+#[test]
+fn link_keys_open_where_they_are_and_show_beside_each_link() {
+    let at = Instant::now();
+    let mut engine = on_profile_with(at, |header| {
+        header.person.website = Some("ada.dev".to_owned());
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "ada.dev gw"), "{rows:#?}");
+    assert!(
+        contains(&rows, &format!("github.com/{} gh", author())),
+        "{rows:#?}"
+    );
+    assert_eq!(opened(&press(&mut engine, "gw", at)), ["https://ada.dev"]);
+    let github = format!("https://github.com/{}", author());
+    assert_eq!(opened(&press(&mut engine, "gh", at)), [github.as_str()]);
+    let page = format!("https://dev-null.sh/{}", author());
+    assert_eq!(opened(&press(&mut engine, "gd", at)), [page.as_str()]);
+}
+
+#[test]
+fn a_link_they_lack_is_dimmed_in_help_and_does_nothing() {
+    let at = Instant::now();
+    let mut engine = on_profile(at);
+    assert_eq!(
+        help_entry(&mut engine, at, "open their website"),
+        Some(false)
+    );
+    assert_eq!(help_entry(&mut engine, at, "open their GitHub"), Some(true));
+    assert!(opened(&press(&mut engine, "gw", at)).is_empty());
 }

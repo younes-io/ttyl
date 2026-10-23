@@ -13,9 +13,9 @@ use crate::clock::Timers;
 use crate::engine::AHEAD;
 use crate::fatal;
 use crate::feed::{self, Entry, Feed, Writer};
-use crate::keys::Action;
+use crate::keys::{self, Action, Link};
 use crate::log;
-use crate::model::{Circle, CommitId, Log, LogPage, Person, Profile, User};
+use crate::model::{Circle, CommitId, Log, LogPage, Person, Profile, Row, User};
 use crate::store::Store;
 use crate::theme;
 use crate::thread::LOADING_NOTE_DELAY;
@@ -133,6 +133,8 @@ struct Paged {
     offset: usize,
     expanded: HashSet<CommitId>,
     folded: Vec<bool>,
+    /// Their pinned commit, put first by the profile rather than by the server.
+    pinned: Option<CommitId>,
 }
 
 impl Paged {
@@ -206,6 +208,7 @@ impl Paged {
     fn land(&mut self, cursor: Option<&str>, items: Vec<Item>, next_cursor: Option<String>) {
         self.failure = None;
         let Some(cursor) = cursor else {
+            self.pinned = None;
             let kept = self.items().get(self.selected);
             self.selected = kept
                 .and_then(|kept| items.iter().position(|item| item.same(kept)))
@@ -273,6 +276,38 @@ impl ProfileScreen {
     pub fn set_profile(&mut self, profile: Profile) {
         self.failure = None;
         self.profile = Some(profile);
+        self.pin();
+    }
+
+    /// Puts their pinned commit first in their commits, once both have come, so every commit key works on it.
+    fn pin(&mut self) {
+        let pinned = self
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.pinned.as_ref());
+        let pinned = pinned.map(|row| row.commit.id.clone());
+        let list = &mut self.lists[Tab::Commits.index()];
+        let Some((items, _)) = &mut list.loaded else {
+            return;
+        };
+        if list.pinned == pinned {
+            return;
+        }
+        let kept = items
+            .get(list.selected)
+            .filter(|_| list.selected > 0)
+            .cloned();
+        if list.pinned.take().is_some() {
+            items.remove(0);
+        }
+        if let Some(id) = pinned {
+            items.retain(|item| !matches!(item, Item::Commit(each) if *each == id));
+            items.insert(0, Item::Commit(id.clone()));
+            list.pinned = Some(id);
+        }
+        list.selected = kept
+            .and_then(|kept| items.iter().position(|item| item.same(&kept)))
+            .unwrap_or(0);
     }
 
     pub fn fail_header(&mut self, failure: Failure) {
@@ -281,6 +316,9 @@ impl ProfileScreen {
 
     pub fn land(&mut self, tab: Tab, cursor: Option<&str>, items: Vec<Item>, next: Option<String>) {
         self.lists[tab.index()].land(cursor, items, next);
+        if tab == Tab::Commits {
+            self.pin();
+        }
     }
 
     pub fn fail_tab(&mut self, tab: Tab, failure: Failure) {
@@ -314,9 +352,27 @@ impl ProfileScreen {
         }
     }
 
+    /// Where `link` goes for the person this profile is about, when they have one.
+    pub fn link(&self, link: Link) -> Option<String> {
+        let person = &self.profile.as_ref()?.person;
+        let given = |url: &Option<String>| url.clone().filter(|url| !url.is_empty());
+        match link {
+            Link::Website => given(&person.website).map(|site| {
+                if site.contains("://") {
+                    site
+                } else {
+                    format!("https://{site}")
+                }
+            }),
+            Link::GitHub => given(&person.github_url),
+            Link::Page => Some(person.user.html_url.clone()),
+        }
+    }
+
     pub fn can(&self, action: Action) -> bool {
         match action {
             Action::Open => self.opens().is_some(),
+            Action::Link(link) => self.link(link).is_some(),
             Action::Back | Action::NextFilter | Action::PreviousFilter | Action::Refresh => true,
             _ => self.list().can(action),
         }
@@ -391,7 +447,14 @@ impl ProfileScreen {
             .border_style(edge);
         let inside = panel.inner(area);
         frame.render_widget(panel, area);
-        let header = header(profile, store, inside.width.saturating_sub(2));
+        let links: Vec<(String, String)> = [Link::Website, Link::GitHub, Link::Page]
+            .into_iter()
+            .filter_map(|link| {
+                let key = keys::key_for(Action::Link(link))?;
+                Some((self.link(link)?, key))
+            })
+            .collect();
+        let header = header(profile, &links, store, inside.width.saturating_sub(2));
         let height = (header.len() as u16 + 2).min(inside.height.saturating_sub(8));
         let [top, rule, list] = Layout::vertical([
             Constraint::Length(height),
@@ -461,15 +524,13 @@ impl ProfileScreen {
         let (feed, folded) = if ids.is_empty() {
             (people(items, store, area.width), Vec::new())
         } else {
-            let page = LogPage {
-                log: Log::Latest,
-                rows: store.rows_of(&ids),
-                next_cursor: Some(String::new()),
-                is_ranked: false,
-                new_commits_count: None,
-                suggestions: Vec::new(),
-            };
-            feed::layout(&page, area.width, &list.expanded, true, wall)
+            let mut rows = store.rows_of(&ids);
+            if list.pinned.is_some() {
+                let rest = rows.split_off(1.min(rows.len()));
+                pinned_first(rows, rest, area.width, &list.expanded, wall)
+            } else {
+                feed::layout(&page(rows, false), area.width, &list.expanded, true, wall)
+            }
         };
         list.folded = folded;
         list.selected = list.selected.min(feed.entries.len().saturating_sub(1));
@@ -497,9 +558,77 @@ impl ProfileScreen {
     }
 }
 
+/// Their commits as a page laid out on its own.
+fn page(rows: Vec<Row>, is_ranked: bool) -> LogPage {
+    LogPage {
+        log: Log::Latest,
+        rows,
+        next_cursor: Some(String::new()),
+        is_ranked,
+        new_commits_count: None,
+        suggestions: Vec::new(),
+    }
+}
+
+/// Their pinned commit under its own label in place of a day, then the rest by day.
+fn pinned_first<Tz: TimeZone>(
+    pinned: Vec<Row>,
+    rest: Vec<Row>,
+    width: u16,
+    expanded: &HashSet<CommitId>,
+    wall: &DateTime<Tz>,
+) -> (Feed, Vec<bool>) {
+    let mut out = Writer::new(width);
+    let label = Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD);
+    out.push(
+        Span::styled("┆ ", theme::muted()),
+        vec![Span::styled("pinned", label)],
+    );
+    out.gap();
+    let mut entries = Vec::new();
+    let mut folded = Vec::new();
+    for (rows, is_ranked) in [(pinned, true), (rest, false)] {
+        if rows.is_empty() {
+            continue;
+        }
+        if !entries.is_empty() {
+            out.gap();
+        }
+        let (feed, cut) = feed::layout(&page(rows, is_ranked), width, expanded, true, wall);
+        let shift = out.lines.len();
+        entries.extend(feed.entries.into_iter().map(|entry| Entry {
+            lines: entry.lines.start + shift..entry.lines.end + shift,
+            header: entry.header + shift,
+            ..entry
+        }));
+        out.lines.extend(feed.lines);
+        folded.extend(cut);
+    }
+    (
+        Feed {
+            lines: out.lines,
+            entries,
+        },
+        folded,
+    )
+}
+
+/// A link as people write it, without its scheme.
+fn bare(url: &str) -> String {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned()
+}
+
 /// Who they are and their standing with you, what they say about themselves, where they are,
-/// their counts, and their pinned commit.
-fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
+/// where to find them with the key that opens each, and their counts.
+fn header(
+    profile: &Profile,
+    links: &[(String, String)],
+    store: &Store,
+    width: u16,
+) -> Vec<Line<'static>> {
     let width = usize::from(width);
     let person = &profile.person;
     let user = &person.user;
@@ -545,21 +674,21 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
     if let Some(location) = given(&person.location) {
         facts.push(vec![Span::styled(location, quiet)]);
     }
-    if let Some(website) = given(&person.website) {
-        let shown = website
-            .trim_start_matches("https://")
-            .trim_start_matches("http://")
-            .trim_end_matches('/')
-            .to_string();
-        facts.push(vec![
-            Span::styled(format!("{} ", theme::icons().link), faint),
-            Span::styled(shown, Style::new().fg(theme::PRIMARY)),
-        ]);
-    }
     facts.push(vec![Span::styled(
         format!("Joined {}", person.created_at.format("%B %Y")),
         quiet,
     )]);
+
+    let links: Vec<Vec<Span<'static>>> = links
+        .iter()
+        .map(|(url, key)| {
+            vec![
+                Span::styled(format!("{} ", theme::icons().link), faint),
+                Span::styled(bare(url), Style::new().fg(theme::PRIMARY)),
+                Span::styled(format!(" {key}"), quiet),
+            ]
+        })
+        .collect();
 
     let counts: Vec<(String, &str)> = [
         (person.commits_count, "commits"),
@@ -591,6 +720,7 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
         bio(left, &mut body);
         body.push(Vec::new());
         body.extend(flow(facts, faint, left));
+        body.extend(flow(links, faint, left));
         let mut side = vec![right(chips, SIDE), Vec::new()];
         let digits = counts.iter().map(|(count, _)| count.len()).max();
         for (count, noun) in &counts {
@@ -616,6 +746,7 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
         bio(width, &mut lines);
         lines.push(Vec::new());
         lines.extend(flow(facts, faint, width));
+        lines.extend(flow(links, faint, width));
         let counts = counts
             .into_iter()
             .map(|(count, noun)| {
@@ -628,32 +759,6 @@ fn header(profile: &Profile, store: &Store, width: u16) -> Vec<Line<'static>> {
         lines.extend(flow(counts, faint, width));
     }
 
-    if let Some(pinned) = &profile.pinned {
-        let label = "pinned ";
-        lines.push(Vec::new());
-        lines.push(vec![
-            Span::styled(
-                label,
-                Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "─".repeat(width.saturating_sub(label.len())),
-                Style::new().fg(theme::RAIL),
-            ),
-        ]);
-        let mut spans = vec![
-            Span::styled(
-                pinned.commit.short_hash.clone(),
-                Style::new().fg(theme::PRIMARY),
-            ),
-            Span::raw("  "),
-        ];
-        spans.extend(feed::one_line(
-            &pinned.commit.body_segments,
-            Style::new().fg(theme::FOREGROUND),
-        ));
-        lines.push(feed::fit(spans, width));
-    }
     lines.into_iter().map(Line::from).collect()
 }
 

@@ -392,6 +392,7 @@ pub fn profile(username: &str, is_following: bool) -> Reply {
             "company": null,
             "location": null,
             "website": null,
+            "github_url": format!("https://github.com/{username}"),
             "created_at": "2025-01-01T00:00:00Z",
             "commits_count": 0,
             "followers_count": 0,

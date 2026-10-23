@@ -228,6 +228,7 @@ impl ThreadScreen {
             | Action::Send
             | Action::Editor
             | Action::Site
+            | Action::Link(_)
             | Action::Inbox
             | Action::NextFilter
             | Action::PreviousFilter => false,
