@@ -698,3 +698,40 @@ fn the_screensaver_wordmark_melts_into_life_while_a_new_one_drifts_in() {
         assert!(wordmarks(&frame) >= 1, "a wordmark is on screen at {s}");
     }
 }
+
+fn voted_poll(log: Log) -> LogPage {
+    let mut page = page(log);
+    for row in &mut page.rows {
+        if let Some(poll) = row.media.poll.as_mut() {
+            poll.has_voted = true;
+            poll.total_votes = Some(12);
+            for (option, (percentage, voted)) in
+                poll.options.iter_mut().zip([(75, true), (25, false)])
+            {
+                option.percentage = Some(percentage);
+                option.voted = voted;
+            }
+        }
+    }
+    page
+}
+
+fn bar(rows: &[String], label: &str) -> String {
+    let row = rows
+        .iter()
+        .find(|row| row.contains(label) && row.contains('%'))
+        .unwrap_or_else(|| panic!("{label} has a bar: {rows:#?}"));
+    let from = row.find(['▇', '░']).unwrap();
+    row[from..].split(label).next().unwrap().trim().to_owned()
+}
+
+#[test]
+fn poll_bars_add_up_to_their_percentages() {
+    let at = Instant::now();
+    let mut app = (boot_serving(at, voted_poll), at);
+    press(&mut app, "2");
+    let rows = screen(&mut app, 100, 120);
+    assert_eq!(bar(&rows, "tabs"), "▇▇▇▇▇▇▇▇░░  75%", "{rows:#?}");
+    assert_eq!(bar(&rows, "spaces"), "▇▇░░░░░░░░  25%", "{rows:#?}");
+}
+

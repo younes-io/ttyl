@@ -567,6 +567,21 @@ fn media<Tz: TimeZone>(
 
 const BAR: usize = 10;
 
+/// Each option's share of a `BAR` of cells, by largest remainder, so the bars add up to what the
+/// percentages do. Rounding each alone draws 75/25 as eight and three.
+fn cells(percentages: &[u32]) -> Vec<usize> {
+    let scaled: Vec<usize> = percentages.iter().map(|p| *p as usize * BAR).collect();
+    let total = (scaled.iter().sum::<usize>() + 50) / 100;
+    let mut cells: Vec<usize> = scaled.iter().map(|p| p / 100).collect();
+    let mut order: Vec<usize> = (0..scaled.len()).collect();
+    order.sort_by_key(|at| std::cmp::Reverse(scaled[*at] % 100));
+    let short = total.saturating_sub(cells.iter().sum());
+    for at in order.into_iter().take(short) {
+        cells[at] += 1;
+    }
+    cells
+}
+
 /// The poll's options as bars once its results are out, or as a list until then.
 fn poll_lines<Tz: TimeZone>(
     poll: &Poll,
@@ -577,6 +592,12 @@ fn poll_lines<Tz: TimeZone>(
     let faint = Style::new().fg(theme::FAINT);
     let icon = format!("{} ", theme::icons().poll);
     let indent = " ".repeat(icon.width());
+    let percentages: Vec<u32> = poll
+        .options
+        .iter()
+        .map(|option| option.percentage.unwrap_or(0))
+        .collect();
+    let cells = cells(&percentages);
     for (at, option) in poll.options.iter().enumerate() {
         let lead = if at == 0 {
             icon.clone()
@@ -587,7 +608,7 @@ fn poll_lines<Tz: TimeZone>(
         let label = Style::new().fg(theme::FOREGROUND);
         match option.percentage {
             Some(percentage) => {
-                let filled = (percentage as usize * BAR + 50) / 100;
+                let filled = cells[at];
                 let bar = if option.voted {
                     Style::new().fg(theme::PRIMARY)
                 } else {
