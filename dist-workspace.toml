@@ -21,3 +21,5 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+# Extra files to ship in each archive
+include = ["NOTICE"]
