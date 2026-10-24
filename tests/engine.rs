@@ -131,14 +131,14 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");
-    for shown in ["following", "reload everything", "↓ more", "j/k scroll"] {
+    for shown in ["following", "starred commits", "↓ more", "j/k scroll"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
     assert!(contains(&rows, "? close"), "{rows:#?}");
     // A short terminal scrolls the list to its last keys and stops there.
     press(&mut engine, &"j".repeat(40), at);
     let rows = screen(&mut engine, 80, 30, at);
-    for shown in ["quit", "these keys", "screensaver"] {
+    for shown in ["reload everything", "quit", "these keys", "screensaver"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
     assert!(!contains(&rows, "↓ more"), "{rows:#?}");
@@ -593,7 +593,7 @@ fn refresh_toasts_then_the_hints_come_back() {
     press(&mut engine, "2g", at + secs(2));
     let rows = screen(&mut engine, 80, 20, at + secs(2));
     assert_eq!(
-        rows[19], " g-  g top · n notifications",
+        rows[19], " g-  g top · n notifications · s starred commits",
         "a pending chord outranks the toast"
     );
     press(&mut engine, "g", at + secs(2));

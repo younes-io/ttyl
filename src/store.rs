@@ -294,7 +294,8 @@ impl Store {
             | Call::Notifications { .. }
             | Call::Group { .. }
             | Call::Commits { .. }
-            | Call::People { .. } => return,
+            | Call::People { .. }
+            | Call::Starred { .. } => return,
         }
         self.generation += 1;
     }

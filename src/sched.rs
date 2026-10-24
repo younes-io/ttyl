@@ -41,6 +41,9 @@ pub enum CallKey {
         circle: Circle,
         older: bool,
     },
+    Starred {
+        older: bool,
+    },
     Delete(CommitId),
     Pastel(CommitId),
     Vote(CommitId),
@@ -80,6 +83,9 @@ impl Call {
             } => CallKey::People {
                 username: username.clone(),
                 circle: *circle,
+                older: cursor.is_some(),
+            },
+            Call::Starred { cursor } => CallKey::Starred {
                 older: cursor.is_some(),
             },
             Call::Delete(id) => CallKey::Delete(id.clone()),

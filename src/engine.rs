@@ -26,8 +26,8 @@ use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
     HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PROFILE_PEOPLE_SCOPES,
-    PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES, Scope,
-    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES,
+    STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
@@ -39,6 +39,7 @@ use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
 use crate::signin::Callback;
+use crate::starred::{self, StarredScreen};
 use crate::store::{Node, Slot, Store};
 use crate::theme;
 use crate::thread::ThreadScreen;
@@ -127,6 +128,7 @@ enum Screen {
     Inbox,
     Group(Box<GroupList>),
     Profile(Box<ProfileScreen>),
+    Starred(Box<StarredScreen>),
 }
 
 enum Overlay {
@@ -166,6 +168,7 @@ impl Session {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => thread.card(),
             Some(Screen::Profile(profile)) => profile.card(),
+            Some(Screen::Starred(starred)) => starred.card(),
             Some(Screen::Inbox | Screen::Group(_)) => None,
             None => self.log.card(),
         }
@@ -174,7 +177,8 @@ impl Session {
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_)) | None => None,
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::Starred(_))
+            | None => None,
         }
     }
 
@@ -182,7 +186,9 @@ impl Session {
     fn shown_thread(&self, now: Instant) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_)) => None,
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::Starred(_)) => {
+                None
+            }
             None => self.log.peek(&self.store, now),
         }
     }
@@ -235,6 +241,14 @@ impl Session {
         matches!(self.stack.last(), Some(Screen::Inbox))
     }
 
+    /// Every open starred list, wherever it sits in the stack.
+    fn starred_mut(&mut self) -> impl Iterator<Item = &mut StarredScreen> {
+        self.stack.iter_mut().filter_map(|screen| match screen {
+            Screen::Starred(starred) => Some(starred.as_mut()),
+            _ => None,
+        })
+    }
+
     fn screen_scopes(&self) -> &'static [Scope] {
         match self.stack.last() {
             None => LOG_SCOPES,
@@ -244,6 +258,7 @@ impl Session {
             Some(Screen::Group(_)) => GROUP_SCOPES,
             Some(Screen::Profile(profile)) if profile.people_tab() => PROFILE_PEOPLE_SCOPES,
             Some(Screen::Profile(_)) => PROFILE_SCOPES,
+            Some(Screen::Starred(_)) => STARRED_SCOPES,
         }
     }
 
@@ -256,11 +271,13 @@ impl Session {
         }
         matches!(action, Action::Quit | Action::Help | Action::Saver)
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
+            || (action == Action::Starred && !matches!(self.stack.last(), Some(Screen::Starred(_))))
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
                 Some(Screen::Group(group)) => group.can(action),
                 Some(Screen::Profile(profile)) => profile.can(action),
+                Some(Screen::Starred(starred)) => starred.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -277,6 +294,7 @@ impl Session {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
             },
+            Some(Screen::Starred(starred)) => starred.commit()?,
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
         match self.store.node(id)? {
@@ -340,6 +358,14 @@ impl Session {
                 }
             }
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
+            (Some(Screen::Starred(starred)), Action::Open) => {
+                if let Some(id) = starred.commit().cloned() {
+                    self.stack
+                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
+                    return Some(id);
+                }
+            }
+            (Some(Screen::Starred(starred)), action) => starred.act(action),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
             (Some(Screen::Profile(profile)), action) => {
@@ -909,7 +935,7 @@ impl Engine {
         self.load_older();
         self.load_older_inbox();
         self.load_older_group();
-        self.load_older_profile();
+        self.load_older_list();
         for (call, priority) in self.thread_wants(now) {
             self.sched.send(call, priority);
         }
@@ -1019,11 +1045,16 @@ impl Engine {
         }
     }
 
-    fn load_older_profile(&mut self) {
+    fn load_older_list(&mut self) {
         let Phase::Ready(session) = &self.phase else {
             return;
         };
-        if let Some(call) = session.profile().and_then(ProfileScreen::wants_older) {
+        let call = match session.stack.last() {
+            Some(Screen::Profile(profile)) => profile.wants_older(),
+            Some(Screen::Starred(starred)) => starred.wants_older(),
+            _ => None,
+        };
+        if let Some(call) = call {
             self.sched.send(call, Priority::Now);
         }
     }
@@ -1054,6 +1085,7 @@ impl Engine {
             Some(Screen::Inbox) => session.inbox.placeholder_at(),
             Some(Screen::Group(group)) => group.placeholder_at(),
             Some(Screen::Profile(profile)) => profile.placeholder_at(),
+            Some(Screen::Starred(starred)) => starred.placeholder_at(),
             None => session.log.peek_due(),
         }
     }
@@ -1271,6 +1303,14 @@ impl Engine {
                     fetch_inbox(&mut self.sched, &mut self.timers, &mut session.inbox, now);
                 }
             }
+            (Phase::Ready(session), Action::Starred) => {
+                if !matches!(session.stack.last(), Some(Screen::Starred(_))) {
+                    session
+                        .stack
+                        .push(Screen::Starred(Box::new(StarredScreen::new(now))));
+                    self.sched.send(StarredScreen::call(None), Priority::Now);
+                }
+            }
             (Phase::Ready(_), Action::Refresh) => self.reload(true, now),
             (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
                 if session.on_inbox() =>
@@ -1384,6 +1424,10 @@ impl Engine {
                     self.sched
                         .send(Call::User(profile.username().to_owned()), Priority::Now);
                     self.sched.send(profile.tab_call(), Priority::Now);
+                }
+                Screen::Starred(starred) => {
+                    starred.reload(now);
+                    self.sched.send(StarredScreen::call(None), Priority::Now);
                 }
                 Screen::Inbox => {}
             }
@@ -1588,6 +1632,15 @@ impl Engine {
                     && let Some(group) = session.group_mut(id)
                 {
                     group.land(cursor.as_deref(), page);
+                }
+                return Vec::new();
+            }
+            Call::Starred { cursor } => {
+                if let Reply::Rows(page) = reply {
+                    let ids = session.store.absorb_rows(page.rows);
+                    for starred in session.starred_mut() {
+                        starred.land(cursor.as_deref(), ids.clone(), page.next_cursor.clone());
+                    }
                 }
                 return Vec::new();
             }
@@ -1819,6 +1872,12 @@ impl Engine {
                         }
                         offline
                     }
+                    Call::Starred { .. } => {
+                        for starred in session.starred_mut() {
+                            starred.fail(failure.clone());
+                        }
+                        offline
+                    }
                     Call::Star { .. } | Call::Follow { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
@@ -1990,9 +2049,11 @@ impl Engine {
                 let handle = session
                     .profile()
                     .map(|profile| format!("@{}", profile.username()));
-                let title = (session.on_inbox() || session.group().is_some())
-                    .then_some(inbox::TITLE)
-                    .or(handle.as_deref());
+                let title = match session.stack.last() {
+                    Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
+                    Some(Screen::Starred(_)) => Some(starred::TITLE),
+                    _ => handle.as_deref(),
+                };
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
                 let bar = Block::new().style(Style::new().bg(theme::MUTED));
                 frame.render_widget(bar.clone(), top);
@@ -2127,6 +2188,9 @@ impl Engine {
                     Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
                     Some(Screen::Profile(profile)) => {
                         profile.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                    }
+                    Some(Screen::Starred(starred)) => {
+                        starred.draw(frame, inset(body), &session.store, &self.timers, now, wall)
                     }
                     None => {
                         let pane = session.log.draw(

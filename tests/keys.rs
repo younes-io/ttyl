@@ -54,7 +54,7 @@ fn g_then_g_goes_to_the_top_and_g_then_another_key_cancels() {
     );
     assert_eq!(
         hints(LOG_SCOPES, keymap.pending(), &all),
-        "g-  g top · q open the quoted commit · n notifications"
+        "g-  g top · q open the quoted commit · n notifications · s starred commits"
     );
     assert_eq!(
         keymap.resolve(

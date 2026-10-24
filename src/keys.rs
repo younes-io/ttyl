@@ -16,6 +16,7 @@ pub enum Action {
     Show(Log),
     NextLog,
     Inbox,
+    Starred,
     Profile,
     NextFilter,
     PreviousFilter,
@@ -78,6 +79,7 @@ pub enum Scope {
     Group,
     Profile,
     Person,
+    Starred,
     List,
     Commit,
     People,
@@ -152,6 +154,13 @@ pub const PROFILE_PEOPLE_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
+pub const STARRED_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Starred,
+    Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -171,6 +180,7 @@ pub const UNIONS: &[&[Scope]] = &[
     PEOPLE_SCOPES,
     PROFILE_SCOPES,
     PROFILE_PEOPLE_SCOPES,
+    STARRED_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,6 +470,27 @@ pub const TABLE: &[Binding] = &[
         action: Action::Link(Link::Page),
         hint: None,
         help: "open their dev-null page",
+    },
+    Binding {
+        scope: Scope::Starred,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter open"),
+        help: "open this commit's thread",
+    },
+    Binding {
+        scope: Scope::Starred,
+        chords: &[&[Key::ch(' ')]],
+        action: Action::Expand,
+        hint: None,
+        help: "expand the selected commit",
+    },
+    Binding {
+        scope: Scope::Starred,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
     },
     Binding {
         scope: Scope::Person,
@@ -844,6 +875,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Inbox,
         hint: None,
         help: "notifications",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch('s')]],
+        action: Action::Starred,
+        hint: None,
+        help: "starred commits",
     },
     Binding {
         scope: Scope::Global,

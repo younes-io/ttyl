@@ -188,6 +188,7 @@ impl LogScreen {
             | Action::Site
             | Action::Link(_)
             | Action::Inbox
+            | Action::Starred
             | Action::NextFilter
             | Action::PreviousFilter => false,
         }
