@@ -345,9 +345,9 @@ fn a_group_page_lists_its_events_without_counts() {
 
 #[test]
 fn a_dark_custom_lane_is_lifted_until_it_reads_and_a_bright_one_is_kept() {
+    use ratatui::style::Color;
     use ttyl::model::Lane;
     use ttyl::theme;
-    use ratatui::style::Color;
     for (r, g, b) in [
         (0, 0, 0),
         (0x0b, 0x2a, 0x5c),

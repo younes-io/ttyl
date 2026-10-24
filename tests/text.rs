@@ -1,5 +1,5 @@
-use ttyl::text::Buffer;
 use proptest::prelude::*;
+use ttyl::text::Buffer;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone)]
