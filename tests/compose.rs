@@ -85,9 +85,10 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
                 ""
             };
             let image = if roomy { "  ctrl-v image" } else { "" };
+            let preview = if roomy { "  ctrl-r preview" } else { "" };
             assert_eq!(
                 rows[usize::from(HEIGHT) - 1],
-                format!(" ctrl-s commit  ctrl-e editor{poll}{image}  esc close"),
+                format!(" ctrl-s commit  ctrl-e editor{poll}{image}{preview}  esc close"),
                 "only a new commit can carry a poll, and a narrow row drops its hint: {rows:#?}"
             );
         }

@@ -49,6 +49,7 @@ pub enum CallKey {
     Vote(CommitId),
     Report(CommitId),
     Post(Target),
+    Preview(String),
     Notifications(Filter),
     OlderNotifications(Filter),
     Group(NotificationId),
@@ -93,6 +94,7 @@ impl Call {
             Call::Vote { id, .. } => CallKey::Vote(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
             Call::Post { target, .. } => CallKey::Post(target.clone()),
+            Call::Preview(body) => CallKey::Preview(body.clone()),
             Call::Notifications {
                 filter,
                 cursor: None,
