@@ -10,14 +10,35 @@ https://github.com/user-attachments/assets/7124b43c-576d-4beb-b1a2-f0eb014606fe
 
 ## Install
 
-You need a recent stable [Rust](https://rustup.rs). Then run:
+ttyl runs on macOS and Linux. Pick one of these.
+
+With Homebrew:
 
 ```
-cargo install --git https://github.com/younes-io/ttyl
-ttyl
+brew install younes-io/tap/ttyl
 ```
 
-To remove it, run `cargo uninstall ttyl`.
+With the install script, which puts `ttyl` in `~/.cargo/bin`:
+
+```
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/younes-io/ttyl/releases/latest/download/ttyl-installer.sh | sh
+```
+
+With Cargo, if you have a recent stable [Rust](https://rustup.rs):
+
+```
+cargo install ttyl
+```
+
+You can also download a binary from the
+[releases page](https://github.com/younes-io/ttyl/releases). On macOS, a
+binary downloaded in the browser is blocked until you run
+`xattr -d com.apple.quarantine ttyl`.
+
+Then run `ttyl`.
+
+To remove it, run `brew uninstall ttyl` or `cargo uninstall ttyl`. If you
+used the install script, delete `~/.cargo/bin/ttyl`.
 
 ## Sign in
 
