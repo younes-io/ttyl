@@ -53,7 +53,7 @@ fn opens_on_following_with_the_empty_state_and_suggestions() {
     assert_eq!(
         suggestions,
         [
-            " ● Grace @grace  today's footgun: $name = 'devnull'; escape your output.",
+            " ● Grace @grace  today's footgun: php› $name = 'devnull'; escape your output.",
             " ● Linus @linus  first commit here. hello /dev/null.",
             " ● Margaret @margaret  notes from rewriting our scheduler. 1. the queue was never the \
              bottleneck. 2. the lock around t…",
@@ -768,4 +768,66 @@ fn a_poll_fills_its_bars_the_first_time_the_cursor_lands_on_it() {
         "▇▇▇▇▇▇▇▇░░  75%",
         "it fills only once"
     );
+}
+
+/// The first commit and the second's quote both hold one code block.
+fn with_block(language: Option<&str>) -> LogPage {
+    let segments = vec![
+        ttyl::model::Segment::Text {
+            text: "hook:".to_owned(),
+        },
+        ttyl::model::Segment::Block {
+            language: language.map(str::to_owned),
+            lines: vec![vec![ttyl::code::Span {
+                text: "add_action();".to_owned(),
+                hl: None,
+            }]],
+        },
+    ];
+    let mut page = page(Log::Following);
+    page.rows[0].commit.body_segments = segments.clone();
+    page.rows[0].commit.preview_segments = None;
+    match &mut page.rows[1].quoted_commit {
+        Some(ttyl::model::Shown::Live(quote)) => quote.commit.body_segments = segments,
+        other => panic!("the second row quotes a live commit: {other:?}"),
+    }
+    page
+}
+
+fn php_block(_: Log) -> LogPage {
+    with_block(Some("php"))
+}
+
+fn untagged_block(_: Log) -> LogPage {
+    with_block(None)
+}
+
+fn row_with(rows: &[String], text: &str) -> usize {
+    rows.iter()
+        .position(|row| row.contains(text))
+        .unwrap_or_else(|| panic!("{text} is on screen: {rows:#?}"))
+}
+
+#[test]
+fn a_quote_names_the_language_before_its_code() {
+    let mut app = (boot_serving(Instant::now(), php_block), Instant::now());
+    let rows = screen(&mut app, 100, 30);
+    assert!(contains(&rows, "hook: php› add_action();"), "{rows:#?}");
+}
+
+#[test]
+fn an_open_block_names_its_language_at_the_top_right() {
+    let mut app = (boot_serving(Instant::now(), php_block), Instant::now());
+    let rows = screen(&mut app, 100, 30);
+    let code = row_with(&rows, "add_action();");
+    assert!(rows[code - 1].trim_end().ends_with("php"), "{rows:#?}");
+}
+
+#[test]
+fn a_block_without_a_language_shows_no_tag() {
+    let mut app = (boot_serving(Instant::now(), untagged_block), Instant::now());
+    let rows = screen(&mut app, 100, 30);
+    let code = row_with(&rows, "add_action();");
+    assert_eq!(rows[code - 1].trim(), "┃", "{rows:#?}");
+    assert!(contains(&rows, "hook: add_action();"), "{rows:#?}");
 }

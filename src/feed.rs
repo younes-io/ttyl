@@ -984,8 +984,12 @@ pub(crate) fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> 
                 }
             }
             Segment::Code { code } => add(&code.replace('\t', TAB), theme::hl(None), &mut gap),
-            Segment::Block { lines, .. } => {
+            Segment::Block { language, lines } => {
                 gap = true;
+                if let Some(language) = language {
+                    add(&format!("{language}›"), theme::muted(), &mut gap);
+                    gap = true;
+                }
                 let first = lines
                     .iter()
                     .find(|line| line.iter().any(|span| !span.text.trim().is_empty()));
@@ -1108,11 +1112,14 @@ pub(crate) fn body(segments: &[Segment], width: usize) -> Vec<Vec<Span<'static>>
                 }
             }
             Segment::Code { code } => paragraph.push((code.replace('\t', TAB), theme::hl(None))),
-            Segment::Block { lines: code, .. } => {
+            Segment::Block {
+                language,
+                lines: code,
+            } => {
                 if !paragraph.is_empty() {
                     wrap(&mem::take(&mut paragraph), width, &mut lines);
                 }
-                block(code, width, &mut lines);
+                block(language.as_deref(), code, width, &mut lines);
             }
         }
     }
@@ -1225,8 +1232,13 @@ fn append(line: &mut Vec<Span<'static>>, text: &str, style: Style) {
 }
 
 /// A code block fills the content width with the muted background, one column of padding on each side and a
-/// blank row above and below, so it reads as a box.
-fn block(code: &[code::Line], width: usize, out: &mut Vec<Vec<Span<'static>>>) {
+/// blank row above and below, so it reads as a box. The row above names the language at its right, when one is known.
+fn block(
+    language: Option<&str>,
+    code: &[code::Line],
+    width: usize,
+    out: &mut Vec<Vec<Span<'static>>>,
+) {
     let inner = width.saturating_sub(2).max(1);
     let row = |mut spans: Vec<Span<'static>>, used: usize| {
         spans.insert(0, Span::styled(" ", theme::hl(None)));
@@ -1236,7 +1248,20 @@ fn block(code: &[code::Line], width: usize, out: &mut Vec<Vec<Span<'static>>>) {
         ));
         spans
     };
-    out.push(row(Vec::new(), 0));
+    let tag = language.filter(|language| language.width() <= inner);
+    out.push(match tag {
+        Some(language) => row(
+            vec![
+                Span::styled(" ".repeat(inner - language.width()), theme::hl(None)),
+                Span::styled(
+                    language.to_owned(),
+                    theme::hl(None).fg(theme::MUTED_FOREGROUND),
+                ),
+            ],
+            inner,
+        ),
+        None => row(Vec::new(), 0),
+    });
     for line in code {
         let mut spans = Vec::new();
         let mut used = 0;
