@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 description = "A terminal client for the dev-null.sh social network"
 repository = "https://github.com/younes-io/ttyl"
+homepage = "https://github.com/younes-io/ttyl"
 readme = "README.md"
 keywords = ["tui", "terminal", "social", "client"]
 categories = ["command-line-utilities"]
@@ -28,6 +29,9 @@ ureq = "3.4.2"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[profile.dist]
+inherits = "release"
 
 [dev-dependencies]
 proptest = "1.11.0"
