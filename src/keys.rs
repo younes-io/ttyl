@@ -36,6 +36,7 @@ pub enum Action {
     Editor,
     Poll,
     Attach,
+    Preview,
     Site,
     Saver,
     Link(Link),
@@ -90,6 +91,7 @@ pub enum Scope {
     Vote,
     Viewer,
     Composer,
+    Preview,
     Secret,
     Rules,
 }
@@ -103,6 +105,7 @@ pub const VOTE_SCOPES: &[Scope] = &[Scope::Vote, Scope::Always];
 pub const VIEWER_SCOPES: &[Scope] = &[Scope::Viewer, Scope::Always];
 pub const DETAILS_SCOPES: &[Scope] = &[Scope::Details];
 pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
+pub const PREVIEW_SCOPES: &[Scope] = &[Scope::Preview];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
 pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
 pub const LOG_SCOPES: &[Scope] = &[
@@ -171,6 +174,7 @@ pub const UNIONS: &[&[Scope]] = &[
     VIEWER_SCOPES,
     DETAILS_SCOPES,
     COMPOSER_SCOPES,
+    PREVIEW_SCOPES,
     SECRET_SCOPES,
     RULES_SCOPES,
     LOG_SCOPES,
@@ -822,6 +826,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Composer,
+        chords: &[&[Key::ctrl('r')]],
+        action: Action::Preview,
+        hint: Some("ctrl-r preview"),
+        help: "preview it as the commit it would become",
+    },
+    Binding {
+        scope: Scope::Composer,
         chords: &[&[Key::code(KeyCode::Esc)]],
         action: Action::Close,
         hint: Some("esc close"),
@@ -829,6 +840,33 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Composer,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Preview,
+        chords: &[
+            &[Key::ctrl('s')],
+            &[Key {
+                code: KeyCode::Enter,
+                ctrl: true,
+            }],
+        ],
+        action: Action::Send,
+        hint: Some("ctrl-s commit"),
+        help: "commit",
+    },
+    Binding {
+        scope: Scope::Preview,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::ctrl('r')]],
+        action: Action::Close,
+        hint: Some("esc write"),
+        help: "back to writing",
+    },
+    Binding {
+        scope: Scope::Preview,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,

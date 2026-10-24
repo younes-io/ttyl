@@ -15,7 +15,7 @@ use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
     Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId,
-    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage,
+    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Segment,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -108,6 +108,8 @@ pub enum Call {
         body: String,
         attachment: Attachment,
     },
+    /// A draft rendered as the commit it would become. Nothing is kept.
+    Preview(String),
     Notifications {
         filter: Filter,
         cursor: Option<String>,
@@ -132,6 +134,7 @@ pub enum Reply {
     People(PeoplePage),
     Notifications(NotificationPage),
     Group(GroupPage),
+    Preview(Vec<Segment>),
     Done,
 }
 
@@ -324,6 +327,7 @@ impl Client {
             } => self
                 .post(target, body, attachment)
                 .map(|focus| Reply::Commit(Box::new(focus))),
+            Call::Preview(body) => self.preview(body).map(Reply::Preview),
             Call::Notifications { filter, cursor } => self
                 .notifications(*filter, cursor.as_deref())
                 .map(Reply::Notifications),
@@ -362,6 +366,22 @@ impl Client {
             }
         };
         parse::<Wire>(status, &text).map(|wire| wire.data)
+    }
+
+    fn preview(&self, body: &str) -> Result<Vec<Segment>, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Data,
+        }
+
+        #[derive(Deserialize)]
+        struct Data {
+            body_segments: Vec<Segment>,
+        }
+
+        let body = serde_json::json!({ "body": body }).to_string();
+        let (status, text) = self.send("POST", "/api/v1/commits/preview", body)?;
+        parse::<Wire>(status, &text).map(|wire| wire.data.body_segments)
     }
 
     fn star(&self, id: &CommitId, on: bool) -> Result<Focus, Error> {

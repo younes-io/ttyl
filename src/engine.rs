@@ -25,9 +25,9 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PROFILE_PEOPLE_SCOPES,
-    PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES, SPLASH_SCOPES,
-    STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PREVIEW_SCOPES,
+    PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES,
+    SPLASH_SCOPES, STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
@@ -411,6 +411,9 @@ impl Session {
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
                 Some(Some(Prompt::Rules)) => RULES_SCOPES,
+                Some(None) if self.composer.as_ref().is_some_and(Composer::previewing) => {
+                    PREVIEW_SCOPES
+                }
                 Some(None) => COMPOSER_SCOPES,
                 None => self.screen_scopes(),
             },
@@ -423,7 +426,10 @@ impl Session {
             None if self
                 .composer
                 .as_ref()
-                .is_some_and(|composer| composer.prompt() != Some(Prompt::Rules)) =>
+                .is_some_and(|composer| match composer.prompt() {
+                    Some(prompt) => prompt != Prompt::Rules,
+                    None => !composer.previewing(),
+                }) =>
             {
                 InputMode::Text
             }
@@ -711,7 +717,11 @@ fn followed(username: &str, on: bool) -> String {
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
-        (_, Action::Send | Action::Editor | Action::Poll | Action::Attach) if sending => false,
+        (_, Action::Send | Action::Editor | Action::Poll | Action::Attach | Action::Preview)
+            if sending =>
+        {
+            false
+        }
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -1253,6 +1263,13 @@ impl Engine {
                 }
             }
             (Phase::Ready(_), Action::Poll) => return self.edit(Composer::toggle_poll),
+            (Phase::Ready(session), Action::Preview) => {
+                if let Some(composer) = &mut session.composer
+                    && let Some(text) = composer.toggle_preview()
+                {
+                    self.sched.send(Call::Preview(text), Priority::Now);
+                }
+            }
             (Phase::Ready(session), Action::Attach) if session.composer.is_some() => {
                 return vec![Effect::Clip];
             }
@@ -1568,6 +1585,12 @@ impl Engine {
             }
             return Vec::new();
         };
+        if let (Call::Preview(text), Reply::Preview(segments)) = (call, &reply) {
+            if let Some(composer) = &mut session.composer {
+                composer.rendered(text, Some(segments.clone()));
+            }
+            return Vec::new();
+        }
         if let (Call::Post { target, .. }, Reply::Commit(focus)) = (call, &reply) {
             let commit = &focus.card.commit;
             let toast = match commit.status {
@@ -1775,6 +1798,16 @@ impl Engine {
             self.refused_post(target, &error, now);
             return;
         }
+        if let Call::Preview(text) = &call
+            && !error.needs_sign_in()
+        {
+            if let Phase::Ready(session) = &mut self.phase
+                && let Some(composer) = &mut session.composer
+            {
+                composer.rendered(text, None);
+            }
+            return;
+        }
         if let Error::Api {
             status: 429,
             retry_after,
@@ -1915,7 +1948,7 @@ impl Engine {
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
-                    Call::Post { .. } => false,
+                    Call::Post { .. } | Call::Preview(_) => false,
                 };
                 if connection {
                     self.health = Some(failure);

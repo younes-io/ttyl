@@ -291,6 +291,7 @@ impl Store {
             | Call::Vote { .. }
             | Call::Report { .. }
             | Call::Post { .. }
+            | Call::Preview(_)
             | Call::Notifications { .. }
             | Call::Group { .. }
             | Call::Commits { .. }
@@ -394,6 +395,7 @@ impl Store {
                 | Reply::User(_)
                 | Reply::Notifications(_)
                 | Reply::Group(_)
+                | Reply::Preview(_)
                 | Reply::Done,
             ) => {}
         }
