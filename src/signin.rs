@@ -13,8 +13,6 @@ use ssh_key::sha2::{Digest, Sha256};
 use crate::device::Nonce;
 
 pub const REDIRECT_URI: &str = "devnull://signed-in";
-const MIME: &str = "x-scheme-handler/devnull";
-const DESKTOP_FILE: &str = "ttyl.desktop";
 
 /// One trip through the browser. The verifier stays here and only its challenge leaves, and the state ties the
 /// redirect back to this attempt.
@@ -153,7 +151,8 @@ impl Inbox {
             Err(error) => return Err(error),
         };
         stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+        // macOS refuses a timeout once the sender has hung up, and then the read cannot block anyway.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
         let mut url = String::new();
         stream.take(4096).read_to_string(&mut url)?;
         Ok(Some(url))
@@ -169,19 +168,61 @@ impl Drop for Inbox {
 /// Makes this binary the `devnull://` handler while sign-in runs, then gives the scheme back to whatever owned it
 /// before, so another client's handler keeps working afterwards.
 pub struct Handler {
-    desktop_file: PathBuf,
+    installed: PathBuf,
     previous: Option<String>,
 }
 
 impl Handler {
     pub fn install() -> io::Result<Self> {
+        let installed = scheme::install(&env::current_exe()?)?;
+        let previous = scheme::default()?;
+        scheme::set_default(scheme::OURS)?;
+        Ok(Handler {
+            installed,
+            previous: previous.filter(|previous| previous != scheme::OURS),
+        })
+    }
+}
+
+impl Drop for Handler {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            let _ = scheme::set_default(previous);
+        }
+        scheme::uninstall(&self.installed);
+    }
+}
+
+fn run(program: &str, args: &[&str]) -> io::Result<Option<String>> {
+    let output = Command::new(program).args(args).output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!stdout.is_empty()).then_some(stdout))
+}
+
+#[cfg(not(target_os = "macos"))]
+mod scheme {
+    use std::env;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+
+    use super::run;
+
+    const MIME: &str = "x-scheme-handler/devnull";
+    pub const OURS: &str = "ttyl.desktop";
+
+    pub fn install(exe: &Path) -> io::Result<PathBuf> {
         let applications = env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
             .ok_or_else(|| io::Error::other("no home directory"))?
             .join("applications");
         fs::create_dir_all(&applications)?;
-        let exe = env::current_exe()?;
         // xdg-open reads the first word of Exec as the binary and does not undo desktop entry quoting.
         if exe
             .to_str()
@@ -192,7 +233,7 @@ impl Handler {
                 exe.display()
             )));
         }
-        let desktop_file = applications.join(DESKTOP_FILE);
+        let desktop_file = applications.join(OURS);
         fs::write(
             &desktop_file,
             format!(
@@ -200,31 +241,120 @@ impl Handler {
                 exe.display()
             ),
         )?;
-        let previous = xdg_mime(&["query", "default", MIME])?;
-        xdg_mime(&["default", DESKTOP_FILE, MIME])?;
-        Ok(Handler {
-            desktop_file,
-            previous: previous.filter(|previous| previous != DESKTOP_FILE),
-        })
+        Ok(desktop_file)
+    }
+
+    pub fn default() -> io::Result<Option<String>> {
+        run("xdg-mime", &["query", "default", MIME])
+    }
+
+    pub fn set_default(handler: &str) -> io::Result<()> {
+        run("xdg-mime", &["default", handler, MIME]).map(drop)
+    }
+
+    pub fn uninstall(desktop_file: &Path) {
+        let _ = fs::remove_file(desktop_file);
     }
 }
 
-impl Drop for Handler {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            let _ = xdg_mime(&["default", previous, MIME]);
+/// macOS only hands a URL scheme to an app bundle that claims it, and delivers the link as an Apple Event, so the
+/// handler is a small AppleScript app that passes the link on to `--redirect`.
+#[cfg(target_os = "macos")]
+mod scheme {
+    use std::env;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+
+    use super::run;
+
+    pub const OURS: &str = "sh.dev-null.ttyl.signin";
+    const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+    pub fn install(exe: &Path) -> io::Result<PathBuf> {
+        // Launch Services does not route links to apps under the temporary directory.
+        let support = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| io::Error::other("no home directory"))?
+            .join("Library/Application Support/ttyl");
+        fs::create_dir_all(&support)?;
+        let app = support.join("ttyl sign-in.app");
+        let _ = fs::remove_dir_all(&app);
+        let path = |path: &Path| {
+            path.to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| io::Error::other(format!("{} is not UTF-8", path.display())))
+        };
+        let exe = path(exe)?.replace('\\', "\\\\").replace('"', "\\\"");
+        let app_path = path(&app)?;
+        run(
+            "osacompile",
+            &[
+                "-o",
+                &app_path,
+                "-e",
+                "on open location link",
+                "-e",
+                &format!("do shell script quoted form of \"{exe}\" & \" --redirect \" & quoted form of link"),
+                "-e",
+                "end open location",
+            ],
+        )?;
+        let plist = format!("{app_path}/Contents/Info.plist");
+        run("plutil", &["-replace", "CFBundleIdentifier", "-string", OURS, &plist])?;
+        run(
+            "plutil",
+            &[
+                "-replace",
+                "CFBundleURLTypes",
+                "-json",
+                r#"[{"CFBundleURLName":"ttyl sign-in","CFBundleURLSchemes":["devnull"]}]"#,
+                &plist,
+            ],
+        )?;
+        run("codesign", &["--force", "--sign", "-", &app_path])?;
+        run(LSREGISTER, &["-f", &app_path])?;
+        Ok(app)
+    }
+
+    pub fn default() -> io::Result<Option<String>> {
+        jxa(
+            r#"function run() {
+                const handler = ObjC.castRefToObject($.LSCopyDefaultHandlerForURLScheme($("devnull")));
+                return handler.isNil() ? "" : handler.js;
+            }"#,
+            &[],
+        )
+    }
+
+    pub fn set_default(handler: &str) -> io::Result<()> {
+        match jxa(
+            r#"function run(argv) {
+                return $.LSSetDefaultHandlerForURLScheme($("devnull"), $(argv[0]));
+            }"#,
+            &[handler],
+        )?
+        .as_deref()
+        {
+            Some("0") => Ok(()),
+            status => Err(io::Error::other(format!(
+                "macOS would not make {handler} open devnull:// links ({})",
+                status.unwrap_or("no status")
+            ))),
         }
-        let _ = fs::remove_file(&self.desktop_file);
     }
-}
 
-fn xdg_mime(args: &[&str]) -> io::Result<Option<String>> {
-    let output = Command::new("xdg-mime").args(args).output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+    pub fn uninstall(app: &Path) {
+        if let Some(app) = app.to_str() {
+            let _ = run(LSREGISTER, &["-u", app]);
+        }
+        let _ = fs::remove_dir_all(app);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok((!stdout.is_empty()).then_some(stdout))
+
+    fn jxa(script: &str, args: &[&str]) -> io::Result<Option<String>> {
+        let script = format!("ObjC.import(\"CoreServices\");\n{script}");
+        let mut command = vec!["-l", "JavaScript", "-e", &script];
+        command.extend(args);
+        run("osascript", &command)
+    }
 }
