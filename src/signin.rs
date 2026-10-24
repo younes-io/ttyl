@@ -153,7 +153,8 @@ impl Inbox {
             Err(error) => return Err(error),
         };
         stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+        // macOS refuses a timeout once the sender has hung up, and then the read cannot block anyway.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
         let mut url = String::new();
         stream.take(4096).read_to_string(&mut url)?;
         Ok(Some(url))
