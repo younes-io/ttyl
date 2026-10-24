@@ -3,6 +3,12 @@ name = "ttyl"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+description = "A terminal client for the dev-null.sh social network"
+repository = "https://github.com/younes-io/ttyl"
+readme = "README.md"
+keywords = ["tui", "terminal", "social", "client"]
+categories = ["command-line-utilities"]
+include = ["/src", "/LICENSE", "/NOTICE", "/README.md"]
 
 [dependencies]
 base64ct = { version = "1.8.3", features = ["alloc"] }
