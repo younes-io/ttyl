@@ -162,3 +162,11 @@ fn local_highlighting_reads_the_unescaped_text() {
         .join("\n");
     assert_eq!(text, "let a = b < c && d;\nlet e = 1;");
 }
+
+#[test]
+fn a_called_function_is_colored_like_a_defined_one() {
+    assert_eq!(
+        block(Some("php"), "add_action('init');")[0][0],
+        span("add_action", Some(Hl::Property))
+    );
+}

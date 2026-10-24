@@ -119,6 +119,7 @@ fn scope_hl(scopes: &ScopeStack) -> Option<Hl> {
             ("support.class", Some(Hl::Type)),
             ("entity.name.function", Some(Hl::Property)),
             ("support.function", Some(Hl::Property)),
+            ("variable.function", Some(Hl::Property)),
             ("variable", Some(Hl::Variable)),
             ("entity.other.attribute-name", Some(Hl::Attribute)),
             ("entity.name.tag", Some(Hl::Attribute)),
