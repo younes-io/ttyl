@@ -155,7 +155,7 @@ fn the_line_under_a_row_is_its_commit_or_the_rejection_reason() {
     };
     assert_eq!(
         under("replied"),
-        "│ today's footgun: $name = 'devnull'; escape your output."
+        "│ today's footgun: php› $name = 'devnull'; escape your output."
     );
     assert_eq!(under("rejected"), "│ reason: Links to a paid course.");
     assert_eq!(under("followed you"), "│", "a follow has no commit line");

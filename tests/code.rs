@@ -102,3 +102,71 @@ fn generic_and_literal_share_type_and_number_styles() {
         ]]
     );
 }
+
+fn block(language: Option<&str>, html: &str) -> Vec<ttyl::code::Line> {
+    let json = serde_json::json!({ "type": "block", "language": language, "html": html });
+    match serde_json::from_value(json).expect("a block segment") {
+        ttyl::model::Segment::Block { lines, .. } => lines,
+        other => panic!("not a block: {other:?}"),
+    }
+}
+
+#[test]
+fn a_language_syntect_knows_is_highlighted_locally() {
+    assert_eq!(
+        block(Some("rust"), "fn main() {}"),
+        vec![vec![
+            span("fn", Some(Hl::Keyword)),
+            span(" ", None),
+            span("main", Some(Hl::Property)),
+            span("() {}", None),
+        ]]
+    );
+}
+
+#[test]
+fn php_snippets_without_an_opening_tag_still_highlight() {
+    assert_eq!(
+        block(Some("php"), "$name = 'devnull';"),
+        vec![vec![
+            span("$name", Some(Hl::Variable)),
+            span(" = ", None),
+            span("'devnull'", Some(Hl::Value)),
+            span(";", None),
+        ]]
+    );
+}
+
+#[test]
+fn a_language_syntect_does_not_know_keeps_the_server_colors() {
+    let html = r#"<span class="hl-keyword">interface</span> A {}"#;
+    assert_eq!(block(Some("typescript"), html), block_lines(html));
+}
+
+#[test]
+fn a_block_without_a_language_keeps_the_server_colors() {
+    let html = r#"<span class="hl-keyword">select</span> 1"#;
+    assert_eq!(block(None, html), block_lines(html));
+}
+
+#[test]
+fn local_highlighting_reads_the_unescaped_text() {
+    let text: String = block(Some("rust"), "let a = b &lt; c &amp;&amp; d;\nlet e = 1;")
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(text, "let a = b < c && d;\nlet e = 1;");
+}
+
+#[test]
+fn a_called_function_is_colored_like_a_defined_one() {
+    assert_eq!(
+        block(Some("php"), "add_action('init');")[0][0],
+        span("add_action", Some(Hl::Property))
+    );
+}
