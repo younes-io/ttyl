@@ -1,3 +1,7 @@
+use std::sync::OnceLock;
+
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+
 /// A token class tempest/highlight emits that the web gives a style. Classes it leaves unstyled, such as
 /// `hl-operator` and `hl-injection`, inherit from the enclosing span, as CSS does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +47,91 @@ pub type Line = Vec<Span>;
 enum Frame {
     Styled(Option<Hl>),
     Hidden,
+}
+
+/// A code block's lines, colored by syntect when it knows the fence's language and by the server otherwise.
+pub fn highlight(language: Option<&str>, html: &str) -> Vec<Line> {
+    let server = block_lines(html);
+    let Some(syntax) = language.and_then(syntax) else {
+        return server;
+    };
+    let text: Vec<String> = server
+        .iter()
+        .map(|line| line.iter().map(|span| span.text.as_str()).collect())
+        .collect();
+    local(syntax, &text).unwrap_or(server)
+}
+
+fn syntaxes() -> &'static SyntaxSet {
+    static SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+/// Snippets in posts leave out `<?php`, which syntect's `php` grammar needs before it colors anything.
+fn syntax(language: &str) -> Option<&'static SyntaxReference> {
+    match language {
+        "php" => syntaxes().find_syntax_by_name("PHP Source"),
+        _ => syntaxes().find_syntax_by_token(language),
+    }
+}
+
+fn local(syntax: &SyntaxReference, text: &[String]) -> Option<Vec<Line>> {
+    let mut state = ParseState::new(syntax);
+    let mut scopes = ScopeStack::new();
+    let mut lines = Vec::with_capacity(text.len());
+    for source in text {
+        let source = format!("{source}\n");
+        let mut line = Line::new();
+        let mut at = 0;
+        for (to, op) in state.parse_line(&source, syntaxes()).ok()? {
+            push(&mut line, &source[at..to], scope_hl(&scopes));
+            at = to;
+            scopes.apply(&op).ok()?;
+        }
+        push(
+            &mut line,
+            source[at..].trim_end_matches('\n'),
+            scope_hl(&scopes),
+        );
+        lines.push(line);
+    }
+    Some(lines)
+}
+
+/// The innermost scope that maps to a style wins, so a string inside a function call stays a string. Operators
+/// map to nothing and take the enclosing style, as the web leaves `hl-operator` unstyled.
+fn scope_hl(scopes: &ScopeStack) -> Option<Hl> {
+    static MAP: OnceLock<Vec<(Scope, Option<Hl>)>> = OnceLock::new();
+    let map = MAP.get_or_init(|| {
+        [
+            ("comment", Some(Hl::Comment)),
+            ("markup.inserted", Some(Hl::Addition)),
+            ("markup.deleted", Some(Hl::Deletion)),
+            ("string", Some(Hl::Value)),
+            ("constant.numeric", Some(Hl::Number)),
+            ("constant.language", Some(Hl::Number)),
+            ("keyword.operator", None),
+            ("keyword", Some(Hl::Keyword)),
+            ("storage", Some(Hl::Keyword)),
+            ("entity.name.type", Some(Hl::Type)),
+            ("entity.name.class", Some(Hl::Type)),
+            ("support.type", Some(Hl::Type)),
+            ("support.class", Some(Hl::Type)),
+            ("entity.name.function", Some(Hl::Property)),
+            ("support.function", Some(Hl::Property)),
+            ("variable", Some(Hl::Variable)),
+            ("entity.other.attribute-name", Some(Hl::Attribute)),
+            ("entity.name.tag", Some(Hl::Attribute)),
+        ]
+        .into_iter()
+        .map(|(name, hl)| (Scope::new(name).expect("a valid scope"), hl))
+        .collect()
+    });
+    scopes.as_slice().iter().rev().find_map(|scope| {
+        map.iter()
+            .find(|(prefix, _)| prefix.is_prefix_of(*scope))
+            .and_then(|(_, hl)| *hl)
+    })
 }
 
 /// Turns a block segment's highlighted HTML into lines of styled text.

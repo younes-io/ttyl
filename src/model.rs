@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Deserializer};
 
+use crate::code;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct CommitId(pub String);
@@ -121,9 +123,25 @@ fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     Some((channel(0)?, channel(2)?, channel(4)?))
 }
 
+/// A block is highlighted once on arrival, since feed layout reruns on every frame.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(from = "WireSegment")]
 pub enum Segment {
+    Text {
+        text: String,
+    },
+    Code {
+        code: String,
+    },
+    Block {
+        language: Option<String>,
+        lines: Vec<code::Line>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum WireSegment {
     Text {
         text: String,
     },
@@ -134,6 +152,19 @@ pub enum Segment {
         language: Option<String>,
         html: String,
     },
+}
+
+impl From<WireSegment> for Segment {
+    fn from(wire: WireSegment) -> Self {
+        match wire {
+            WireSegment::Text { text } => Segment::Text { text },
+            WireSegment::Code { code } => Segment::Code { code },
+            WireSegment::Block { language, html } => Segment::Block {
+                lines: code::highlight(language.as_deref(), &html),
+                language,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
