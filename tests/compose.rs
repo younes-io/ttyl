@@ -326,3 +326,21 @@ fn a_narrow_composer_hint_keeps_esc_close() {
     assert_eq!(keys::fit(hints, 30), "ctrl-s commit  esc close");
     assert_eq!(keys::fit(hints, 12), "esc close");
 }
+
+#[test]
+fn help_lists_the_keys_for_writing() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "?", at);
+    press(&mut engine, &"j".repeat(60), at);
+    let rows = screen(&mut engine, 100, 50, at);
+    for shown in [
+        "while writing",
+        "ctrl-e  write it in $VISUAL or $EDITOR",
+        "ctrl-p  add a poll, or take it off",
+        "ctrl-r  preview it as the commit it would become",
+        "esc  close, keeping the draft",
+    ] {
+        assert!(contains(&rows, shown), "{shown}: {rows:#?}");
+    }
+}

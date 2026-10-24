@@ -822,7 +822,7 @@ pub const TABLE: &[Binding] = &[
         chords: &[&[Key::ctrl('v')]],
         action: Action::Attach,
         hint: Some("ctrl-v image"),
-        help: "attach the image on the clipboard. dropping a file on the terminal works too",
+        help: "attach a copied image, or drop a file on the terminal",
     },
     Binding {
         scope: Scope::Composer,

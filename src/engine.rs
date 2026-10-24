@@ -2328,7 +2328,15 @@ fn help_layout(
     session: &Session,
 ) -> (Vec<(String, &'static str, bool)>, Rect, usize) {
     let allows = |action| session.screen_allows(action);
-    let rows = keys::help(session.screen_scopes(), &allows);
+    let mut rows = keys::help(session.screen_scopes(), &allows);
+    // `?` types itself in the composer, so its keys are listed here instead.
+    rows.push((String::new(), "", false));
+    rows.push((String::new(), "while writing", false));
+    rows.extend(
+        keys::help(COMPOSER_SCOPES, &|action| action != Action::Quit)
+            .into_iter()
+            .filter(|(_, _, live)| *live),
+    );
     let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
     let width = rows
         .iter()
