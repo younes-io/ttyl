@@ -76,7 +76,10 @@ mod tests {
     #[test]
     fn the_file_is_private_and_gone_afterwards() {
         let record = env::temp_dir().join(format!("ttyl-editor-test-{}", std::process::id()));
-        let editor = format!("stat -c '%a %n' \"$1\" >'{}'; true", record.display());
+        let editor = format!(
+            "{{ stat -c '%a %n' \"$1\" 2>/dev/null || stat -f '%Lp %N' \"$1\"; }} >'{}'; true",
+            record.display()
+        );
         assert_eq!(edit(&editor, "x").as_deref(), Some("x\n"));
         let seen = fs::read_to_string(&record).unwrap();
         let _ = fs::remove_file(&record);
