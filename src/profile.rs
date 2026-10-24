@@ -125,7 +125,7 @@ pub enum Opens {
 
 /// One tab's list for this visit, kept while other tabs are shown.
 #[derive(Default)]
-struct Paged {
+pub struct Paged {
     loaded: Option<(Vec<Item>, Option<String>)>,
     failure: Option<Failure>,
     asked_at: Option<Instant>,
@@ -138,13 +138,13 @@ struct Paged {
 }
 
 impl Paged {
-    fn items(&self) -> &[Item] {
+    pub fn items(&self) -> &[Item] {
         self.loaded
             .as_ref()
             .map_or(&[], |(items, _)| items.as_slice())
     }
 
-    fn can(&self, action: Action) -> bool {
+    pub fn can(&self, action: Action) -> bool {
         match action {
             Action::Down | Action::Up | Action::Top | Action::Bottom => !self.items().is_empty(),
             Action::Expand => {
@@ -155,14 +155,14 @@ impl Paged {
         }
     }
 
-    fn commit(&self) -> Option<&CommitId> {
+    pub fn commit(&self) -> Option<&CommitId> {
         match self.items().get(self.selected)? {
             Item::Commit(id) => Some(id),
             Item::Person(_) => None,
         }
     }
 
-    fn act(&mut self, action: Action) {
+    pub fn act(&mut self, action: Action) {
         let last = self.items().len().saturating_sub(1);
         match action {
             Action::Down => self.selected = (self.selected + 1).min(last),
@@ -180,8 +180,25 @@ impl Paged {
         }
     }
 
+    pub fn fail(&mut self, failure: Failure) {
+        self.failure = Some(failure);
+    }
+
+    /// A failed reload over rows still shown.
+    pub fn stale(&self) -> Option<&Failure> {
+        self.loaded.as_ref().and(self.failure.as_ref())
+    }
+
+    /// Clears what failed so a reload shows the loading line again where nothing is shown.
+    pub fn reload(&mut self, now: Instant) {
+        self.failure = None;
+        if self.loaded.is_none() {
+            self.asked_at = Some(now);
+        }
+    }
+
     /// Notes the ask, and says whether this was the list's first.
-    fn asked(&mut self, now: Instant) -> bool {
+    pub fn asked(&mut self, now: Instant) -> bool {
         let first = self.loaded.is_none() && self.asked_at.is_none();
         if first {
             self.asked_at = Some(now);
@@ -189,14 +206,14 @@ impl Paged {
         first
     }
 
-    fn placeholder_at(&self) -> Option<Instant> {
+    pub fn placeholder_at(&self) -> Option<Instant> {
         if self.loaded.is_some() || self.failure.is_some() {
             return None;
         }
         self.asked_at.map(|at| at + LOADING_NOTE_DELAY)
     }
 
-    fn wants_older(&self) -> Option<String> {
+    pub fn wants_older(&self) -> Option<String> {
         if self.failure.is_some() {
             return None;
         }
@@ -205,7 +222,7 @@ impl Paged {
         (left <= AHEAD).then(|| cursor.clone())?
     }
 
-    fn land(&mut self, cursor: Option<&str>, items: Vec<Item>, next_cursor: Option<String>) {
+    pub fn land(&mut self, cursor: Option<&str>, items: Vec<Item>, next_cursor: Option<String>) {
         self.failure = None;
         let Some(cursor) = cursor else {
             self.pinned = None;
@@ -229,6 +246,87 @@ impl Paged {
             }
         }
         *next = next_cursor.filter(|_| loaded.len() > before);
+    }
+
+    /// Draws the list, and says where its selected card went.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<Tz: TimeZone>(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        store: &Store,
+        timers: &Timers,
+        now: Instant,
+        wall: &DateTime<Tz>,
+        loading: &str,
+        empty: &str,
+        is_ranked: bool,
+    ) -> Option<Rect> {
+        let Some((items, _)) = &self.loaded else {
+            if let Some(failure) = &self.failure {
+                frame.render_widget(
+                    Paragraph::new(fatal::screen(failure, None)).wrap(Wrap { trim: false }),
+                    area,
+                );
+            } else if self.placeholder_at().is_some_and(|at| now >= at) {
+                frame.render_widget(Line::styled(loading.to_owned(), theme::muted()), area);
+            }
+            return None;
+        };
+        if items.is_empty() {
+            let mut lines = Vec::new();
+            feed::wrap(
+                &[(empty.to_owned(), theme::muted())],
+                usize::from(area.width),
+                &mut lines,
+            );
+            let lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+            frame.render_widget(Paragraph::new(lines), area);
+            return None;
+        }
+        let ids: Vec<CommitId> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Commit(id) => Some(id.clone()),
+                Item::Person(_) => None,
+            })
+            .collect();
+        let (feed, folded) = if ids.is_empty() {
+            (people(items, store, area.width), Vec::new())
+        } else {
+            let mut rows = store.rows_of(&ids);
+            if self.pinned.is_some() {
+                let rest = rows.split_off(1.min(rows.len()));
+                pinned_first(rows, rest, area.width, &self.expanded, wall)
+            } else {
+                let page = page(rows, is_ranked);
+                feed::layout(&page, area.width, &self.expanded, true, wall)
+            }
+        };
+        self.folded = folded;
+        self.selected = self.selected.min(feed.entries.len().saturating_sub(1));
+        let selected = Some(self.selected);
+        let total = feed.lines.len();
+        let height = usize::from(area.height);
+        self.offset = feed::scroll(&feed, total, self.selected, self.offset, height);
+        let shown = self.offset.min(total)..(self.offset + height).min(total);
+        let rows = feed.card_rows(selected, &shown);
+        let card = feed::card_area(area, &rows);
+        let lines = feed.window(selected, shown, area.width);
+        frame.render_widget(Paragraph::new(&lines[..]), area);
+        if let Some(id) = ids.get(self.selected) {
+            for (spark, elapsed) in timers.sparks(id, now) {
+                feed::spark(
+                    frame.buffer_mut(),
+                    area,
+                    &lines,
+                    rows.clone(),
+                    spark,
+                    elapsed,
+                );
+            }
+        }
+        card
     }
 }
 
@@ -330,14 +428,13 @@ impl ProfileScreen {
     }
 
     pub fn fail_tab(&mut self, tab: Tab, failure: Failure) {
-        self.lists[tab.index()].failure = Some(failure);
+        self.lists[tab.index()].fail(failure);
     }
 
     /// A failed reload over a header or rows still shown, for the hint line.
     pub fn failure(&self) -> Option<&Failure> {
         let header = self.profile.as_ref().and(self.failure.as_ref());
-        let list = self.list();
-        header.or(list.loaded.as_ref().and(list.failure.as_ref()))
+        header.or(self.list().stale())
     }
 
     pub fn people_tab(&self) -> bool {
@@ -407,11 +504,7 @@ impl ProfileScreen {
             self.failure = None;
             self.asked_at = now;
         }
-        let list = self.list_mut();
-        list.failure = None;
-        if list.loaded.is_none() {
-            list.asked_at = Some(now);
-        }
+        self.list_mut().reload(now);
     }
 
     pub fn placeholder_at(&self) -> Option<Instant> {
@@ -496,76 +589,12 @@ impl ProfileScreen {
         );
         let area = list.inner(Margin::new(1, 0));
 
-        let tab = self.tab;
-        let username = self.username.clone();
-        let placeholder = self.list().placeholder_at();
-        let list = self.list_mut();
-        let Some((items, _)) = &list.loaded else {
-            if let Some(failure) = &list.failure {
-                frame.render_widget(
-                    Paragraph::new(fatal::screen(failure, None)).wrap(Wrap { trim: false }),
-                    area,
-                );
-            } else if placeholder.is_some_and(|at| now >= at) {
-                let loading = format!("loading {}", tab.slug());
-                frame.render_widget(Line::styled(loading, theme::muted()), area);
-            }
-            return;
-        };
-        if items.is_empty() {
-            let mut lines = Vec::new();
-            feed::wrap(
-                &[(tab.empty_copy(&username), theme::muted())],
-                usize::from(area.width),
-                &mut lines,
-            );
-            let lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
-            frame.render_widget(Paragraph::new(lines), area);
-            return;
-        }
-        let ids: Vec<CommitId> = items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Commit(id) => Some(id.clone()),
-                Item::Person(_) => None,
-            })
-            .collect();
-        let (feed, folded) = if ids.is_empty() {
-            (people(items, store, area.width), Vec::new())
-        } else {
-            let mut rows = store.rows_of(&ids);
-            if list.pinned.is_some() {
-                let rest = rows.split_off(1.min(rows.len()));
-                pinned_first(rows, rest, area.width, &list.expanded, wall)
-            } else {
-                feed::layout(&page(rows, false), area.width, &list.expanded, true, wall)
-            }
-        };
-        list.folded = folded;
-        list.selected = list.selected.min(feed.entries.len().saturating_sub(1));
-        let selected = Some(list.selected);
-        let total = feed.lines.len();
-        let height = usize::from(area.height);
-        list.offset = feed::scroll(&feed, total, list.selected, list.offset, height);
-        let shown = list.offset.min(total)..(list.offset + height).min(total);
-        let rows = feed.card_rows(selected, &shown);
-        let at = list.selected;
-        self.card = feed::card_area(area, &rows);
-        let lines = feed.window(selected, shown, area.width);
-        frame.render_widget(Paragraph::new(&lines[..]), area);
-        let Some(id) = ids.get(at) else {
-            return;
-        };
-        for (spark, elapsed) in timers.sparks(id, now) {
-            feed::spark(
-                frame.buffer_mut(),
-                area,
-                &lines,
-                rows.clone(),
-                spark,
-                elapsed,
-            );
-        }
+        let loading = format!("loading {}", self.tab.slug());
+        let empty = self.tab.empty_copy(&self.username);
+        let list = &mut self.lists[self.tab.index()];
+        self.card = list.draw(
+            frame, area, store, timers, now, wall, &loading, &empty, false,
+        );
     }
 }
 

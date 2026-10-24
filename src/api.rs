@@ -88,6 +88,10 @@ pub enum Call {
         circle: Circle,
         cursor: Option<String>,
     },
+    /// The signed-in user's starred commits, newest star first.
+    Starred {
+        cursor: Option<String>,
+    },
     Delete(CommitId),
     Pastel(CommitId),
     Vote {
@@ -293,6 +297,7 @@ impl Client {
             } => self
                 .people(username, *circle, cursor.as_deref())
                 .map(Reply::People),
+            Call::Starred { cursor } => self.starred(cursor.as_deref()).map(Reply::Rows),
             Call::Delete(id) => {
                 let path = format!("/api/v1/commits/{}", escape(&id.0));
                 self.send("DELETE", &path, String::new())
@@ -401,6 +406,15 @@ impl Client {
         );
         if let Some(cursor) = cursor {
             path.push_str(&format!("&cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        RowPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn starred(&self, cursor: Option<&str>) -> Result<RowPage, Error> {
+        let mut path = String::from("/api/v1/starred");
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("?cursor={}", escape(cursor)));
         }
         let (status, text) = self.send("GET", &path, String::new())?;
         RowPage::parse(&text).map_err(|error| unreadable(status, error))

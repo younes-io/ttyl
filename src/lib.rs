@@ -23,6 +23,7 @@ pub mod saver;
 pub mod sched;
 pub mod secret;
 pub mod signin;
+pub mod starred;
 pub mod store;
 pub mod text;
 pub mod theme;
