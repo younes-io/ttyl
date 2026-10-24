@@ -4,14 +4,14 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use chrono::{DateTime, FixedOffset};
-use ttyl::code;
-use ttyl::engine::Engine;
-use ttyl::feed;
-use ttyl::model::{Log, LogPage, Row, Segment, Status, Suggestion};
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::text::Line;
+use ttyl::code;
+use ttyl::engine::Engine;
+use ttyl::feed;
+use ttyl::model::{Log, LogPage, Row, Segment, Status, Suggestion};
 
 fn page(name: &str) -> LogPage {
     let json = std::fs::read_to_string(format!(
@@ -74,11 +74,13 @@ fn segment() -> impl Strategy<Value = Segment> {
         "[a-z(){}=;$ ]{1,40}".prop_map(|code| Segment::Code { code }),
         prop::collection::vec(block_line, 1..6).prop_map(|lines| Segment::Block {
             language: None,
-            html: lines
-                .iter()
-                .map(|line| format!("<span class=\"hl-keyword\">{line}</span>"))
-                .collect::<Vec<_>>()
-                .join("\n"),
+            lines: lines
+                .into_iter()
+                .map(|text| vec![code::Span {
+                    text,
+                    hl: Some(code::Hl::Keyword)
+                }])
+                .collect(),
         }),
     ]
 }
