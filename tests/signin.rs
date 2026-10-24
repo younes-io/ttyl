@@ -57,11 +57,7 @@ fn a_random_attempt_meets_the_server_rules() {
 #[test]
 fn the_authorize_url_carries_every_parameter_intact() {
     let fingerprint = "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s";
-    let url = attempt().authorize_url(
-        "https://dev-null.sh",
-        fingerprint,
-        "ttyl on my box & co",
-    );
+    let url = attempt().authorize_url("https://dev-null.sh", fingerprint, "ttyl on my box & co");
 
     assert!(url.starts_with("https://dev-null.sh/mobile/authorize?"));
     assert_eq!(
