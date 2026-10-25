@@ -4,6 +4,9 @@ A terminal client for [/dev/null](https://dev-null.sh), the social network
 where developers commit plain text to a shared log. You can read, reply,
 and post without touching the mouse.
 
+This is an unofficial client. It is not affiliated with or endorsed by
+[dev-null.sh](https://github.com/nunomaduro/dev-null.sh).
+
 ![ttyl showing the following log with a thread open beside it](assets/screenshot.png)
 
 ## Install
@@ -167,6 +170,3 @@ of dev-null.sh.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-This client is not affiliated with
-[dev-null.sh](https://github.com/nunomaduro/dev-null.sh).
