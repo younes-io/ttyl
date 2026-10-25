@@ -33,7 +33,7 @@ You can also download a binary from the
 binary downloaded in the browser is blocked until you run
 `xattr -d com.apple.quarantine ttyl`.
 
-Then run `ttyl`.
+Then run `ttyl`. To check the install, run `ttyl --version`.
 
 To remove it, run `brew uninstall ttyl` or `cargo uninstall ttyl`. If you
 used the install script, delete `~/.cargo/bin/ttyl`.

@@ -33,14 +33,47 @@ use ttyl::{editor, signin, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 
-fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
-    if let [_, flag, url] = args.as_slice()
-        && flag == "--redirect"
-    {
-        return report(signin::forward(url).map_err(|error| error.to_string()));
+enum Command<'a> {
+    Run,
+    Redirect(&'a str),
+    Version,
+    Help,
+    Unknown(&'a str),
+}
+
+fn command<'a>(args: &[&'a str]) -> Command<'a> {
+    match args {
+        [] => Command::Run,
+        ["--redirect", url] => Command::Redirect(url),
+        ["--version" | "-V"] => Command::Version,
+        ["--help" | "-h"] => Command::Help,
+        ["--version" | "-V" | "--help" | "-h", arg, ..] | [arg, ..] => Command::Unknown(arg),
     }
-    report(start())
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match command(&args) {
+        Command::Run => report(start()),
+        Command::Redirect(url) => report(signin::forward(url).map_err(|error| error.to_string())),
+        Command::Version => {
+            println!("ttyl {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
+        Command::Help => {
+            println!(
+                "{}\n\nUsage: ttyl [--version | --help]\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                env!("CARGO_PKG_DESCRIPTION"),
+                api::BASE
+            );
+            ExitCode::SUCCESS
+        }
+        Command::Unknown(arg) => {
+            eprintln!("ttyl: unknown argument '{arg}'\nRun 'ttyl --help' for usage.");
+            ExitCode::from(2)
+        }
+    }
 }
 
 fn report(result: Result<(), String>) -> ExitCode {
