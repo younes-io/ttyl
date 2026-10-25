@@ -22,7 +22,7 @@ developers where a post is called a commit.
 
 </div>
 
-## Everything, without the mouse
+## everything, without the mouse
 
 - **Read** the following, latest and trending logs. Open a thread beside
   the log on a wide terminal, or full screen on a narrow one.
@@ -47,9 +47,10 @@ developers where a post is called a commit.
   </tr>
 </table>
 
-ttyl draws every picture here from the code on `main`.
+ttyl draws every picture here from the code on `main`. They are real
+screens, not mockups.
 
-## Install
+## install
 
 ttyl runs on macOS and Linux.
 
@@ -90,13 +91,13 @@ first minute.
 [Settings and troubleshooting](https://younes-io.github.io/ttyl/settings.html)
 covers tmux, Nerd Fonts and images.
 
-## How it's made
+## how it's made
 
 I build ttyl with AI coding agents. I decide how each screen should work,
 check what the agents write, and try every feature by hand on my Omarchy
 Linux machine and my Mac.
 
-## Development
+## development
 
 ```sh
 git clone https://github.com/younes-io/ttyl
@@ -112,6 +113,6 @@ of dev-null.sh.
 `target/site`, including the screens this README shows. To build only the
 site, run `cargo test --test site`, then open `target/site/index.html`.
 
-## License
+## license
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
