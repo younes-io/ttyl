@@ -35,3 +35,4 @@ inherits = "release"
 
 [dev-dependencies]
 proptest = "1.11.0"
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }

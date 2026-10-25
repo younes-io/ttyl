@@ -7,7 +7,10 @@ and post without touching the mouse.
 This is an unofficial client. It is not affiliated with or endorsed by
 [dev-null.sh](https://github.com/nunomaduro/dev-null.sh).
 
-![ttyl showing the following log with a thread open beside it](assets/screenshot.png)
+See what it looks like and how to use it at
+**[younes-io.github.io/ttyl](https://younes-io.github.io/ttyl/)**. ttyl
+draws every screen on that site itself, so the pictures match the current
+version.
 
 ## Install
 
@@ -36,124 +39,19 @@ You can also download a binary from the
 binary downloaded in the browser is blocked until you run
 `xattr -d com.apple.quarantine ttyl`.
 
-Then run `ttyl`. To check the install, run `ttyl --version`.
+Then run `ttyl`, press `enter`, and approve this terminal in your browser.
+Press `?` in the app for every key on the current screen. To check the
+install, run `ttyl --version`.
 
 To remove it, run `brew uninstall ttyl` or `cargo uninstall ttyl`. If you
 used the install script, delete `~/.cargo/bin/ttyl`.
 
-## Sign in
+## Learn more
 
-You need a dev-null.sh account. Press `enter` on the first screen, and your
-browser opens dev-null.sh so you can approve this terminal. If no browser
-opens, the screen shows a link to visit instead. You sign in once per
-machine.
-
-ttyl opens the browser with `open` on macOS and `xdg-open` on Linux.
-
-## Using it
-
-There are three logs. Press `1`, `2` or `3` to switch between them.
-
-- **Following** shows your commits and the people you follow.
-- **Latest** shows everyone, newest first.
-- **Trending** shows what is popular right now.
-
-When new commits arrive, a note appears at the top. Press `ctrl-r` to load them.
-
-Press `enter` to open a commit and read its replies, and `esc` to go back.
-On a terminal at least 110 columns wide, the thread also appears beside the
-log.
-
-The `● 3` at the top right counts your unread notifications. Press `gn` to
-read them. Opening them marks them all as read, as the website does.
-
-Press `c` to write a commit, `r` to reply, or `q` to quote. Press `ctrl-s`
-to send it, or `ctrl-e` to write in your own editor. Press `ctrl-r` to
-preview the draft as the commit it would become, code colors included.
-`esc` goes back to writing, and `ctrl-s` sends it from there. If you close the
-composer with `esc`, your draft is kept, even after you quit. If the text
-looks like it contains a secret, such as an API key, you are asked before
-it is sent.
-
-A new commit can carry a poll or up to three images. In the composer,
-press `ctrl-p` to add a poll. `tab` moves between its options, and `← →`
-changes how long it runs. To attach an image, drop the file on the
-terminal, or press `ctrl-v` to paste one you copied. Each image gets its
-own description line, and `backspace` on an empty one removes the image.
-
-Press `v` on a commit with a poll to vote. Pick an option with `j` `k` or
-its number, then `enter`. A vote is final.
-
-Press `i` on a commit with images to view them inside the terminal. Use
-`h` `l` to flip between them, `O` to open the one shown in the browser, and
-`esc` to close. Images look sharpest in a terminal that can draw them, such
-as Ghostty, kitty or WezTerm. Other terminals show a blockier version.
-Inside tmux, ttyl turns on `allow-passthrough` for its own pane when
-`TERM_PROGRAM` is `tmux` or `TERM` starts with `tmux`. Otherwise, turn it on
-yourself.
-
-## Keys
-
-The bottom line shows the keys you need most. Press `?` for all of them.
-
-| Key | Action |
-| --- | --- |
-| `j` `k` | Move down or up |
-| `gg` `G` | Go to the top or bottom |
-| `space` | Show or hide the rest of a long commit |
-| `enter` | Open |
-| `esc` | Go back |
-| `1` `2` `3` `tab` | Switch log |
-| `ctrl-r` | Reload everything |
-| `gn` | Notifications |
-| `gs` | Starred commits |
-| `c` | Write a commit |
-| `r` `q` | Reply or quote |
-| `gq` | Open the quoted commit |
-| `s` | Star or unstar |
-| `v` | Vote in a poll |
-| `i` | View a commit's images |
-| `p` | Open the author's profile |
-| `f` | Follow or unfollow the author |
-| `y` | Copy the link |
-| `O` | Open in the browser |
-| `P` | Give a pastel, if pastéis mode is on |
-| `D` | Delete your own commit |
-| `!` | Report |
-| `z` | Screensaver |
-| `?` | Help |
-| `Q` | Quit |
-
-On a profile, `gw`, `gh` and `gd` open the person's website, GitHub and
-dev-null.sh page. On a profile or in notifications, `tab` and `shift-tab`
-switch between the tabs or filters.
-
-In the composer:
-
-| Key | Action |
-| --- | --- |
-| `ctrl-s` `ctrl-enter` | Send |
-| `ctrl-e` | Write in your own editor |
-| `ctrl-p` | Add a poll, or take it off |
-| `ctrl-v` | Attach the image you copied |
-| `ctrl-r` | Preview the commit, or go back to writing |
-| `tab` | Move to the poll or the images, if any; otherwise insert a tab |
-| `esc` | Close and keep the draft |
-
-In the image viewer:
-
-| Key | Action |
-| --- | --- |
-| `h` `l` | Previous or next image |
-| `O` | Open the image in the browser |
-| `esc` `q` `i` | Close |
-
-## Good to know
-
-- `in review` next to a name means the commit is waiting for approval.
-- Any terminal size works. Colors look best with truecolor support.
-- Inside tmux, copying needs tmux's `set-clipboard` or `allow-passthrough`
-  option.
+- [Getting started](https://younes-io.github.io/ttyl/start.html)
+- [Every key](https://younes-io.github.io/ttyl/keys.html)
+- [Settings and troubleshooting](https://younes-io.github.io/ttyl/settings.html),
+  including tmux, Nerd Fonts and images
 
 ## Development
 
@@ -166,6 +64,10 @@ cargo run
 
 Set `DEVNULL_URL` to point the app at another server, such as a local copy
 of dev-null.sh.
+
+`cargo test` also builds the docs site from the Markdown in `docs/` into
+`target/site`. To build only the site, run `cargo test --test site`, then
+open `target/site/index.html`.
 
 ## License
 
