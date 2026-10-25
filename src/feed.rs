@@ -560,7 +560,7 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
             star,
         ));
     }
-    if row.commit.pasteis_count > 0 {
+    if theme::pasteis() && row.commit.pasteis_count > 0 {
         let lead = if spans.is_empty() { " · " } else { "  " };
         spans.push(Span::styled(lead, theme::muted()));
         spans.push(Span::styled(
@@ -636,22 +636,22 @@ pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
         theme::muted()
     };
     let icons = theme::icons();
-    out.push(
-        rail.clone(),
-        vec![
-            Span::styled(
-                format!("{} {}", icons.reply, row.replies_count),
-                theme::muted(),
-            ),
-            Span::raw("   "),
-            Span::styled(format!("{} {}", icons.star, row.stars_count), star),
-            Span::raw("   "),
-            Span::styled(
-                format!("{} {}", icons.pastel, row.commit.pasteis_count),
-                theme::muted(),
-            ),
-        ],
-    );
+    let mut spans = vec![
+        Span::styled(
+            format!("{} {}", icons.reply, row.replies_count),
+            theme::muted(),
+        ),
+        Span::raw("   "),
+        Span::styled(format!("{} {}", icons.star, row.stars_count), star),
+    ];
+    if theme::pasteis() {
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(
+            format!("{} {}", icons.pastel, row.commit.pasteis_count),
+            theme::muted(),
+        ));
+    }
+    out.push(rail.clone(), spans);
 }
 
 /// Images and a poll, each led by its icon in the column the quote and link icons share.
@@ -1198,7 +1198,7 @@ fn branded(run: &str, text: Style) -> Vec<(String, Style)> {
                     .map(|span| (span.content.into_owned(), span.style))
                     .collect(),
             ))
-        } else {
+        } else if theme::pasteis() {
             PASTEIS.iter().find_map(|word| {
                 let candidate = run.get(at..at + word.len())?;
                 (candidate.to_lowercase() == *word
@@ -1214,6 +1214,8 @@ fn branded(run: &str, text: Style) -> Vec<(String, Style)> {
                     )
                 })
             })
+        } else {
+            None
         };
         let Some((len, marked)) = mark else {
             at += next.len_utf8();
@@ -1471,6 +1473,7 @@ mod tests {
 
     #[test]
     fn pasteis_in_prose_show_as_the_pastel_but_not_inside_a_longer_word() {
+        theme::set_pasteis(true);
         let pastel = theme::icons().pastel;
         assert_eq!(
             shown(&body(

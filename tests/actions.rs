@@ -3,14 +3,14 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    account, answer, boot, boot_as, buffer, commit, contains, help_entry, marked, page, press,
-    profile, reload, runs, screen, secs, tap,
+    account, answer, boot, boot_as, buffer, commit, contains, help_entry, log_of, marked, page,
+    press, profile, reload, runs, screen, secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::clock::Spark;
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{CommitId, Focus, Log, Reason};
+use ttyl::model::{CommitId, Focus, Log, LogPage, Reason};
 use ttyl::sched::Ticket;
 use ttyl::theme;
 
@@ -949,4 +949,32 @@ fn gq_opens_the_quoted_commit_only_while_it_is_there() {
         );
         assert!(runs(&press(&mut engine, "gq", at)).is_empty());
     }
+}
+
+fn pasteis_run(_: Log) -> LogPage {
+    log_of(&[serde_json::json!({
+        "body": "brb, pasteis run",
+        "body_segments": [{ "type": "text", "text": "brb, pasteis run" }],
+        "pasteis_count": 3,
+    })])
+}
+
+#[test]
+fn pasteis_show_as_the_pastel_and_its_count_only_in_pasteis_mode() {
+    let at = Instant::now();
+    let pastel = theme::icons().pastel;
+
+    let mut engine = boot_as(at, account(0), pasteis_run);
+    press(&mut engine, "2", at);
+    let off = screen(&mut engine, 100, 30, at).join("\n");
+    assert!(off.contains("brb, pasteis run"), "{off}");
+    assert!(!off.contains(pastel), "{off}");
+
+    let mut me = account(0);
+    me.me.pasteis_mode = true;
+    let mut engine = boot_as(at, me, pasteis_run);
+    press(&mut engine, "2", at);
+    let on = screen(&mut engine, 100, 30, at).join("\n");
+    assert!(on.contains(&format!("brb, {pastel} run")), "{on}");
+    assert!(on.contains(&format!("{pastel} 3")), "{on}");
 }
