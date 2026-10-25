@@ -1441,6 +1441,20 @@ mod tests {
     }
 
     #[test]
+    fn pasteis_in_prose_show_as_the_pastel_but_not_inside_a_longer_word() {
+        let pastel = theme::icons().pastel;
+        assert_eq!(
+            shown(&body(
+                &text("the pasteis here? Pastel, PASTÉIS! not pastelaria or pasteis_mode"),
+                200
+            )),
+            [format!(
+                "the [{pastel}] here? [{pastel}], [{pastel}]! not pastelaria or pasteis_mode"
+            )]
+        );
+    }
+
+    #[test]
     fn the_wordmark_moves_to_the_next_line_whole() {
         assert_eq!(
             shown(&body(&text("pipe it to /dev/null."), 15)),
