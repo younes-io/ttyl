@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -965,7 +966,11 @@ fn check_links(files: &[(String, Vec<u8>)]) {
 
 fn page_html(template: &str, title: &str, nav: &str, main: &str) -> String {
     let mut out = template.to_owned();
-    for (marker, value) in [("{{title}}", escape(title)), ("{{nav}}", nav.to_owned())] {
+    for (marker, value) in [
+        ("{{title}}", escape(title)),
+        ("{{release}}", escape(&release())),
+        ("{{nav}}", nav.to_owned()),
+    ] {
         assert!(out.contains(marker), "template.html has no {marker}");
         out = out.replace(marker, &value);
     }
@@ -973,6 +978,12 @@ fn page_html(template: &str, title: &str, nav: &str, main: &str) -> String {
         .split_once("{{main}}")
         .expect("template.html has no {{main}}");
     format!("{before}{main}{after}")
+}
+
+/// The release the footer names. The pages workflow sets `TTYL_RELEASE` to the latest
+/// published tag, because `main` can carry a version that has not shipped yet.
+fn release() -> String {
+    env::var("TTYL_RELEASE").unwrap_or_else(|_| format!("v{}", env!("CARGO_PKG_VERSION")))
 }
 
 fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
