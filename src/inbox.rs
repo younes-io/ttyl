@@ -37,6 +37,7 @@ struct List {
     asked_at: Option<Instant>,
     selected: usize,
     offset: usize,
+    reading: feed::Reading,
 }
 
 struct Loaded {
@@ -198,10 +199,9 @@ impl List {
     fn act(&mut self, action: Action) {
         let last = self.groups().len().saturating_sub(1);
         match action {
-            Action::Down => self.selected = (self.selected + 1).min(last),
-            Action::Up => self.selected = self.selected.saturating_sub(1),
-            Action::Top => self.selected = 0,
-            Action::Bottom => self.selected = last,
+            Action::Down | Action::Up | Action::Top | Action::Bottom => {
+                self.selected = self.reading.step(action, self.selected, last);
+            }
             _ => {}
         }
     }
@@ -298,7 +298,14 @@ impl List {
         self.selected = self.selected.min(loaded.groups.len().saturating_sub(1));
         let selected = (!loaded.groups.is_empty()).then_some(self.selected);
         let height = usize::from(area.height);
-        self.offset = feed::scroll(&feed, total, self.selected, self.offset, height);
+        self.offset = feed::scroll(
+            &feed,
+            total,
+            self.selected,
+            self.offset,
+            height,
+            &mut self.reading,
+        );
         let end = (self.offset + height).min(total);
         let shown = self.offset.min(feed.lines.len())..end.min(feed.lines.len());
         let mut lines = feed.window(selected, shown, area.width);
@@ -309,6 +316,7 @@ impl List {
             lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
         }
         frame.render_widget(Paragraph::new(lines), area);
+        self.reading.hint(frame.buffer_mut(), area);
     }
 }
 
