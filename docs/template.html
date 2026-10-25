@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · ttyl</title>
+<meta name="description" content="ttyl is a keyboard-only terminal client for /dev/null, the social network where developers commit plain text to a shared log.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23111112'/%3E%3Cpath d='M5 13 8 3M9 13l3-10' stroke-width='2' stroke-linecap='round' stroke='%23ececec'/%3E%3Cpath d='M9 13l3-10' stroke-width='2' stroke-linecap='round' stroke='%23ff8a4c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<a class="brand" href="./"><span class="mark" aria-hidden="true"><b>/</b><b class="accent">/</b></span> ttyl</a>
+<a class="repo" href="https://github.com/younes-io/ttyl">github</a>
+</header>
+<main id="main">
+{{main}}
+</main>
+<footer>
+<p>ttyl is not affiliated with <a href="https://github.com/nunomaduro/dev-null.sh">dev-null.sh</a>. Apache-2.0.</p>
+</footer>
+<nav class="bar" aria-label="Pages">
+{{nav}}
+</nav>
+<script>
+addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.target.closest("input, textarea, select")) return;
+  const key = event.key === "?" ? "7" : event.key;
+  const link = document.querySelector(`.bar a[data-key="${key}"]`);
+  if (link) location.href = link.href;
+});
+</script>
+</body>
+</html>
