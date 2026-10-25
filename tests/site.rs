@@ -449,12 +449,177 @@ fn html(buffer: &Buffer, alt: &str, class: &str) -> String {
     out
 }
 
+const CELL_WIDTH: f32 = 8.4;
+const CELL_HEIGHT: f32 = 17.0;
+const TITLE_BAR: f32 = 30.0;
+const MARGIN: f32 = 32.0;
+const INSET: f32 = 14.0;
+
+struct Fill {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: String,
+}
+
+/// `buffer` as an SVG of a terminal window, for the README, which cannot show the HTML screens.
+fn svg(buffer: &Buffer, alt: &str) -> String {
+    let area = buffer.area;
+    let background = hex(theme::BACKGROUND).unwrap();
+    let foreground = hex(theme::FOREGROUND).unwrap();
+    let window_width = f32::from(area.width) * CELL_WIDTH + 2.0 * INSET;
+    let window_height = f32::from(area.height) * CELL_HEIGHT + TITLE_BAR + INSET;
+    let (width, height) = (window_width + 2.0 * MARGIN, window_height + 2.0 * MARGIN);
+    let mut out = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" \
+         viewBox=\"0 0 {width} {height}\" role=\"img\" aria-label=\"{alt}\" xml:space=\"preserve\">\
+         <title>{alt}</title>\
+         <defs><filter id=\"shadow\" x=\"-10%\" y=\"-10%\" width=\"120%\" height=\"130%\">\
+         <feDropShadow dx=\"0\" dy=\"12\" stdDeviation=\"14\" flood-opacity=\"0.45\"/></filter></defs>\
+         <rect x=\"{MARGIN}\" y=\"{MARGIN}\" width=\"{window_width}\" height=\"{window_height}\" rx=\"10\" \
+         fill=\"{background}\" stroke=\"#2a2a2e\" filter=\"url(#shadow)\"/>",
+        alt = escape(alt)
+    );
+    for (i, color) in ["#ff5f57", "#febc2e", "#28c840"].into_iter().enumerate() {
+        let cx = MARGIN + 18.0 + 20.0 * i as f32;
+        let _ = write!(
+            out,
+            "<circle cx=\"{cx}\" cy=\"{}\" r=\"6\" fill=\"{color}\"/>",
+            MARGIN + TITLE_BAR / 2.0
+        );
+    }
+    let left = MARGIN + INSET;
+    let top = MARGIN + TITLE_BAR;
+    let _ = write!(
+        out,
+        "<g font-family=\"ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace\" \
+         font-size=\"14\" fill=\"{foreground}\">"
+    );
+    for y in 0..area.height {
+        let row_top = top + f32::from(y) * CELL_HEIGHT;
+        let mut x = 0;
+        let mut texts: Vec<(u16, u16, String, String)> = Vec::new();
+        let mut fills: Vec<Fill> = Vec::new();
+        while x < area.width {
+            let cell = &buffer[(x, y)];
+            let symbol = cell.symbol();
+            let cells = u16::try_from(symbol.width().max(1)).unwrap();
+            let fg = hex(cell.fg).unwrap_or_else(|| foreground.clone());
+            let bg = hex(cell.bg).unwrap_or_else(|| background.clone());
+            let cell_left = left + f32::from(x) * CELL_WIDTH;
+            let cell_width = f32::from(cells) * CELL_WIDTH;
+            let mut paint = |color: &str, y: f32, height: f32| match fills.last_mut() {
+                Some(last)
+                    if last.color == color
+                        && last.y == y
+                        && last.height == height
+                        && (last.x + last.width - cell_left).abs() < 0.01 =>
+                {
+                    last.width += cell_width;
+                }
+                _ => fills.push(Fill {
+                    x: cell_left,
+                    y,
+                    width: cell_width,
+                    height,
+                    color: color.to_owned(),
+                }),
+            };
+            match symbol {
+                "\u{2580}" | "\u{2584}" => {
+                    let (upper, lower) = if symbol == "\u{2580}" {
+                        (&fg, &bg)
+                    } else {
+                        (&bg, &fg)
+                    };
+                    paint(upper, row_top, CELL_HEIGHT / 2.0);
+                    paint(lower, row_top + CELL_HEIGHT / 2.0, CELL_HEIGHT / 2.0);
+                }
+                _ => {
+                    if bg != background {
+                        paint(&bg, row_top, CELL_HEIGHT);
+                    }
+                    let mut style = String::new();
+                    if fg != foreground {
+                        let _ = write!(style, " fill=\"{fg}\"");
+                    }
+                    if cell.modifier.contains(Modifier::BOLD) {
+                        style.push_str(" font-weight=\"bold\"");
+                    }
+                    if cell.modifier.contains(Modifier::ITALIC) {
+                        style.push_str(" font-style=\"italic\"");
+                    }
+                    if cell.modifier.contains(Modifier::UNDERLINED) {
+                        style.push_str(" text-decoration=\"underline\"");
+                    }
+                    match texts.last_mut() {
+                        Some((_, width, last, text)) if *last == style => {
+                            text.push_str(symbol);
+                            *width += cells;
+                        }
+                        _ => texts.push((x, cells, style, symbol.to_owned())),
+                    }
+                }
+            }
+            x += cells;
+        }
+        for fill in fills {
+            let _ = write!(
+                out,
+                "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"{}\"/>",
+                fill.x,
+                fill.y,
+                fill.width + 0.3,
+                fill.height + 0.3,
+                fill.color
+            );
+        }
+        for (x, style, text) in texts.iter().flat_map(|(x, _, style, text)| {
+            words(text).map(move |(offset, word)| (x + offset, style, word))
+        }) {
+            let _ = write!(
+                out,
+                "<text x=\"{:.1}\" y=\"{:.1}\" textLength=\"{:.1}\" lengthAdjust=\"spacingAndGlyphs\"{style}>{}</text>",
+                left + f32::from(x) * CELL_WIDTH,
+                row_top + CELL_HEIGHT * 0.76,
+                f32::from(u16::try_from(text.width()).unwrap()) * CELL_WIDTH,
+                escape(text)
+            );
+        }
+    }
+    out.push_str("</g></svg>");
+    out
+}
+
+/// The parts of `text` between runs of two or more spaces, with the cell each starts at. An SVG
+/// viewer drops the spaces at the end of a text, which would stretch the rest across them.
+fn words(text: &str) -> impl Iterator<Item = (u16, &str)> {
+    let mut cell = 0;
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        let start = rest.len() - rest.trim_start().len();
+        cell += rest[..start].width();
+        rest = &rest[start..];
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest.find("  ").unwrap_or(rest.len());
+        let word = rest[..end].trim_end();
+        let at = cell;
+        cell += rest[..end].width();
+        rest = &rest[end..];
+        Some((u16::try_from(at).unwrap(), word))
+    })
+}
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The figure for `shot`: the wide and narrow screens, of which CSS shows one.
-fn figure(shot: &Shot, picture: &Path) -> String {
+/// The figure for `shot`, with the wide and narrow screens of which CSS shows one, and the
+/// wide screen as an SVG.
+fn figure(shot: &Shot, picture: &Path) -> (String, String) {
     let mut engine = shoot(shot, picture);
     let at = Instant::now();
     let wide = common::buffer(&mut engine, WIDE.0, WIDE.1, at);
@@ -467,12 +632,13 @@ fn figure(shot: &Shot, picture: &Path) -> String {
         rows(&wide)
     );
     let narrow = common::buffer(&mut engine, NARROW.0, NARROW.1, at);
-    format!(
+    let figure = format!(
         "<figure class=\"screen\" id=\"screen-{}\">{}{}</figure>",
         shot.name,
         html(&wide, shot.alt, "wide"),
         html(&narrow, shot.alt, "narrow")
-    )
+    );
+    (figure, svg(&wide, shot.alt))
 }
 
 fn rows(buffer: &Buffer) -> String {
@@ -807,6 +973,7 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
     }
     let mut unused: Vec<&str> = SHOTS.iter().map(|shot| shot.name).collect();
     let mut files = Vec::new();
+    let mut svgs = Vec::new();
     for page in PAGES {
         let file = format!("{}.md", page.name);
         let source = fs::read_to_string(docs.join(&file)).unwrap();
@@ -817,7 +984,9 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
                     .find(|shot| shot.name == name)
                     .unwrap_or_else(|| panic!("{file}: no screen is called {name:?}"));
                 unused.retain(|unused| *unused != name);
-                figure(shot, picture)
+                let (figure, svg) = figure(shot, picture);
+                svgs.push((format!("screen-{name}.svg"), svg.into_bytes()));
+                figure
             }
             None if marker == "keys" => keys_reference(),
             _ => panic!("{file}: unknown marker {{{{{marker}}}}}"),
@@ -831,6 +1000,7 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
         files.push((format!("{}.html", page.name), html.into_bytes()));
     }
     assert!(unused.is_empty(), "no page shows the screens {unused:?}");
+    files.append(&mut svgs);
     files.push((
         "style.css".to_owned(),
         fs::read(docs.join("style.css")).unwrap(),
