@@ -295,13 +295,18 @@ mod scheme {
                 "-e",
                 "on open location link",
                 "-e",
-                &format!("do shell script quoted form of \"{exe}\" & \" --redirect \" & quoted form of link"),
+                &format!(
+                    "do shell script quoted form of \"{exe}\" & \" --redirect \" & quoted form of link"
+                ),
                 "-e",
                 "end open location",
             ],
         )?;
         let plist = format!("{app_path}/Contents/Info.plist");
-        run("plutil", &["-replace", "CFBundleIdentifier", "-string", OURS, &plist])?;
+        run(
+            "plutil",
+            &["-replace", "CFBundleIdentifier", "-string", OURS, &plist],
+        )?;
         run(
             "plutil",
             &[
