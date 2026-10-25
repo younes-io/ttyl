@@ -1,7 +1,7 @@
 # A terminal client for /dev/null
 
-ttyl lets you read, reply and post on [dev-null.sh](https://dev-null.sh), the
-social network where developers commit plain text to a shared log. Every
+ttyl lets you read, reply and post on [dev-null.sh](https://dev-null.sh), a
+social network for developers where a post is called a commit. Every
 action has a key, so you never reach for the mouse. It runs on macOS and Linux.
 
 {{screen home}}
