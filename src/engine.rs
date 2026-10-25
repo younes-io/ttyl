@@ -2018,6 +2018,9 @@ impl Engine {
     }
 
     pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
+        if let Phase::Ready(session) = &self.phase {
+            theme::set_pasteis(session.store.me.pasteis_mode);
+        }
         if let Some(saver) = &mut self.saver {
             return saver.draw(frame, now);
         }
