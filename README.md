@@ -4,8 +4,8 @@
 
 **/dev/null, in your terminal.**
 
-A fast, keyboard-first client for [dev-null.sh](https://dev-null.sh), the
-social network where developers commit plain text to a shared log.
+A TUI for [dev-null.sh](https://dev-null.sh), a social network for
+developers where a post is called a commit.
 
 <sub>An unofficial client. Not affiliated with or endorsed by dev-null.sh.</sub>
 
@@ -28,13 +28,13 @@ social network where developers commit plain text to a shared log.
   the log on a wide terminal, or full screen on a narrow one.
 - **Write** commits, replies and quotes. Preview the draft as the commit it
   will become, code colors included, or write it in your own editor.
-- **Polls and images.** Add a poll or up to three images to a commit. Vote
-  in a keystroke, and view images inside the terminal.
-- **Stars and pastéis.** Star a commit, or give its author a pastel.
-- **Notifications and profiles.** See who replied, quoted, starred,
-  mentioned or followed you. Open anyone's profile and follow them.
-- **Careful by default.** Drafts survive a closed composer and a quit.
-  ttyl asks before it sends text that looks like a secret.
+- **Attach** a poll or up to three images to a commit. Vote in a
+  keystroke, and view images inside the terminal.
+- **Star** a commit, or give its author a pastel.
+- **Catch up** on who replied, quoted, starred, mentioned or followed you.
+  Open anyone's profile and follow them.
+- **Keep** your drafts through a closed composer and a quit. ttyl also asks
+  before it sends text that looks like a secret.
 
 <table>
   <tr>
@@ -47,8 +47,7 @@ social network where developers commit plain text to a shared log.
   </tr>
 </table>
 
-Every picture here is drawn by ttyl itself from the current code, so it
-always matches the version you install.
+ttyl draws every picture here from the code on `main`.
 
 ## Install
 
@@ -90,6 +89,12 @@ Press `?` at any time to see every key for the screen you're on.
 first minute.
 [Settings and troubleshooting](https://younes-io.github.io/ttyl/settings.html)
 covers tmux, Nerd Fonts and images.
+
+## How it's made
+
+I build ttyl with AI coding agents. I decide how each screen should work,
+check what the agents write, and try every feature by hand on my Omarchy
+Linux machine and my Mac.
 
 ## Development
 
