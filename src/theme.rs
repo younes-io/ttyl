@@ -129,12 +129,24 @@ pub fn wordmark() -> [Span<'static>; 3] {
     ]
 }
 
-/// The mark beside the wordmark, as the web's header shows them.
+/// ttyl at /dev/null, `// ttyl @ /dev/null`.
 pub fn logo() -> Vec<Span<'static>> {
-    let mut spans = mark().to_vec();
-    spans.push(Span::raw(" "));
-    spans.extend(wordmark());
+    let mut spans = name().to_vec();
+    spans.extend(host());
     spans
+}
+
+/// The mark beside ttyl's name, as the docs site's header shows them.
+pub fn name() -> [Span<'static>; 4] {
+    let [first, second] = mark();
+    let ink = Style::new().fg(FOREGROUND).add_modifier(Modifier::BOLD);
+    [first, second, Span::raw(" "), Span::styled("ttyl", ink)]
+}
+
+/// Where ttyl runs, ` @ /dev/null`, with the at muted so it reads as a word.
+pub fn host() -> [Span<'static>; 4] {
+    let [dev, slash, null] = wordmark();
+    [Span::styled(" @ ", muted()), dev, slash, null]
 }
 
 pub fn muted() -> Style {
