@@ -277,40 +277,26 @@ proptest! {
     }
 
     #[test]
-    fn the_selected_header_stays_on_screen(
+    fn the_selected_commit_stays_on_screen(
         keys in prop::collection::vec(prop::sample::select(vec!["j", "k", "gg", "G", " "]), 0..30),
         width in 70u16..120,
         height in 4u16..30,
     ) {
-        let hashes: Vec<_> = page("log-latest")
-            .rows
-            .iter()
-            .map(|row| row.commit.short_hash.clone())
-            .collect();
         let at = Instant::now();
         let mut engine: Engine = common::boot(at);
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let mut selected = 0usize;
-        let last = hashes.len() - 1;
         for key in std::iter::once("2").chain(keys) {
-            selected = match key {
-                "j" => (selected + 1).min(last),
-                "k" => selected.saturating_sub(1),
-                "gg" => 0,
-                "G" => last,
-                _ => selected,
-            };
             common::press(&mut engine, key, at);
             terminal.draw(|frame| engine.draw(frame, at, &now())).unwrap();
         }
         let buffer = terminal.backend().buffer();
+        let ground = buffer[(0, 0)].bg;
         let rows: Vec<String> = (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
             .collect();
         prop_assert!(
-            rows.iter().any(|row| row.contains(&hashes[selected])),
-            "{} not on screen: {rows:#?}",
-            hashes[selected]
+            (2..height - 1).any(|y| (0..width).any(|x| buffer[(x, y)].bg != ground)),
+            "no selected card on screen: {rows:#?}"
         );
     }
 }

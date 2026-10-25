@@ -131,6 +131,7 @@ pub struct Paged {
     asked_at: Option<Instant>,
     selected: usize,
     offset: usize,
+    reading: feed::Reading,
     expanded: HashSet<CommitId>,
     folded: Vec<bool>,
     /// Their pinned commit, put first by the profile rather than by the server.
@@ -165,10 +166,9 @@ impl Paged {
     pub fn act(&mut self, action: Action) {
         let last = self.items().len().saturating_sub(1);
         match action {
-            Action::Down => self.selected = (self.selected + 1).min(last),
-            Action::Up => self.selected = self.selected.saturating_sub(1),
-            Action::Top => self.selected = 0,
-            Action::Bottom => self.selected = last,
+            Action::Down | Action::Up | Action::Top | Action::Bottom => {
+                self.selected = self.reading.step(action, self.selected, last);
+            }
             Action::Expand => {
                 if let Some(id) = self.commit().cloned()
                     && !self.expanded.remove(&id)
@@ -308,12 +308,20 @@ impl Paged {
         let selected = Some(self.selected);
         let total = feed.lines.len();
         let height = usize::from(area.height);
-        self.offset = feed::scroll(&feed, total, self.selected, self.offset, height);
+        self.offset = feed::scroll(
+            &feed,
+            total,
+            self.selected,
+            self.offset,
+            height,
+            &mut self.reading,
+        );
         let shown = self.offset.min(total)..(self.offset + height).min(total);
         let rows = feed.card_rows(selected, &shown);
         let card = feed::card_area(area, &rows);
         let lines = feed.window(selected, shown, area.width);
         frame.render_widget(Paragraph::new(&lines[..]), area);
+        self.reading.hint(frame.buffer_mut(), area);
         if let Some(id) = ids.get(self.selected) {
             for (spark, elapsed) in timers.sparks(id, now) {
                 feed::spark(

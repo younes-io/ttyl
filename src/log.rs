@@ -36,6 +36,7 @@ pub struct LogScreen {
 struct Place {
     selected: usize,
     offset: usize,
+    reading: feed::Reading,
     anchor: Option<Anchor>,
     laid_out: Option<LaidOut>,
 }
@@ -199,10 +200,9 @@ impl LogScreen {
         let last = self.ids(store).len().saturating_sub(1);
         let place = &mut self.places[index(self.active)];
         match action {
-            Action::Down => place.selected = (place.selected + 1).min(last),
-            Action::Up => place.selected = place.selected.saturating_sub(1),
-            Action::Top => place.selected = 0,
-            Action::Bottom => place.selected = last,
+            Action::Down | Action::Up | Action::Top | Action::Bottom => {
+                place.selected = place.reading.step(action, place.selected, last);
+            }
             Action::Expand => {
                 if let Some(id) = self.ids(store).get(self.selected())
                     && !self.expanded.remove(id)
@@ -390,7 +390,14 @@ impl LogScreen {
                     place.offset = start(place.selected).saturating_sub(anchor.line);
                 }
                 let height = usize::from(area.height);
-                place.offset = feed::scroll(feed, total, place.selected, place.offset, height);
+                place.offset = feed::scroll(
+                    feed,
+                    total,
+                    place.selected,
+                    place.offset,
+                    height,
+                    &mut place.reading,
+                );
                 place.anchor = id.clone().map(|id| Anchor {
                     id,
                     line: start(place.selected).saturating_sub(place.offset),
@@ -407,6 +414,7 @@ impl LogScreen {
                     lines.extend_from_slice(&tail[from..end - feed.lines.len()]);
                 }
                 frame.render_widget(Paragraph::new(&lines[..]), area);
+                place.reading.hint(frame.buffer_mut(), area);
                 for (spark, elapsed) in id.map(|id| timers.sparks(&id, at)).unwrap_or_default() {
                     feed::spark(
                         frame.buffer_mut(),
