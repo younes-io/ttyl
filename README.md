@@ -67,7 +67,9 @@ The `● 3` at the top right counts your unread notifications. Press `gn` to
 read them. Opening them marks them all as read, as the website does.
 
 Press `c` to write a commit, `r` to reply, or `q` to quote. Press `ctrl-s`
-to send it, or `ctrl-e` to write in your own editor. If you close the
+to send it, or `ctrl-e` to write in your own editor. Press `ctrl-r` to
+preview the draft as the commit it would become, code colors included.
+`esc` goes back to writing, and `ctrl-s` sends it from there. If you close the
 composer with `esc`, your draft is kept, even after you quit. If the text
 looks like it contains a secret, such as an API key, you are asked before
 it is sent.
@@ -124,6 +126,7 @@ In the composer:
 | `ctrl-e` | Write in your own editor |
 | `ctrl-p` | Add a poll, or take it off |
 | `ctrl-v` | Attach the image you copied |
+| `ctrl-r` | Preview the commit, or go back to writing |
 | `tab` | Move to the poll or the images |
 | `esc` | Close and keep the draft |
 

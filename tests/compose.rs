@@ -85,9 +85,10 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
                 ""
             };
             let image = if roomy { "  ctrl-v image" } else { "" };
+            let preview = if roomy { "  ctrl-r preview" } else { "" };
             assert_eq!(
                 rows[usize::from(HEIGHT) - 1],
-                format!(" ctrl-s commit  ctrl-e editor{poll}{image}  esc close"),
+                format!(" ctrl-s commit  ctrl-e editor{poll}{image}{preview}  esc close"),
                 "only a new commit can carry a poll, and a narrow row drops its hint: {rows:#?}"
             );
         }
@@ -324,4 +325,22 @@ fn a_narrow_composer_hint_keeps_esc_close() {
     let hints = "ctrl-s commit  ctrl-e editor  esc close";
     assert_eq!(keys::fit(hints, 30), "ctrl-s commit  esc close");
     assert_eq!(keys::fit(hints, 12), "esc close");
+}
+
+#[test]
+fn help_lists_the_keys_for_writing() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "?", at);
+    press(&mut engine, &"j".repeat(60), at);
+    let rows = screen(&mut engine, 100, 50, at);
+    for shown in [
+        "while writing",
+        "ctrl-e  write it in $VISUAL or $EDITOR",
+        "ctrl-p  add a poll, or take it off",
+        "ctrl-r  preview it as the commit it would become",
+        "esc  close, keeping the draft",
+    ] {
+        assert!(contains(&rows, shown), "{shown}: {rows:#?}");
+    }
 }

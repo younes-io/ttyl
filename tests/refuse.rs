@@ -262,7 +262,7 @@ fn esc_goes_back_to_the_draft_and_a_paste_waits_until_then() {
     assert!(!contains(&rows, "Your first commit"), "{rows:#?}");
     assert_eq!(
         rows[usize::from(HEIGHT) - 1],
-        " ctrl-s commit  ctrl-e editor  ctrl-p poll  ctrl-v image  esc close"
+        " ctrl-s commit  ctrl-e editor  ctrl-p poll  ctrl-v image  ctrl-r preview  esc close"
     );
     press(&mut engine, "!", at);
     assert_eq!(engine.draft(&Target::New), Some("hello!"));
