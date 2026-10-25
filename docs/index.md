@@ -12,16 +12,16 @@ against sample data and copies what it puts on the terminal, cell by cell.
 <section class="panel install" id="install" aria-labelledby="install-title">
 <h2 id="install-title">Install</h2>
 
-With Homebrew:
+On macOS, with Homebrew:
 
 ```sh
 brew install younes-io/tap/ttyl
 ```
 
-With the install script, which puts `ttyl` in `~/.cargo/bin`:
+On Linux, with the install script, which puts `ttyl` in `~/.local/bin`:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/younes-io/ttyl/releases/latest/download/ttyl-installer.sh | sh
+curl -fsSL https://younes-io.github.io/ttyl/install.sh | sh
 ```
 
 With Cargo, if you have a recent stable [Rust](https://rustup.rs):

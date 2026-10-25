@@ -16,7 +16,9 @@ publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
 # Path that installers should place binaries in
-install-path = "CARGO_HOME"
+install-path = "~/.local/bin"
+# gzip, which every tar reads, unlike xz on minimal systems
+unix-archive = ".tar.gz"
 # Where to host releases
 hosting = "github"
 # Whether to install an updater program

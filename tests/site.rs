@@ -1026,8 +1026,12 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
         fs::read(docs.join("style.css")).unwrap(),
     ));
     files.push(("desk.png".to_owned(), fs::read(picture).unwrap()));
-    for wordmark in ["dev-null-wordmark-dark.svg", "dev-null-wordmark-light.svg"] {
-        files.push((wordmark.to_owned(), fs::read(docs.join(wordmark)).unwrap()));
+    for asset in [
+        "dev-null-wordmark-dark.svg",
+        "dev-null-wordmark-light.svg",
+        "install.sh",
+    ] {
+        files.push((asset.to_owned(), fs::read(docs.join(asset)).unwrap()));
     }
     check_links(&files);
     files

@@ -36,6 +36,6 @@ Press <kbd>Q</kbd> or <kbd>ctrl-c</kbd> to quit.
 ## Uninstall
 
 Run `brew uninstall ttyl` or `cargo uninstall ttyl`. If you used the install
-script, delete `~/.cargo/bin/ttyl`. To also remove the key this terminal
+script, delete `~/.local/bin/ttyl`. To also remove the key this terminal
 signs in with, delete `~/.config/ttyl`, or `$XDG_CONFIG_HOME/ttyl` if you set
 that variable.
