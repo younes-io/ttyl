@@ -95,7 +95,7 @@ fn any_other_key_goes_back_to_editing_with_nothing_sent_or_typed() {
         );
         assert_eq!(
             rows[usize::from(HEIGHT) - 1],
-            " ctrl-s commit  ctrl-e editor  ctrl-p poll  ctrl-v image  esc close"
+            " ctrl-s commit  ctrl-e editor  ctrl-p poll  ctrl-v image  ctrl-r preview  esc close"
         );
         press(&mut engine, "!", at);
         assert_eq!(

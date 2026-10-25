@@ -18,6 +18,7 @@ use crate::draft::{Draft, Target};
 use crate::emoji::{self, Emoji};
 use crate::fatal;
 use crate::feed;
+use crate::model::Segment;
 use crate::popup;
 use crate::text::Buffer;
 use crate::theme;
@@ -49,6 +50,9 @@ const DESCRIPTION_COUNT_FROM: usize = 100;
 /// A long file name gives way to the description before it.
 const NAME_SHOWN: usize = 24;
 const DESCRIBE: &str = "describe it for people who can't see it";
+const RENDERING: &str = "rendering…";
+const UNAVAILABLE: &str = "preview unavailable";
+const PREVIEW: &str = "preview";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
@@ -65,6 +69,19 @@ struct Note {
 enum Row {
     Text(Range<usize>),
     Fold,
+}
+
+/// What the server made of a draft. A failed render shows the draft as typed.
+enum Rendered {
+    Loading,
+    Ready(Vec<Segment>),
+    Failed,
+}
+
+/// The draft text last sent to be rendered, so going back and forth without an edit asks once.
+struct Preview {
+    text: String,
+    rendered: Rendered,
 }
 
 /// The emoji whose names match the `:name` before the cursor, all of them, in rank order.
@@ -223,6 +240,8 @@ pub struct Composer {
     prompt: Option<Prompt>,
     width: usize,
     scroll: usize,
+    preview: Option<Preview>,
+    previewing: bool,
 }
 
 impl Composer {
@@ -258,6 +277,8 @@ impl Composer {
             prompt: None,
             width: 80,
             scroll: 0,
+            preview: None,
+            previewing: false,
         }
     }
 
@@ -563,8 +584,57 @@ impl Composer {
         }
     }
 
-    /// Hides the emoji picker until the `:name` it was showing is gone, and says whether it was open.
+    /// Flips between writing and the preview, and gives the text to render when the last render doesn't cover it.
+    pub fn toggle_preview(&mut self) -> Option<String> {
+        self.previewing = !self.previewing;
+        if !self.previewing {
+            return None;
+        }
+        let text = self.text.text();
+        if let Some(preview) = &self.preview
+            && preview.text == text
+            && !matches!(preview.rendered, Rendered::Failed)
+        {
+            return None;
+        }
+        self.preview = Some(Preview {
+            text: text.to_owned(),
+            rendered: Rendered::Loading,
+        });
+        Some(text.to_owned())
+    }
+
+    pub fn previewing(&self) -> bool {
+        self.previewing
+    }
+
+    /// Takes in a render of `text`, or `None` when it failed. A render of an older draft is dropped.
+    pub fn rendered(&mut self, text: &str, segments: Option<Vec<Segment>>) {
+        if let Some(preview) = &mut self.preview
+            && preview.text == text
+        {
+            preview.rendered = segments.map_or(Rendered::Failed, Rendered::Ready);
+        }
+    }
+
+    /// The render on show, if the preview is up and the server has answered.
+    fn shown(&self) -> Option<&[Segment]> {
+        match &self.preview {
+            Some(Preview {
+                rendered: Rendered::Ready(segments),
+                ..
+            }) if self.previewing => Some(segments),
+            _ => None,
+        }
+    }
+
+    /// Leaves the preview, or hides the emoji picker until the `:name` it was showing is gone, and says whether
+    /// either was up.
     pub fn dismiss(&mut self) -> bool {
+        if self.previewing {
+            self.previewing = false;
+            return true;
+        }
         let Some(picker) = self.picker.take() else {
             return false;
         };
@@ -599,7 +669,7 @@ impl Composer {
     }
 
     pub fn paste(&mut self, pasted: &str) -> bool {
-        if self.prompt == Some(Prompt::Rules) {
+        if self.prompt == Some(Prompt::Rules) || self.previewing {
             return false;
         }
         let before = self.draft();
@@ -693,7 +763,7 @@ impl Composer {
     /// The poll or images under the body, with a blank row between them.
     fn attached_rows(&self) -> usize {
         match &self.poll {
-            _ if self.prompt == Some(Prompt::Rules) => 0,
+            _ if self.prompt == Some(Prompt::Rules) || self.previewing => 0,
             Some(form) => 1 + form.rows(),
             None if !self.images.is_empty() => 1 + self.images.len(),
             None => 0,
@@ -708,8 +778,9 @@ impl Composer {
         let most = (usize::from(screen) / 2)
             .saturating_sub(TITLE + status + poll)
             .max(least);
-        let rows = match self.prompt {
-            Some(Prompt::Rules) => rules(inner_width(width)).len(),
+        let rows = match (self.prompt, self.shown()) {
+            (Some(Prompt::Rules), _) => rules(inner_width(width)).len(),
+            (None, Some(segments)) => feed::body(segments, inner_width(width)).len(),
             _ => self.lines(layout_width(width)).len(),
         };
         u16::try_from(rows.clamp(least, most) + TITLE + status + poll).unwrap_or(u16::MAX)
@@ -759,6 +830,14 @@ impl Composer {
             frame.render_widget(Paragraph::new(copy), text_area);
             return;
         }
+        if let Some(segments) = self.shown() {
+            let lines: Vec<Line> = feed::body(segments, usize::from(text_area.width))
+                .into_iter()
+                .map(Line::from)
+                .collect();
+            frame.render_widget(Paragraph::new(lines), text_area);
+            return;
+        }
         let lines = self.lines(self.width);
         let (row, column) = self.text.row_and_column(self.width);
         let marker = lines.iter().position(|line| matches!(line, Row::Fold));
@@ -779,6 +858,9 @@ impl Composer {
             })
             .collect();
         frame.render_widget(Paragraph::new(lines), text_area);
+        if self.previewing {
+            return;
+        }
         if self.focus == Focus::Body {
             let x = u16::try_from(column).unwrap_or(u16::MAX);
             let y = u16::try_from(row - self.scroll).unwrap_or(u16::MAX);
@@ -980,11 +1062,17 @@ impl Composer {
             theme::muted()
         };
         let room = width.saturating_sub(count.width() + usize::from(!count.is_empty()));
+        let preview = self.preview.as_ref().filter(|_| self.previewing);
         let (wide, narrow, style) = match &self.note {
             _ if self.prompt == Some(Prompt::Secret) => {
                 (ASK, Some(ASK_SHORT), Style::new().fg(theme::AMBER))
             }
             Some(note) => (note.wide.as_str(), note.narrow, note.style),
+            None if let Some(preview) = preview => match preview.rendered {
+                Rendered::Loading => (RENDERING, None, theme::muted()),
+                Rendered::Ready(_) => (PREVIEW, None, theme::muted()),
+                Rendered::Failed => (UNAVAILABLE, None, Style::new().fg(theme::AMBER)),
+            },
             None if self.restored => (RESTORED, None, theme::muted()),
             None => ("", None, theme::muted()),
         };
