@@ -116,3 +116,5 @@ site, run `cargo test --test site`, then open `target/site/index.html`.
 ## license
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Made by [younes.io](https://younes.io).
