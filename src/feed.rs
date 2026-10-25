@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::bidi;
 use crate::clock::Spark;
 use crate::code;
+use crate::keys::Action;
 use crate::model::{
     Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment, Shown,
     Status,
@@ -1376,28 +1377,90 @@ pub fn day_label<Tz: TimeZone>(day: NaiveDate, now: &DateTime<Tz>) -> String {
     }
 }
 
+/// How far the reader has scrolled into the selected entry, when it is taller than the screen, so up and
+/// down read through it before moving to the next one.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Reading {
+    into: usize,
+    room: usize,
+}
+
+impl Reading {
+    /// Where up, down, top and bottom take the selection among entries `0..=last`, scrolling through the
+    /// selected entry first while part of it is off screen.
+    pub(crate) fn step(&mut self, action: Action, selected: usize, last: usize) -> usize {
+        self.into = self.into.min(self.room);
+        let (into, to) = match action {
+            Action::Down if self.into < self.room => (self.into + 1, selected),
+            Action::Up if self.into > 0 => (self.into - 1, selected),
+            Action::Down if selected < last => (0, selected + 1),
+            // The end of a tall entry above is the part that sits next to where the reader came from.
+            Action::Up if selected > 0 => (usize::MAX, selected - 1),
+            Action::Top => (0, 0),
+            Action::Bottom => (usize::MAX, last),
+            _ => return selected,
+        };
+        if to != selected {
+            // Until the next draw measures it, a newly selected entry has no known room to scroll through.
+            self.room = 0;
+        }
+        self.into = into;
+        to
+    }
+
+    /// Marks the bottom row with how much of the selected entry is still below it, unless that row is the only one.
+    pub(crate) fn hint(&self, buffer: &mut Buffer, area: Rect) {
+        let below = self.room - self.into;
+        if below == 0 || area.height < 2 {
+            return;
+        }
+        let noun = if below == 1 { "line" } else { "lines" };
+        let hint = format!(" ↓ {below} more {noun} ");
+        let width = u16::try_from(hint.width())
+            .unwrap_or(u16::MAX)
+            .min(area.width);
+        buffer.set_stringn(
+            area.right() - width,
+            area.bottom() - 1,
+            hint,
+            usize::from(width),
+            theme::muted(),
+        );
+    }
+}
+
 pub(crate) fn scroll(
     feed: &Feed,
     total: usize,
     selected: usize,
     offset: usize,
     height: usize,
+    reading: &mut Reading,
 ) -> usize {
     let Some(entry) = feed.entries.get(selected) else {
+        *reading = Reading::default();
         return 0;
     };
     let is_last = selected + 1 == feed.entries.len();
-    let start = entry.lines.start;
+    // A divider above the header may scroll away on a short screen, but the header stays, above the hint row.
+    let start = entry
+        .lines
+        .start
+        .max((entry.header + 2).saturating_sub(height).min(entry.header));
     let end = if is_last { total } else { entry.lines.end };
+    reading.room = (end - start).saturating_sub(height);
+    reading.into = reading.into.min(reading.room);
+    if reading.room > 0 {
+        return start + reading.into;
+    }
     let offset = offset.min(total.saturating_sub(height));
-    let offset = if start < offset {
+    if start < offset {
         start
     } else if end > offset + height {
-        (end - height).min(start)
+        end - height
     } else {
         offset
-    };
-    offset.max((entry.header + 1).saturating_sub(height))
+    }
 }
 
 #[cfg(test)]

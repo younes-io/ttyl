@@ -263,6 +263,11 @@ fn header_shown(rows: &[String], tree: &Tree, selected: &CommitId) -> bool {
     header >= 2 && rows[header].contains('●')
 }
 
+fn card_shown(rows: &[String], tree: &Tree, selected: &CommitId) -> bool {
+    let of = format!(" of node {}", Tree::index(&selected.0));
+    header_shown(rows, tree, selected) || rows[2..].iter().any(|row| row.ends_with(&of))
+}
+
 fn reporting(rows: &[String]) -> bool {
     rows.last()
         .is_some_and(|hints| hints.contains("esc cancel"))
@@ -289,7 +294,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
     #[test]
-    fn the_selected_header_stays_on_screen_and_back_restores_the_log(
+    fn the_selected_commit_stays_on_screen_and_back_restores_the_log(
         tree in tree(),
         width in prop::sample::select(vec![44u16, 100]),
         height in 10u16..40,
@@ -304,6 +309,7 @@ proptest! {
         let effects = tap(&mut engine, KeyCode::Enter, at);
         settle(&mut engine, &tree, effects, size, at);
         for key in keys {
+            let before = engine.thread().map(|thread| thread.selected().clone());
             let effects = hit(&mut engine, key, at);
             settle(&mut engine, &tree, effects, size, at);
             let rows = screen(&mut engine, width, height, at);
@@ -313,10 +319,15 @@ proptest! {
                 }
                 Some(thread) => {
                     let selected = thread.selected();
-                    prop_assert!(
-                        header_shown(&rows, &tree, selected),
-                        "{key:?} lost {selected:?}: {rows:#?}"
-                    );
+                    // A commit taller than the screen is read a line at a time, so only arriving at one from above
+                    // promises its header.
+                    let arrived = key == "gg" || (key == "j" && before.as_ref() != Some(selected));
+                    let shown = if arrived {
+                        header_shown(&rows, &tree, selected)
+                    } else {
+                        card_shown(&rows, &tree, selected)
+                    };
+                    prop_assert!(shown, "{key:?} lost {selected:?}: {rows:#?}");
                 }
                 None => {
                     let rows = screen(&mut engine, width, height, at + Spark::Star.lasts());

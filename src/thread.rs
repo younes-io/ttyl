@@ -28,6 +28,7 @@ pub struct ThreadScreen {
     selected: CommitId,
     at: usize,
     offset: usize,
+    reading: feed::Reading,
     anchor: Option<Anchor>,
     moved: bool,
     expanded: HashSet<CommitId>,
@@ -132,6 +133,7 @@ impl ThreadScreen {
             focus,
             at: 0,
             offset: 0,
+            reading: feed::Reading::default(),
             anchor: None,
             moved: false,
             expanded: HashSet::new(),
@@ -268,13 +270,13 @@ impl ThreadScreen {
         let ids: Vec<&CommitId> = pieces.iter().filter_map(Piece::id).collect();
         let last = ids.len() - 1;
         let at = self.index(&ids);
-        let to = match action {
-            Action::Down => (at + 1).min(last),
-            Action::Up => at.saturating_sub(1),
-            Action::Top => 0,
-            Action::Bottom => last,
-            _ => return,
-        };
+        if !matches!(
+            action,
+            Action::Down | Action::Up | Action::Top | Action::Bottom
+        ) {
+            return;
+        }
+        let to = self.reading.step(action, at, last);
         self.selected = ids[to].clone();
         self.at = to;
         self.moved = true;
@@ -422,7 +424,7 @@ impl ThreadScreen {
             self.offset = header(at).saturating_sub(anchor.line);
         }
         let total = feed.lines.len();
-        self.offset = feed::scroll(feed, total, at, self.offset, height);
+        self.offset = feed::scroll(feed, total, at, self.offset, height, &mut self.reading);
         self.anchor = Some(Anchor {
             id: self.selected.clone(),
             line: header(at).saturating_sub(self.offset),
@@ -448,6 +450,7 @@ impl ThreadScreen {
         let lines = feed.window(selected, shown, area.width);
         frame.render_widget(Paragraph::new(&lines[..]), area);
         if selected.is_some() {
+            self.reading.hint(frame.buffer_mut(), area);
             for (spark, elapsed) in timers.sparks(&self.selected, now) {
                 feed::spark(
                     frame.buffer_mut(),

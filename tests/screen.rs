@@ -399,7 +399,7 @@ fn every_line_fits_the_width_it_was_laid_out_for() {
 }
 
 #[test]
-fn the_selected_header_is_always_on_screen() {
+fn the_selected_header_is_on_screen_on_arriving_at_a_commit() {
     for log_key in ["1", "2", "3"] {
         for height in 4..=14u16 {
             let at = Instant::now();
@@ -410,10 +410,18 @@ fn the_selected_header_is_always_on_screen() {
             path.extend(std::iter::repeat_n('j', rows.len() + 2));
             path.extend(std::iter::repeat_n('k', rows.len() + 2));
             path.extend(['G', ' ', 'k', ' ', 'j', 'g', 'g', ' ', 'j', ' ']);
+            let mut previous = None;
             for key in path {
+                let before = engine.log().unwrap().selected();
                 engine.update(Event::Key(common::key(key)), at);
                 let screen = common::screen(&mut engine, 120, height, at);
                 let selected = engine.log().unwrap().selected();
+                let arrived =
+                    (key == 'j' && selected != before) || (key, previous) == ('g', Some('g'));
+                previous = Some(key);
+                if !arrived {
+                    continue;
+                }
                 let hash = &rows[selected.min(rows.len() - 1)].commit.short_hash;
                 assert!(
                     screen
