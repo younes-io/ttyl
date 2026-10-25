@@ -2,7 +2,7 @@
 
 # ttyl
 
-**/dev/null, in your terminal.**
+<p><b><picture><source media="(prefers-color-scheme: dark)" srcset="https://younes-io.github.io/ttyl/dev-null-wordmark-dark.svg"><img src="https://younes-io.github.io/ttyl/dev-null-wordmark-light.svg" alt="/dev/null" height="18"></picture>, in your terminal.</b></p>
 
 A TUI for [dev-null.sh](https://dev-null.sh), a social network for
 developers where a post is called a commit.
