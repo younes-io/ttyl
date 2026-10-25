@@ -24,7 +24,9 @@ pub fn copy(text: &str) {
     let mut out = io::stdout();
     let _ = out.write_all(osc52(text, env::var_os("TMUX").is_some()).as_bytes());
     let _ = out.flush();
-    if !spawn("wl-copy", &[], Some(text)) {
+    if cfg!(target_os = "macos") {
+        spawn("pbcopy", &[], Some(text));
+    } else if !spawn("wl-copy", &[], Some(text)) {
         spawn("xclip", &["-selection", "clipboard"], Some(text));
     }
 }
@@ -77,12 +79,16 @@ pub enum Clipped {
     Files(Vec<PathBuf>),
     Text(String),
     Empty,
-    /// Neither wl-paste nor xclip could be run.
+    /// Neither wl-paste nor xclip could be run, or osascript on macOS.
     Unreachable,
 }
 
-/// Reads the clipboard through wl-paste, or xclip where there is no Wayland.
+/// Reads the clipboard through wl-paste, or xclip where there is no Wayland, or the pasteboard on
+/// macOS.
 pub fn paste() -> Clipped {
+    if cfg!(target_os = "macos") {
+        return pasteboard(None);
+    }
     let wayland = env::var_os("WAYLAND_DISPLAY").is_some();
     let wl = |kind: Option<&str>| match kind {
         Some(kind) => capture("wl-paste", &["--no-newline", "--type", kind]),
@@ -128,6 +134,28 @@ pub fn paste() -> Clipped {
         Some(text) if !text.is_empty() => {
             Clipped::Text(String::from_utf8_lossy(&text).into_owned())
         }
+        _ => Clipped::Empty,
+    }
+}
+
+const PASTEBOARD: &str = include_str!("pasteboard.js");
+
+/// Reads the general pasteboard, or the one named `board`. The script prints `files`, `image` or
+/// `text` on its first line and the content after it. A Finder copy also carries the file's icon
+/// as an image, so files come first.
+pub fn pasteboard(board: Option<&str>) -> Clipped {
+    let mut args = vec!["-l", "JavaScript", "-e", PASTEBOARD];
+    args.extend(board);
+    let Some(out) = capture("osascript", &args) else {
+        return Clipped::Unreachable;
+    };
+    let out = String::from_utf8_lossy(&out);
+    let out = out.strip_suffix('\n').unwrap_or(&out);
+    let (kind, content) = out.split_once('\n').unwrap_or((out, ""));
+    match kind {
+        "files" => files(content).map_or(Clipped::Empty, Clipped::Files),
+        "image" => Base64::decode_vec(content).map_or(Clipped::Empty, Clipped::Image),
+        "text" if !content.is_empty() => Clipped::Text(content.to_owned()),
         _ => Clipped::Empty,
     }
 }

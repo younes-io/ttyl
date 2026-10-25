@@ -268,6 +268,9 @@ impl Runtime {
             Clipped::Files(paths) => read(paths),
             Clipped::Text(text) => Event::Paste(text),
             Clipped::Empty => Event::Unclipped("no image or text on the clipboard.".to_owned()),
+            Clipped::Unreachable if cfg!(target_os = "macos") => {
+                Event::Unclipped("can't reach the clipboard.".to_owned())
+            }
             Clipped::Unreachable => Event::Unclipped(
                 "can't reach the clipboard. install wl-clipboard or xclip.".to_owned(),
             ),
