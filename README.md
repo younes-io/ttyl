@@ -52,20 +52,20 @@ screens, not mockups.
 
 ## install
 
-ttyl runs on macOS and Linux.
+ttyl runs on macOS and Linux. On macOS, with Homebrew:
 
 ```sh
 brew install younes-io/tap/ttyl
 ```
 
-<details>
-<summary>Other ways to install</summary>
-
-With the install script, which puts `ttyl` in `~/.cargo/bin`:
+On Linux, with the install script, which puts `ttyl` in `~/.local/bin`:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/younes-io/ttyl/releases/latest/download/ttyl-installer.sh | sh
+curl -fsSL https://younes-io.github.io/ttyl/install.sh | sh
 ```
+
+<details>
+<summary>Other ways to install</summary>
 
 With Cargo, if you have a recent stable [Rust](https://rustup.rs):
 
@@ -79,7 +79,7 @@ binary downloaded in the browser is blocked until you run
 `xattr -d com.apple.quarantine ttyl`.
 
 To remove ttyl, run `brew uninstall ttyl` or `cargo uninstall ttyl`. If you
-used the install script, delete `~/.cargo/bin/ttyl`.
+used the install script, delete `~/.local/bin/ttyl`.
 
 </details>
 
