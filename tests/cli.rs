@@ -52,3 +52,11 @@ fn unknown_arguments_are_a_usage_error() {
         assert!(stderr.contains("ttyl --help"), "{stderr}");
     }
 }
+
+#[test]
+fn running_outside_a_terminal_says_so_instead_of_panicking() {
+    let output = ttyl(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stderr, "ttyl: not a terminal; run ttyl in one\n");
+}

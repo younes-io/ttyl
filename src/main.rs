@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, Write as _};
+use std::io::{self, IsTerminal as _, Write as _};
 use std::ops::ControlFlow;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -87,6 +87,9 @@ fn report(result: Result<(), String>) -> ExitCode {
 }
 
 fn start() -> Result<(), String> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err("not a terminal; run ttyl in one".to_owned());
+    }
     let path = device::key_path().map_err(|error| error.to_string())?;
     let key = DeviceKey::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let client = Arc::new(Client::new(
