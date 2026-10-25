@@ -3,8 +3,8 @@
 
 mod common;
 
-use std::fmt::Write as _;
 use std::env;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
