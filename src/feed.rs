@@ -561,7 +561,7 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
             star,
         ));
     }
-    if row.commit.pasteis_count > 0 {
+    if theme::pasteis() && row.commit.pasteis_count > 0 {
         let lead = if spans.is_empty() { " · " } else { "  " };
         spans.push(Span::styled(lead, theme::muted()));
         spans.push(Span::styled(
@@ -637,22 +637,22 @@ pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
         theme::muted()
     };
     let icons = theme::icons();
-    out.push(
-        rail.clone(),
-        vec![
-            Span::styled(
-                format!("{} {}", icons.reply, row.replies_count),
-                theme::muted(),
-            ),
-            Span::raw("   "),
-            Span::styled(format!("{} {}", icons.star, row.stars_count), star),
-            Span::raw("   "),
-            Span::styled(
-                format!("{} {}", icons.pastel, row.commit.pasteis_count),
-                theme::muted(),
-            ),
-        ],
-    );
+    let mut spans = vec![
+        Span::styled(
+            format!("{} {}", icons.reply, row.replies_count),
+            theme::muted(),
+        ),
+        Span::raw("   "),
+        Span::styled(format!("{} {}", icons.star, row.stars_count), star),
+    ];
+    if theme::pasteis() {
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(
+            format!("{} {}", icons.pastel, row.commit.pasteis_count),
+            theme::muted(),
+        ));
+    }
+    out.push(rail.clone(), spans);
 }
 
 /// Images and a poll, each led by its icon in the column the quote and link icons share.
@@ -1174,29 +1174,60 @@ pub(crate) fn wrap(paragraph: &[(String, Style)], width: usize, out: &mut Vec<Ve
     out.push(line);
 }
 
-/// Splits a run of prose so each /dev/null in it shows as the wordmark, as the web draws it. A
-/// /dev/null inside a longer path or word stays plain text.
+/// Splits a run of prose so each /dev/null in it shows as the wordmark and each pastel or pastéis as the pastel,
+/// as the web draws them. A name inside a longer path or word stays plain text.
 fn branded(run: &str, text: Style) -> Vec<(String, Style)> {
     const NAME: &str = "/dev/null";
+    const PASTEIS: [&str; 3] = ["pastéis", "pasteis", "pastel"];
     let joined = |ch: Option<char>, also: &str| {
         ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || also.contains(ch))
     };
     let mut pieces = Vec::new();
     let mut plain = 0;
-    for (at, _) in run.match_indices(NAME) {
-        let end = at + NAME.len();
-        if joined(run[..at].chars().next_back(), "./-") || joined(run[end..].chars().next(), "/-") {
+    let mut at = 0;
+    while let Some(next) = run[at..].chars().next() {
+        let before = run[..at].chars().next_back();
+        let after = |len: usize| run[at + len..].chars().next();
+        let mark = if run[at..].starts_with(NAME)
+            && !joined(before, "./-")
+            && !joined(after(NAME.len()), "/-")
+        {
+            let wordmark = theme::wordmark().into_iter();
+            Some((
+                NAME.len(),
+                wordmark
+                    .map(|span| (span.content.into_owned(), span.style))
+                    .collect(),
+            ))
+        } else if theme::pasteis() {
+            PASTEIS.iter().find_map(|word| {
+                let candidate = run.get(at..at + word.len())?;
+                (candidate.to_lowercase() == *word
+                    && !joined(before, "")
+                    && !joined(after(word.len()), ""))
+                .then(|| {
+                    (
+                        word.len(),
+                        vec![(
+                            theme::icons().pastel.to_owned(),
+                            Style::new().fg(theme::ACCENT),
+                        )],
+                    )
+                })
+            })
+        } else {
+            None
+        };
+        let Some((len, marked)) = mark else {
+            at += next.len_utf8();
             continue;
-        }
+        };
         if plain < at {
             pieces.push((run[plain..at].to_owned(), text));
         }
-        pieces.extend(
-            theme::wordmark()
-                .into_iter()
-                .map(|span| (span.content.into_owned(), span.style)),
-        );
-        plain = end;
+        pieces.extend(marked);
+        at += len;
+        plain = at;
     }
     if plain < run.len() {
         pieces.push((run[plain..].to_owned(), text));
@@ -1500,6 +1531,21 @@ mod tests {
             [
                 "/dev[/]null, not ./dev/null or /dev/nulls or /dev/null or https://dev-null.sh/dev/null. (/dev[/]null)"
             ]
+        );
+    }
+
+    #[test]
+    fn pasteis_in_prose_show_as_the_pastel_but_not_inside_a_longer_word() {
+        theme::set_pasteis(true);
+        let pastel = theme::icons().pastel;
+        assert_eq!(
+            shown(&body(
+                &text("the pasteis here? Pastel, PASTÉIS! not pastelaria or pasteis_mode"),
+                200
+            )),
+            [format!(
+                "the [{pastel}] here? [{pastel}], [{pastel}]! not pastelaria or pasteis_mode"
+            )]
         );
     }
 

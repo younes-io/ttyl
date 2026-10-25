@@ -1,5 +1,6 @@
 //! The web's dark theme tokens from `resources/css/app.css`.
 
+use std::cell::Cell;
 use std::sync::OnceLock;
 
 use ratatui::style::{Color, Modifier, Style};
@@ -197,6 +198,20 @@ const PLAIN: Icons = Icons {
     twinkle: "✧",
     mote: "·",
 };
+
+thread_local! {
+    static PASTEIS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the viewer has pastéis mode on. Off, the feed shows pastéis as plain words and no
+/// pastel counts, as dev-null.sh does. The engine sets it from the account before each frame.
+pub fn pasteis() -> bool {
+    PASTEIS.get()
+}
+
+pub fn set_pasteis(on: bool) {
+    PASTEIS.set(on);
+}
 
 /// Nerd Font icons, or plain Unicode when `TTYL_ICONS=plain`.
 pub fn icons() -> &'static Icons {
