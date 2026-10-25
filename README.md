@@ -4,8 +4,6 @@ A terminal client for [/dev/null](https://dev-null.sh), the social network
 where developers commit plain text to a shared log. You can read, reply,
 and post without touching the mouse.
 
-https://github.com/user-attachments/assets/7124b43c-576d-4beb-b1a2-f0eb014606fe
-
 ![ttyl showing the following log with a thread open beside it](assets/screenshot.png)
 
 ## Install
@@ -47,7 +45,7 @@ browser opens dev-null.sh so you can approve this terminal. If no browser
 opens, the screen shows a link to visit instead. You sign in once per
 machine.
 
-Sign-in uses `xdg-mime`, so it works on a Linux desktop.
+ttyl opens the browser with `open` on macOS and `xdg-open` on Linux.
 
 ## Using it
 
@@ -86,8 +84,10 @@ its number, then `enter`. A vote is final.
 Press `i` on a commit with images to view them inside the terminal. Use
 `h` `l` to flip between them, `O` to open the one shown in the browser, and
 `esc` to close. Images look sharpest in a terminal that can draw them, such
-as Ghostty, kitty or WezTerm. Inside tmux, turn on `allow-passthrough`.
-Other terminals show a blockier version.
+as Ghostty, kitty or WezTerm. Other terminals show a blockier version.
+Inside tmux, ttyl turns on `allow-passthrough` for its own pane when
+`TERM_PROGRAM` is `tmux` or `TERM` starts with `tmux`. Otherwise, turn it on
+yourself.
 
 ## Keys
 
@@ -103,12 +103,15 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 | `1` `2` `3` `tab` | Switch log |
 | `ctrl-r` | Reload everything |
 | `gn` | Notifications |
+| `gs` | Starred commits |
 | `c` | Write a commit |
 | `r` `q` | Reply or quote |
-| `s` | Star |
+| `gq` | Open the quoted commit |
+| `s` | Star or unstar |
 | `v` | Vote in a poll |
 | `i` | View a commit's images |
-| `f` | Follow the author |
+| `p` | Open the author's profile |
+| `f` | Follow or unfollow the author |
 | `y` | Copy the link |
 | `O` | Open in the browser |
 | `P` | Give a pastel, if pastéis mode is on |
@@ -118,16 +121,20 @@ The bottom line shows the keys you need most. Press `?` for all of them.
 | `?` | Help |
 | `Q` | Quit |
 
+On a profile, `gw`, `gh` and `gd` open the person's website, GitHub and
+dev-null.sh page. On a profile or in notifications, `tab` and `shift-tab`
+switch between the tabs or filters.
+
 In the composer:
 
 | Key | Action |
 | --- | --- |
-| `ctrl-s` | Send |
+| `ctrl-s` `ctrl-enter` | Send |
 | `ctrl-e` | Write in your own editor |
 | `ctrl-p` | Add a poll, or take it off |
 | `ctrl-v` | Attach the image you copied |
 | `ctrl-r` | Preview the commit, or go back to writing |
-| `tab` | Move to the poll or the images |
+| `tab` | Move to the poll or the images, if any; otherwise insert a tab |
 | `esc` | Close and keep the draft |
 
 In the image viewer:
