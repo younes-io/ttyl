@@ -11,7 +11,7 @@ use ttyl::api::{Call, Client, Error, Reply};
 use ttyl::attach::{self, Attachment, Image, Poll};
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
-use ttyl::model::{CommitId, Filter, Log, NotificationId};
+use ttyl::model::{Circle, CommitId, Filter, Log, NotificationId, Reason};
 
 struct Seen {
     head: String,
@@ -596,4 +596,244 @@ fn a_group_is_read_from_the_route_of_its_notification() {
         "{}",
         seen.head
     );
+}
+
+fn fixture(name: &str) -> serde_json::Value {
+    let path = format!("{}/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Makes one call against a server answering 200 with `response`, and hands back the reply and the request.
+fn exchange(call: &Call, response: &serde_json::Value) -> (Reply, Seen) {
+    let (base, server) = serve("200 OK", &response.to_string());
+    let reply = Client::new(base, DeviceKey::generate().unwrap())
+        .call(call)
+        .unwrap();
+    (reply, server.join().unwrap())
+}
+
+fn request_line(seen: &Seen) -> &str {
+    seen.head.lines().next().unwrap()
+}
+
+fn sent(seen: &Seen) -> serde_json::Value {
+    serde_json::from_str(&seen.body).unwrap()
+}
+
+fn focus() -> serde_json::Value {
+    serde_json::json!({ "data": fixture("commit-quote")["data"] })
+}
+
+fn person() -> serde_json::Value {
+    let mut person = fixture("log-latest")["data"][0]["author"].clone();
+    person["created_at"] = serde_json::json!("2026-01-01T00:00:00Z");
+    person
+}
+
+#[test]
+fn a_commit_and_its_replies_are_read_from_its_routes() {
+    let id = CommitId("7a000000-0000-4000-8000-00000000000a".to_owned());
+    let (reply, seen) = exchange(&Call::Commit(id.clone()), &fixture("commit-quote"));
+    assert!(matches!(reply, Reply::Thread(page) if page.commit.commit.id == id));
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/commits/7a000000-0000-4000-8000-00000000000a HTTP/1.1"
+    );
+
+    let call = Call::Replies {
+        id,
+        cursor: Some("eyJpZCI6MX0+/=".to_owned()),
+    };
+    let (reply, seen) = exchange(&call, &fixture("replies-paged"));
+    assert!(matches!(reply, Reply::Replies(page) if page.replies.len() == 3));
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/commits/7a000000-0000-4000-8000-00000000000a/replies?cursor=eyJpZCI6MX0%2B%2F%3D HTTP/1.1"
+    );
+}
+
+#[test]
+fn starring_and_following_post_to_turn_on_and_delete_to_turn_off() {
+    let id = CommitId("7a000000-0000-4000-8000-00000000000a".to_owned());
+    for (on, method) in [(true, "POST"), (false, "DELETE")] {
+        let star = Call::Star { id: id.clone(), on };
+        let (reply, seen) = exchange(&star, &focus());
+        assert!(matches!(reply, Reply::Commit(focus) if focus.card.commit.id == id));
+        assert_eq!(
+            request_line(&seen),
+            format!("{method} /api/v1/commits/{}/star HTTP/1.1", id.0)
+        );
+
+        let follow = Call::Follow {
+            username: "ada".to_owned(),
+            on,
+        };
+        let (reply, seen) = exchange(&follow, &serde_json::json!({}));
+        assert!(matches!(reply, Reply::Done));
+        assert_eq!(
+            request_line(&seen),
+            format!("{method} /api/v1/users/ada/follow HTTP/1.1")
+        );
+    }
+}
+
+#[test]
+fn a_profile_and_its_lists_are_read_from_the_user_routes() {
+    let profile = serde_json::json!({
+        "data": person(),
+        "is_following": true,
+        "follows_you": false,
+        "pinned_commit": null,
+    });
+    let (reply, seen) = exchange(&Call::User("ada".to_owned()), &profile);
+    assert!(
+        matches!(reply, Reply::User(profile) if profile.person.user.username == "ada" && profile.is_following)
+    );
+    assert_eq!(request_line(&seen), "GET /api/v1/users/ada HTTP/1.1");
+
+    let rows = serde_json::json!({
+        "data": [fixture("log-latest")["data"][0]],
+        "meta": { "next_cursor": "next" },
+    });
+    let commits = |replies, cursor: Option<&str>| Call::Commits {
+        username: "ada".to_owned(),
+        replies,
+        cursor: cursor.map(str::to_owned),
+    };
+    let routes = [
+        (commits(false, None), "/api/v1/users/ada/commits?replies=0"),
+        (
+            commits(true, Some("a+b")),
+            "/api/v1/users/ada/commits?replies=1&cursor=a%2Bb",
+        ),
+        (Call::Starred { cursor: None }, "/api/v1/starred"),
+        (
+            Call::Starred {
+                cursor: Some("a+b".to_owned()),
+            },
+            "/api/v1/starred?cursor=a%2Bb",
+        ),
+    ];
+    for (call, path) in routes {
+        let (reply, seen) = exchange(&call, &rows);
+        assert!(
+            matches!(&reply, Reply::Rows(page) if page.rows.len() == 1 && page.next_cursor.as_deref() == Some("next")),
+            "{call:?}"
+        );
+        assert_eq!(request_line(&seen), format!("GET {path} HTTP/1.1"));
+    }
+
+    let people = serde_json::json!({ "data": [person()], "meta": { "next_cursor": null } });
+    for (circle, path) in [
+        (
+            Circle::Followers,
+            "/api/v1/users/ada/followers?cursor=a%2Bb",
+        ),
+        (
+            Circle::Following,
+            "/api/v1/users/ada/following?cursor=a%2Bb",
+        ),
+    ] {
+        let call = Call::People {
+            username: "ada".to_owned(),
+            circle,
+            cursor: Some("a+b".to_owned()),
+        };
+        let (reply, seen) = exchange(&call, &people);
+        assert!(matches!(reply, Reply::People(page) if page.people.len() == 1));
+        assert_eq!(request_line(&seen), format!("GET {path} HTTP/1.1"));
+    }
+}
+
+#[test]
+fn acting_on_a_commit_sends_what_the_server_needs() {
+    let id = CommitId("7a000000-0000-4000-8000-00000000000a".to_owned());
+    let route = format!("/api/v1/commits/{}", id.0);
+
+    let (reply, seen) = exchange(&Call::Delete(id.clone()), &serde_json::json!({}));
+    assert!(matches!(reply, Reply::Done));
+    assert_eq!(request_line(&seen), format!("DELETE {route} HTTP/1.1"));
+    assert_eq!(seen.body, "");
+
+    let mut pastel = focus();
+    pastel["pasteis_remaining"] = serde_json::json!(2);
+    let (reply, seen) = exchange(&Call::Pastel(id.clone()), &pastel);
+    assert!(matches!(reply, Reply::Pastel { commit, remaining: 2 } if commit.card.commit.id == id));
+    assert_eq!(
+        request_line(&seen),
+        format!("POST {route}/pasteis HTTP/1.1")
+    );
+
+    let vote = Call::Vote {
+        id: id.clone(),
+        option: "tabs".to_owned(),
+    };
+    let (reply, seen) = exchange(&vote, &focus());
+    assert!(matches!(reply, Reply::Commit(_)));
+    assert_eq!(
+        request_line(&seen),
+        format!("POST {route}/poll/votes HTTP/1.1")
+    );
+    assert_eq!(sent(&seen), serde_json::json!({ "option": "tabs" }));
+
+    for (details, expected) in [
+        (None, serde_json::Value::Null),
+        (
+            Some("links to malware"),
+            serde_json::json!("links to malware"),
+        ),
+    ] {
+        let report = Call::Report {
+            id: id.clone(),
+            reason: Reason::Spam,
+            details: details.map(str::to_owned),
+        };
+        let (reply, seen) = exchange(&report, &serde_json::json!({}));
+        assert!(matches!(reply, Reply::Done));
+        assert_eq!(
+            request_line(&seen),
+            format!("POST {route}/reports HTTP/1.1")
+        );
+        assert_eq!(
+            sent(&seen),
+            serde_json::json!({ "reason": "spam", "details": expected })
+        );
+    }
+}
+
+#[test]
+fn a_preview_posts_the_draft_and_reads_its_segments() {
+    let segments = serde_json::json!({
+        "data": { "body_segments": fixture("commit-quote")["data"]["body_segments"] },
+    });
+    let (reply, seen) = exchange(&Call::Preview("hello **world**".to_owned()), &segments);
+    assert!(matches!(reply, Reply::Preview(segments) if segments.len() == 1));
+    assert_eq!(request_line(&seen), "POST /api/v1/commits/preview HTTP/1.1");
+    assert_eq!(
+        sent(&seen),
+        serde_json::json!({ "body": "hello **world**" })
+    );
+}
+
+#[test]
+fn a_reply_names_its_parent_and_a_quote_names_its_commit() {
+    let id = CommitId("7a000000-0000-4000-8000-00000000000a".to_owned());
+    for (target, parent, quoted) in [
+        (Target::New, None, None),
+        (Target::Reply(id.clone()), Some(&id.0), None),
+        (Target::Quote(id.clone()), None, Some(&id.0)),
+    ] {
+        let post = Call::Post {
+            target,
+            body: "same".to_owned(),
+            attachment: Attachment::None,
+        };
+        let (reply, seen) = exchange(&post, &focus());
+        assert!(matches!(reply, Reply::Commit(_)));
+        assert_eq!(request_line(&seen), "POST /api/v1/commits HTTP/1.1");
+        assert_eq!(
+            sent(&seen),
+            serde_json::json!({ "body": "same", "parent_id": parent, "quoted_commit_id": quoted })
+        );
+    }
 }
