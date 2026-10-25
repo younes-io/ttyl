@@ -46,6 +46,11 @@ enum Step {
 }
 
 const WIDE: (u16, u16) = (120, 34);
+
+/// dev-null.sh is a brand, so prose draws its name with the wordmark from the dev-null.sh brand kit.
+const DEV_NULL: &str = "/dev/null";
+const WORDMARK: &str =
+    "<img class=\"wordmark\" src=\"dev-null-wordmark-dark.svg\" alt=\"/dev/null\">";
 const NARROW: (u16, u16) = (52, 34);
 
 /// The body of grace's commit in `fixtures/log-latest.json`, whose segments the preview answers with.
@@ -855,6 +860,7 @@ fn markdown(source: &str, mut fill: impl FnMut(&str) -> String) -> (String, Stri
     let mut kept = Vec::with_capacity(events.len());
     let mut title = String::new();
     let mut in_title = false;
+    let mut in_code = false;
     let mut at = 0;
     while at < events.len() {
         if let [
@@ -880,9 +886,23 @@ fn markdown(source: &str, mut fill: impl FnMut(&str) -> String) -> (String, Stri
             }
             MdEvent::End(TagEnd::Heading(HeadingLevel::H1)) => in_title = false,
             MdEvent::Text(text) | MdEvent::Code(text) if in_title => title.push_str(text),
+            MdEvent::Start(Tag::CodeBlock(_)) => in_code = true,
+            MdEvent::End(TagEnd::CodeBlock) => in_code = false,
             _ => {}
         }
-        kept.push(events[at].clone());
+        match &events[at] {
+            MdEvent::Text(text) if !in_code => {
+                for (nth, part) in text.split(DEV_NULL).enumerate() {
+                    if nth > 0 {
+                        kept.push(MdEvent::InlineHtml(WORDMARK.into()));
+                    }
+                    if !part.is_empty() {
+                        kept.push(MdEvent::Text(part.to_owned().into()));
+                    }
+                }
+            }
+            event => kept.push(event.clone()),
+        }
         at += 1;
     }
     let mut out = String::new();
@@ -1006,6 +1026,9 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
         fs::read(docs.join("style.css")).unwrap(),
     ));
     files.push(("desk.png".to_owned(), fs::read(picture).unwrap()));
+    for wordmark in ["dev-null-wordmark-dark.svg", "dev-null-wordmark-light.svg"] {
+        files.push((wordmark.to_owned(), fs::read(docs.join(wordmark)).unwrap()));
+    }
     check_links(&files);
     files
 }
