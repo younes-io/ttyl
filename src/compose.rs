@@ -466,22 +466,12 @@ impl Composer {
             {
                 self.focus = Focus::Image(0);
             }
-            KeyCode::Char('w') if ctrl => text.delete_word(),
-            KeyCode::Char('u') if ctrl => text.delete_line(),
             KeyCode::Char(ch) if !ctrl && !alt => text.insert(ch.encode_utf8(&mut [0; 4])),
             KeyCode::Enter if !ctrl && !alt => text.insert("\n"),
             KeyCode::Tab => text.insert("\t"),
-            KeyCode::Backspace => text.backspace(),
-            KeyCode::Delete => text.delete(),
-            KeyCode::Left if ctrl => text.word_left(),
-            KeyCode::Right if ctrl => text.word_right(),
-            KeyCode::Left => text.left(),
-            KeyCode::Right => text.right(),
             KeyCode::Up => text.up(self.width),
             KeyCode::Down => text.down(self.width),
-            KeyCode::Home => text.home(),
-            KeyCode::End => text.end(),
-            _ => {}
+            code => edit(text, code, ctrl, alt),
         }
         self.pick();
         self.edited(before)
@@ -509,20 +499,10 @@ impl Composer {
                 form.options.remove(at);
                 self.focus = Focus::Option(at.saturating_sub(1));
             }
-            KeyCode::Char('w') if ctrl => option.delete_word(),
-            KeyCode::Char('u') if ctrl => option.delete_line(),
             KeyCode::Char(ch) if !ctrl && !alt && room > 0 && !ch.is_control() => {
                 option.insert(ch.encode_utf8(&mut [0; 4]));
             }
-            KeyCode::Backspace => option.backspace(),
-            KeyCode::Delete => option.delete(),
-            KeyCode::Left if ctrl => option.word_left(),
-            KeyCode::Right if ctrl => option.word_right(),
-            KeyCode::Left => option.left(),
-            KeyCode::Right => option.right(),
-            KeyCode::Home => option.home(),
-            KeyCode::End => option.end(),
-            _ => {}
+            code => edit(option, code, ctrl, alt),
         }
     }
 
@@ -551,20 +531,10 @@ impl Composer {
                 return Some(name);
             }
             _ if refused => {}
-            KeyCode::Char('w') if ctrl => description.delete_word(),
-            KeyCode::Char('u') if ctrl => description.delete_line(),
             KeyCode::Char(ch) if !ctrl && !alt && room > 0 && !ch.is_control() => {
                 description.insert(ch.encode_utf8(&mut [0; 4]));
             }
-            KeyCode::Backspace => description.backspace(),
-            KeyCode::Delete => description.delete(),
-            KeyCode::Left if ctrl => description.word_left(),
-            KeyCode::Right if ctrl => description.word_right(),
-            KeyCode::Left => description.left(),
-            KeyCode::Right => description.right(),
-            KeyCode::Home => description.home(),
-            KeyCode::End => description.end(),
-            _ => {}
+            code => edit(description, code, ctrl, alt),
         }
         None
     }
@@ -1227,4 +1197,26 @@ fn inner_width(width: u16) -> usize {
 
 fn layout_width(width: u16) -> usize {
     inner_width(width).saturating_sub(CURSOR_CELL).max(1)
+}
+
+/// The line-editing keys every field shares. A Mac terminal sends alt-left, alt-b or alt-backspace
+/// for the option-key word moves, and ctrl-a for command-left.
+fn edit(text: &mut Buffer, code: KeyCode, ctrl: bool, alt: bool) {
+    match code {
+        KeyCode::Char('w') if ctrl => text.delete_word(),
+        KeyCode::Backspace if alt => text.delete_word(),
+        KeyCode::Char('u') if ctrl => text.delete_line(),
+        KeyCode::Char('a') if ctrl => text.home(),
+        KeyCode::Backspace => text.backspace(),
+        KeyCode::Delete => text.delete(),
+        KeyCode::Left if ctrl || alt => text.word_left(),
+        KeyCode::Char('b') if alt => text.word_left(),
+        KeyCode::Right if ctrl || alt => text.word_right(),
+        KeyCode::Char('f') if alt => text.word_right(),
+        KeyCode::Left => text.left(),
+        KeyCode::Right => text.right(),
+        KeyCode::Home => text.home(),
+        KeyCode::End => text.end(),
+        _ => {}
+    }
 }

@@ -71,6 +71,10 @@ xattr -d com.apple.quarantine ttyl
 
 Installs with Homebrew, the install script or cargo are not blocked.
 
+<kbd>y</kbd> copies links and <kbd>ctrl-v</kbd> pastes images through the
+macOS clipboard, with nothing to install. <kbd>O</kbd> and sign-in open your
+browser with `open`.
+
 ## Something else
 
 [Open an issue](https://github.com/younes-io/ttyl/issues) with your

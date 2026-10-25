@@ -178,6 +178,31 @@ fn every_letter_types_itself_and_each_edit_saves_the_draft_once() {
 }
 
 #[test]
+fn option_and_command_keys_from_a_mac_terminal_move_and_delete_by_word() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    let mut key = |code, modifiers| {
+        engine.update(Event::Key(KeyEvent::new(code, modifiers)), at);
+    };
+    key(KeyCode::Char('c'), KeyModifiers::NONE);
+    for ch in "one two three".chars() {
+        key(KeyCode::Char(ch), KeyModifiers::NONE);
+    }
+    key(KeyCode::Char('b'), KeyModifiers::ALT);
+    key(KeyCode::Char('X'), KeyModifiers::SHIFT);
+    key(KeyCode::Backspace, KeyModifiers::ALT);
+    key(KeyCode::Left, KeyModifiers::ALT);
+    key(KeyCode::Char('Y'), KeyModifiers::SHIFT);
+    key(KeyCode::Char('a'), KeyModifiers::CONTROL);
+    key(KeyCode::Char('Z'), KeyModifiers::SHIFT);
+    key(KeyCode::Char('f'), KeyModifiers::ALT);
+    key(KeyCode::Char('!'), KeyModifiers::SHIFT);
+    key(KeyCode::Right, KeyModifiers::ALT);
+    key(KeyCode::Char('_'), KeyModifiers::SHIFT);
+    assert_eq!(engine.draft(&Target::New), Some("Zone! Ytwo_ three"));
+}
+
+#[test]
 fn a_draft_emptied_by_hand_is_deleted() {
     let at = Instant::now();
     let mut engine = on_grace(at);

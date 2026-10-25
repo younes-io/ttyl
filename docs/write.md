@@ -52,8 +52,8 @@ A new commit can carry up to three images. To attach one, do one of these:
 
 - Drop the file on the terminal window.
 - Paste the path of the file.
-- Copy an image, then press <kbd>ctrl-v</kbd>. This reads the clipboard
-  through `wl-clipboard` or `xclip`, so it works on Linux.
+- Copy an image or an image file, then press <kbd>ctrl-v</kbd>. On Linux,
+  this reads the clipboard through `wl-clipboard` or `xclip`.
 
 Each image gets a description line, which people who cannot see the image
 read instead. Press <kbd>tab</kbd> to move to it and type the description.
