@@ -435,17 +435,16 @@ fn the_selected_header_is_on_screen_on_arriving_at_a_commit() {
 }
 
 #[test]
-fn the_top_bar_never_overlaps_and_shrinks_the_logo_to_its_mark_then_drops_the_handle_then_the_count()
- {
+fn the_top_bar_never_overlaps_and_drops_the_host_then_the_handle_then_the_count_then_the_name() {
     let mut app = app();
     let rows = [
-        (100, " // /dev/null"),
-        (26, " // /dev/null   ● 3  @ada"),
-        (25, " //            ● 3  @ada"),
-        (16, " //   ● 3  @ada"),
-        (15, " //       ● 3"),
-        (10, " //     ●"),
-        (7, "     ●"),
+        (100, " // ttyl @ /dev/null"),
+        (33, " // ttyl @ /dev/null   ● 3  @ada"),
+        (32, " // ttyl              ● 3  @ada"),
+        (21, " // ttyl   ● 3  @ada"),
+        (20, " // ttyl       ● 3"),
+        (13, " // ttyl   ●"),
+        (12, "          ●"),
     ];
     for (width, top) in rows {
         let row = &screen(&mut app, width, 20)[0];

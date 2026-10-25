@@ -67,17 +67,17 @@ struct Anchor {
     line: usize,
 }
 
-/// What the top bar gives up, in order, when the row is too short. The wordmark goes first and
-/// the mark last, so the brand stays on screen as long as it can.
+/// What the top bar gives up, in order, when the row is too short. The host goes first and
+/// ttyl's name last, so the app's name stays on screen as long as it can.
 #[derive(Clone, Copy, PartialEq)]
 enum Cut {
-    Wordmark,
+    Host,
     Handle,
     Number,
-    Mark,
+    Name,
 }
 
-const CUTS: [Cut; 4] = [Cut::Wordmark, Cut::Handle, Cut::Number, Cut::Mark];
+const CUTS: [Cut; 4] = [Cut::Host, Cut::Handle, Cut::Number, Cut::Name];
 
 impl Default for LogScreen {
     fn default() -> Self {
@@ -246,19 +246,18 @@ impl LogScreen {
     ) -> (Line<'static>, Line<'static>) {
         let kept = |cut| !cuts.contains(&cut);
         let mut left = Vec::new();
-        if kept(Cut::Mark) {
+        if kept(Cut::Name) {
             left.push(Span::raw(" "));
-            left.extend(theme::mark());
+            left.extend(theme::name());
         }
-        if kept(Cut::Wordmark) {
-            left.push(Span::raw(" "));
-            left.extend(theme::wordmark());
+        if kept(Cut::Host) {
+            left.extend(theme::host());
         }
-        if kept(Cut::Mark) {
+        if kept(Cut::Name) {
             left.push(Span::raw(" "));
         }
         if let Some(title) = title {
-            let lead = if kept(Cut::Mark) { "  " } else { " " };
+            let lead = if kept(Cut::Name) { "  " } else { " " };
             let bold = Style::new()
                 .fg(theme::FOREGROUND)
                 .add_modifier(Modifier::BOLD);
