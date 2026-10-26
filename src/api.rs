@@ -11,6 +11,7 @@ use ureq::Agent;
 use ureq::http::Request;
 
 use crate::attach::{self, Attachment, Image};
+use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
@@ -27,6 +28,7 @@ pub struct Client {
     base: String,
     key: DeviceKey,
     agent: Agent,
+    cache: Option<Cache>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +253,16 @@ impl Client {
             base: base.into(),
             key,
             agent,
+            cache: None,
+        }
+    }
+
+    /// Keeps the account and first log pages on disk for the next launch, and forgets them once the server
+    /// stops knowing this device.
+    pub fn with_cache(self, cache: Cache) -> Self {
+        Client {
+            cache: Some(cache),
+            ..self
         }
     }
 
@@ -478,7 +490,11 @@ impl Client {
 
     pub fn me(&self) -> Result<Account, Error> {
         let (status, text) = self.send("GET", "/api/v1/me", String::new())?;
-        parse(status, &text)
+        let account = parse(status, &text)?;
+        if let Some(cache) = &self.cache {
+            cache.keep_me(&text);
+        }
+        Ok(account)
     }
 
     pub fn page(&self, log: Log, query: Option<(&str, &str)>) -> Result<LogPage, Error> {
@@ -487,7 +503,11 @@ impl Client {
             path.push_str(&format!("?{name}={}", escape(value)));
         }
         let (status, text) = self.send("GET", &path, String::new())?;
-        LogPage::parse(&text).map_err(|error| unreadable(status, error))
+        let page = LogPage::parse(&text).map_err(|error| unreadable(status, error))?;
+        if let (Some(cache), None) = (&self.cache, query) {
+            cache.keep_page(log, &text);
+        }
+        Ok(page)
     }
 
     pub fn commit(&self, id: &CommitId) -> Result<CommitPage, Error> {
@@ -667,7 +687,7 @@ impl Client {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse().ok())
             .map(Duration::from_secs);
-        Err(Error::Api {
+        let error = Error::Api {
             status,
             message: refusal
                 .errors
@@ -678,7 +698,13 @@ impl Client {
                 .unwrap_or(refusal.message),
             code: refusal.code,
             retry_after,
-        })
+        };
+        if error.needs_sign_in()
+            && let Some(cache) = &self.cache
+        {
+            cache.forget();
+        }
+        Err(error)
     }
 }
 

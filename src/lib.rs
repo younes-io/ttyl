@@ -2,6 +2,7 @@ pub mod api;
 pub mod attach;
 mod bidi;
 pub mod body;
+pub mod cache;
 pub mod clock;
 pub mod code;
 pub mod compose;
