@@ -133,7 +133,7 @@ pub fn load(dir: &Path) -> HashMap<Target, Draft> {
         .collect()
 }
 
-fn replace_private(dir: &Path, name: &str, text: &str) -> io::Result<()> {
+pub(crate) fn replace_private(dir: &Path, name: &str, text: &str) -> io::Result<()> {
     DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     let temp = dir.join(format!(".{name}.tmp"));
     let mut file = OpenOptions::new()
