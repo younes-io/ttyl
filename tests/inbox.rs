@@ -20,7 +20,10 @@ fn gn_opens_the_inbox_and_esc_returns_to_the_same_place() {
     let rows = screen(&mut engine, 100, 30, at);
     assert!(rows[0].contains("notifications"), "{rows:#?}");
     assert!(!rows[0].contains("latest"), "{rows:#?}");
-    assert_eq!(rows[1], " all  replies  quotes  stars  mentions  follows");
+    assert!(
+        rows[1].starts_with(" ─ /all ── replies ── quotes ── stars ── mentions ── follows ──"),
+        "the filters are tabs along a rule, like the log's: {rows:#?}"
+    );
     assert!(
         rows[29].starts_with(" tab filter  esc back  ? help  Q quit"),
         "{rows:#?}"
@@ -66,12 +69,12 @@ fn tab_and_shift_tab_cycle_the_filters_and_wrap() {
             .map(|x| buffer[(x, 1)].symbol().to_owned())
             .collect::<String>()
     };
-    assert_eq!(bold(&mut engine), "all");
+    assert_eq!(bold(&mut engine), "/all");
     tap(&mut engine, KeyCode::Tab, at);
-    assert_eq!(bold(&mut engine), "replies");
+    assert_eq!(bold(&mut engine), "/replies");
     tap(&mut engine, KeyCode::BackTab, at);
     tap(&mut engine, KeyCode::BackTab, at);
-    assert_eq!(bold(&mut engine), "follows");
+    assert_eq!(bold(&mut engine), "/follows");
 }
 
 #[test]
@@ -80,7 +83,7 @@ fn the_narrow_filter_bar_and_hints_fit_44_columns() {
     let mut engine = boot(at);
     press(&mut engine, "gn", at);
     let rows = screen(&mut engine, 44, 20, at);
-    assert_eq!(rows[1], " all replies quotes stars mentions follows");
+    assert_eq!(rows[1], " /all replies quotes stars mentions follows");
     assert!(contains(&rows[19..], "? help"), "{rows:#?}");
 }
 
@@ -466,7 +469,7 @@ fn enter_on_a_group_lists_its_events_and_enter_there_opens_one() {
     assert!(engine.thread().is_some());
     tap(&mut engine, KeyCode::Esc, at);
     tap(&mut engine, KeyCode::Esc, at);
-    assert!(screen(&mut engine, 100, 30, at)[1].starts_with(" all"));
+    assert!(screen(&mut engine, 100, 30, at)[1].starts_with(" ─ /all"));
 }
 
 #[test]

@@ -463,6 +463,21 @@ pub struct Panes {
 /// Tabs as the top edge of a box, the open one marked with the brand's slash. Names give way to
 /// their numbers when they don't fit in `room`.
 pub fn tabs(names: &[&str], active: usize, focused: bool, room: usize) -> Line<'static> {
+    named_tabs(names, active, focused, room)
+        .unwrap_or_else(|| tab_line(names, active, focused, false))
+}
+
+/// The tabs with their names, if they fit in `room`.
+pub fn named_tabs(
+    names: &[&str],
+    active: usize,
+    focused: bool,
+    room: usize,
+) -> Option<Line<'static>> {
+    Some(tab_line(names, active, focused, true)).filter(|line| line.width() <= room)
+}
+
+fn tab_line(names: &[&str], active: usize, focused: bool, named: bool) -> Line<'static> {
     let edge = Style::new().fg(edge(focused));
     let slash = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
     let lit = if focused {
@@ -471,30 +486,25 @@ pub fn tabs(names: &[&str], active: usize, focused: bool, room: usize) -> Line<'
         theme::MUTED_FOREGROUND
     };
     let lit = Style::new().fg(lit).add_modifier(Modifier::BOLD);
-    let line = |named: bool| {
-        let mut spans = vec![Span::styled("─ ", edge)];
-        for (index, name) in names.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::styled(" ── ", edge));
-            }
-            let name = if named {
-                name.to_string()
-            } else {
-                (index + 1).to_string()
-            };
-            if index == active {
-                spans.push(Span::styled("/", slash));
-                spans.push(Span::styled(name, lit));
-            } else {
-                spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
-            }
+    let mut spans = vec![Span::styled("─ ", edge)];
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" ── ", edge));
         }
-        spans.push(Span::styled(" ", edge));
-        Line::from(spans)
-    };
-    Some(line(true))
-        .filter(|line| line.width() <= room)
-        .unwrap_or_else(|| line(false))
+        let name = if named {
+            name.to_string()
+        } else {
+            (index + 1).to_string()
+        };
+        if index == active {
+            spans.push(Span::styled("/", slash));
+            spans.push(Span::styled(name, lit));
+        } else {
+            spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
+        }
+    }
+    spans.push(Span::styled(" ", edge));
+    Line::from(spans)
 }
 
 /// Draws a box with `names` as tabs along its top and returns the inside.
