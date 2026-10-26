@@ -24,6 +24,7 @@ use ratatui_image::FontSize;
 use ratatui_image::picker::Picker;
 use ttyl::api::{self, Call, Client};
 use ttyl::attach::{self, Attachment};
+use ttyl::cache::{Cache, Start};
 use ttyl::desktop::{self, Clipped};
 use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
@@ -92,15 +93,19 @@ fn start() -> Result<(), String> {
     }
     let path = device::key_path().map_err(|error| error.to_string())?;
     let key = DeviceKey::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let client = Arc::new(Client::new(
-        env::var("DEVNULL_URL").unwrap_or_else(|_| api::BASE.to_owned()),
-        key,
-    ));
+    let base = env::var("DEVNULL_URL").unwrap_or_else(|_| api::BASE.to_owned());
+    let cache = Cache::locate(&base, &key);
+    let start = cache.as_ref().and_then(Cache::load);
+    let mut client = Client::new(base, key);
+    if let Some(cache) = cache {
+        client = client.with_cache(cache);
+    }
+    let client = Arc::new(client);
     let mut terminal = ratatui::init();
     // Asked before input is read on another thread, which would take the terminal's answer.
     let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
     let _ = execute!(io::stdout(), EnableBracketedPaste, EnableFocusChange);
-    let result = run(&mut terminal, client, picker);
+    let result = run(&mut terminal, client, picker, start);
     let _ = execute!(io::stdout(), DisableBracketedPaste, DisableFocusChange);
     ratatui::restore();
     result.map_err(|error| error.to_string())
@@ -117,7 +122,12 @@ struct Runtime {
     font: FontSize,
 }
 
-fn run(terminal: &mut DefaultTerminal, client: Arc<Client>, picker: Picker) -> io::Result<()> {
+fn run(
+    terminal: &mut DefaultTerminal,
+    client: Arc<Client>,
+    picker: Picker,
+    start: Option<Start>,
+) -> io::Result<()> {
     let (events, inbox) = mpsc::channel();
     let jobs = spawn_workers(Arc::clone(&client), events.clone());
     let input = spawn_input(events.clone());
@@ -127,11 +137,17 @@ fn run(terminal: &mut DefaultTerminal, client: Arc<Client>, picker: Picker) -> i
     if let Some(dir) = drafts.as_deref() {
         prune(dir, &saved);
     }
+    let font = picker.font_size();
+    let now = Instant::now();
+    let mut engine = Engine::new(device_name.clone(), now)
+        .with_drafts(Drafts::new(saved))
+        .with_picker(picker);
+    if let Some(start) = start {
+        engine = engine.with_start(start, now);
+    }
     let mut runtime = Runtime {
-        font: picker.font_size(),
-        engine: Engine::new(device_name.clone(), Instant::now())
-            .with_drafts(Drafts::new(saved))
-            .with_picker(picker),
+        font,
+        engine,
         client,
         events,
         jobs,

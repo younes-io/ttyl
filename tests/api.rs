@@ -3,12 +3,14 @@ mod common;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+use std::path::Path;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use common::openssh_accepts;
+use common::{openssh_accepts, scratch};
 use ttyl::api::{Call, Client, Error, Reply};
 use ttyl::attach::{self, Attachment, Image, Poll};
+use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{Circle, CommitId, Filter, Log, NotificationId, Reason};
@@ -836,4 +838,85 @@ fn a_reply_names_its_parent_and_a_quote_names_its_commit() {
             serde_json::json!({ "body": "same", "parent_id": parent, "quoted_commit_id": quoted })
         );
     }
+}
+
+const ME: &str = r#"{"data":{"username":"ada","name":"Ada"},"unread_notifications_count":2}"#;
+
+fn answered(dir: &Path, status: &str, body: &str, call: &Call) -> Result<Reply, Error> {
+    let (base, server) = serve(status, body);
+    let reply = Client::new(base, DeviceKey::generate().unwrap())
+        .with_cache(Cache::at(dir.to_owned()))
+        .call(call);
+    server.join().unwrap();
+    reply
+}
+
+#[test]
+fn the_account_and_first_page_are_kept_for_the_next_launch() {
+    let dir = scratch("cache-kept");
+    answered(&dir, "200 OK", ME, &Call::Me).unwrap();
+    answered(
+        &dir,
+        "200 OK",
+        &fixture("log-latest").to_string(),
+        &Call::Page(Log::Latest),
+    )
+    .unwrap();
+
+    let start = Cache::at(dir).load().unwrap();
+    assert_eq!(start.account.me.username, "ada");
+    assert_eq!(start.account.unread, 2);
+    let logs: Vec<Log> = start.pages.iter().map(|page| page.log).collect();
+    assert_eq!(logs, [Log::Latest]);
+}
+
+#[test]
+fn an_older_page_is_not_kept() {
+    let dir = scratch("cache-older");
+    answered(&dir, "200 OK", ME, &Call::Me).unwrap();
+    let older = Call::Older {
+        log: Log::Latest,
+        cursor: "c1".to_owned(),
+    };
+    answered(&dir, "200 OK", &fixture("log-latest").to_string(), &older).unwrap();
+
+    assert!(Cache::at(dir).load().unwrap().pages.is_empty());
+}
+
+#[test]
+fn a_device_the_server_forgets_forgets_its_timeline() {
+    let dir = scratch("cache-forgotten");
+    answered(&dir, "200 OK", ME, &Call::Me).unwrap();
+    answered(
+        &dir,
+        "200 OK",
+        &fixture("log-latest").to_string(),
+        &Call::Page(Log::Latest),
+    )
+    .unwrap();
+    let refusal = r#"{"message":"This key isn't approved.","code":"device_not_approved"}"#;
+    answered(
+        &dir,
+        "401 Unauthorized",
+        refusal,
+        &Call::Page(Log::Trending),
+    )
+    .unwrap_err();
+
+    assert!(Cache::at(dir.clone()).load().is_none());
+    assert!(!dir.exists());
+}
+
+#[test]
+fn what_is_kept_is_readable_only_by_its_owner() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("cache-private");
+    answered(&dir, "200 OK", ME, &Call::Me).unwrap();
+
+    let mode = fs::metadata(dir.join("me.json"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o077, 0, "{mode:o}");
 }

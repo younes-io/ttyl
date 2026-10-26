@@ -15,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::attach::{self, Look};
+use crate::cache::Start;
 use crate::clock::{
     FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
     Timers,
@@ -776,6 +777,20 @@ impl Engine {
 
     pub fn with_drafts(self, drafts: Drafts) -> Self {
         Engine { drafts, ..self }
+    }
+
+    /// Opens on what the last run saw while the server is asked again, so the timeline shows at once
+    /// and refreshes in place.
+    pub fn with_start(mut self, start: Start, now: Instant) -> Self {
+        self.open(start.account, now);
+        if let Phase::Ready(session) = &mut self.phase {
+            for page in start.pages {
+                session
+                    .store
+                    .apply(&Call::Page(page.log), Reply::Page(page));
+            }
+        }
+        self
     }
 
     pub fn draft(&self, target: &Target) -> Option<&str> {
