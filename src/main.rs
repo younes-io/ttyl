@@ -103,12 +103,33 @@ fn start() -> Result<(), String> {
     let client = Arc::new(client);
     let mut terminal = ratatui::init();
     // Asked before input is read on another thread, which would take the terminal's answer.
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    let picker = if tmux_drops_queries() {
+        Picker::halfblocks()
+    } else {
+        Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+    };
     let _ = execute!(io::stdout(), EnableBracketedPaste, EnableFocusChange);
     let result = run(&mut terminal, client, picker, start);
     let _ = execute!(io::stdout(), DisableBracketedPaste, DisableFocusChange);
     ratatui::restore();
     result.map_err(|error| error.to_string())
+}
+
+/// Whether ttyl runs in a tmux pane that drops passthrough, as tmux does unless told otherwise. The
+/// image query would get no answer there, so it would wait out its timeout with a blank screen and
+/// leave a thread reading stdin that takes the first key.
+fn tmux_drops_queries() -> bool {
+    let Some(pane) = env::var_os("TMUX").and(env::var_os("TMUX_PANE")) else {
+        return false;
+    };
+    std::process::Command::new("tmux")
+        .arg("display")
+        .arg("-p")
+        .arg("-t")
+        .arg(pane)
+        .arg("#{allow-passthrough}")
+        .output()
+        .is_ok_and(|out| out.status.success() && out.stdout.trim_ascii() == b"off")
 }
 
 struct Runtime {
