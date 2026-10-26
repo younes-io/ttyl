@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use chrono::Datelike;
 use image::{DynamicImage, Rgb, RgbImage};
 use pulldown_cmark::{Event as MdEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::buffer::Buffer;
@@ -287,7 +288,7 @@ fn profile(username: &str) -> Profile {
             "name": row.commit.author.name,
             "avatar_url": null,
             "html_url": format!("https://dev-null.sh/@{username}"),
-            "lane": 1,
+            "lane": 5,
             "bio": "writes down what the locks protect.",
             "company": null,
             "location": "Arlington, VA",
@@ -301,8 +302,33 @@ fn profile(username: &str) -> Profile {
         "is_following": true,
         "follows_you": false,
         "pinned_commit": null,
+        "activity": { "scale": "year", "buckets": year() },
+        "streaks": { "longest": 23, "current": 6 },
+        "achievements": {
+            "level": 5, "rank": "kernel hacker", "xp": 4210,
+            "next_level_xp": 6000, "level_progress": 70,
+        },
     });
     Profile::parse(&json.to_string()).unwrap()
+}
+
+/// A year of commits that thickens on weekdays and toward the present, with quiet weeks.
+fn year() -> Vec<serde_json::Value> {
+    let first = chrono::NaiveDate::from_ymd_opt(2025, 10, 27).unwrap();
+    (0u64..365)
+        .map(|day| {
+            let date = first + chrono::Days::new(day);
+            let noise = (day * 2_654_435_761) % 97;
+            let weekend = matches!(date.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun);
+            let quiet = (day / 7) % 9 == 4 || noise < 25 || (weekend && noise < 70);
+            let count = if quiet {
+                0
+            } else {
+                1 + (noise % 4) + day / 120
+            };
+            serde_json::json!({ "date": date.to_string(), "count": count })
+        })
+        .collect()
 }
 
 /// Feeds the engine everything it asked for until it asks for nothing more.

@@ -6,7 +6,7 @@ use common::{boot, contains, help_entry, page, press, profile, runs, screen, tap
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{Circle, Log, PeoplePage, Person, Profile, RowPage};
+use ttyl::model::{Circle, Level, Log, PeoplePage, Person, Profile, RowPage, Streaks};
 use ttyl::sched::Ticket;
 
 /// The first latest commit by someone other than the signed-in @ada.
@@ -253,4 +253,82 @@ fn a_link_they_lack_is_dimmed_in_help_and_does_nothing() {
     );
     assert_eq!(help_entry(&mut engine, at, "open their GitHub"), Some(true));
     assert!(opened(&press(&mut engine, "gw", at)).is_empty());
+}
+
+/// Gives them a year of commits, streaks and a rank, as the API sends them.
+fn standing(profile: &mut Profile) {
+    let first = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+    let buckets: Vec<_> = (0..365)
+        .map(|day| {
+            serde_json::json!({
+                "date": (first + chrono::Days::new(day)).to_string(),
+                "count": day % 5,
+            })
+        })
+        .collect();
+    let activity = serde_json::json!({ "scale": "year", "buckets": buckets });
+    profile.activity = Some(serde_json::from_value(activity).unwrap());
+    profile.streaks = Some(Streaks {
+        longest: 12,
+        current: 3,
+    });
+    profile.level = Some(Level {
+        level: 4,
+        rank: "daemon".into(),
+        xp: 1200,
+        next_level_xp: Some(2000),
+        level_progress: 40,
+    });
+}
+
+#[test]
+fn their_rank_activity_and_streaks_show_under_their_name() {
+    let at = Instant::now();
+    let mut engine = on_profile_with(at, standing);
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(contains(&rows, "Lv. 4  daemon"), "{rows:#?}");
+    assert!(contains(&rows, "commits in the last year"), "{rows:#?}");
+    assert!(contains(&rows, "longest streak 12 days"), "{rows:#?}");
+    assert!(contains(&rows, "● current 3"), "{rows:#?}");
+    assert!(contains(&rows, "████"), "{rows:#?}");
+    assert!(!contains(&rows, " xp"), "only you see your xp {rows:#?}");
+}
+
+#[test]
+fn a_short_terminal_drops_the_graph_and_keeps_the_commits() {
+    let at = Instant::now();
+    let mut engine = on_profile_with(at, standing);
+    let rows = screen(&mut engine, 100, 24, at);
+    assert!(!contains(&rows, "████"), "{rows:#?}");
+    assert!(contains(&rows, "Lv. 4  daemon"), "{rows:#?}");
+    assert!(contains(&rows, "├─ /commits ── replies"), "{rows:#?}");
+}
+
+#[test]
+fn a_profile_without_standing_shows_none() {
+    let at = Instant::now();
+    let mut engine = on_profile(at);
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(!contains(&rows, "Lv."), "{rows:#?}");
+    assert!(!contains(&rows, "streak"), "{rows:#?}");
+}
+
+#[test]
+fn your_own_profile_shows_how_far_you_are_from_the_next_rank() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let mine = page(Log::Latest)
+        .rows
+        .iter()
+        .position(|row| row.commit.author.username == "ada")
+        .expect("the fixture has a commit by @ada");
+    let effects = press(&mut engine, &format!("2{}p", "j".repeat(mine)), at);
+    let user = ticket(&effects, |call| matches!(call, Call::User(_)));
+    let Reply::User(mut header) = profile("ada", false) else {
+        unreachable!("profile builds a user reply");
+    };
+    standing(&mut header);
+    engine.update(Event::Reply(user, Ok(Reply::User(header))), at);
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(contains(&rows, "▰▰▰▰▱▱▱▱▱▱  1,200/2,000 xp"), "{rows:#?}");
 }
