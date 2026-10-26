@@ -2120,6 +2120,7 @@ impl Engine {
                 };
                 let on_log = session.stack.is_empty();
                 if session.on_inbox() {
+                    let banner = inset(banner);
                     frame.render_widget(session.inbox.filter_bar(banner.width), banner);
                 }
                 if let Some(group) = session.group() {
