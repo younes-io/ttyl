@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Deserializer};
 
@@ -634,6 +634,81 @@ pub struct Profile {
     pub is_following: bool,
     pub follows_you: bool,
     pub pinned: Option<Row>,
+    pub activity: Option<Activity>,
+    pub streaks: Option<Streaks>,
+    pub level: Option<Level>,
+}
+
+/// How far back an activity graph reaches, the smallest window that holds all of someone's commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scale {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+/// Commits per hour (a day's graph) or per day (the others), oldest first.
+#[derive(Debug, Clone)]
+pub struct Activity {
+    pub scale: Scale,
+    /// The day the first bucket falls on, which lines a year's weeks up by weekday.
+    pub first: NaiveDate,
+    pub counts: Vec<u32>,
+}
+
+impl<'de> Deserialize<'de> for Activity {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Bucket {
+            date: String,
+            count: u32,
+        }
+        #[derive(Deserialize)]
+        struct Wire {
+            scale: Scale,
+            buckets: Vec<Bucket>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let first = match wire.buckets.first() {
+            Some(bucket) => bucket
+                .date
+                .get(..10)
+                .and_then(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
+                .ok_or_else(|| de::Error::custom(format!("bad bucket date {:?}", bucket.date)))?,
+            None => NaiveDate::default(),
+        };
+        Ok(Activity {
+            scale: wire.scale,
+            first,
+            counts: wire
+                .buckets
+                .into_iter()
+                .map(|bucket| bucket.count)
+                .collect(),
+        })
+    }
+}
+
+/// Days in a row with a commit. `current` is 0 once a day passes without one.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Streaks {
+    pub longest: u32,
+    pub current: u32,
+}
+
+/// Their Unix rank, from the XP their commits, streaks, stars and replies earn.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Level {
+    pub level: u32,
+    pub rank: String,
+    pub xp: u32,
+    /// None at the top rank.
+    pub next_level_xp: Option<u32>,
+    /// Percent of the way from this rank to the next.
+    pub level_progress: u8,
 }
 
 impl Profile {
@@ -644,6 +719,12 @@ impl Profile {
             is_following: bool,
             follows_you: bool,
             pinned_commit: Option<Row>,
+            #[serde(default)]
+            activity: Option<Activity>,
+            #[serde(default)]
+            streaks: Option<Streaks>,
+            #[serde(default)]
+            achievements: Option<Level>,
         }
 
         let wire: Wire = serde_json::from_str(json)?;
@@ -652,6 +733,9 @@ impl Profile {
             is_following: wire.is_following,
             follows_you: wire.follows_you,
             pinned: wire.pinned_commit,
+            activity: wire.activity,
+            streaks: wire.streaks,
+            level: wire.achievements,
         })
     }
 }

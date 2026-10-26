@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, Datelike, TimeZone};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Wrap};
 
@@ -15,7 +15,9 @@ use crate::fatal;
 use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::{self, Action, Link};
 use crate::log;
-use crate::model::{Circle, CommitId, Log, LogPage, Person, Profile, Row, User};
+use crate::model::{
+    Activity, Circle, CommitId, Level, Log, LogPage, Person, Profile, Row, Scale, Streaks, User,
+};
 use crate::store::Store;
 use crate::theme;
 use crate::thread::LOADING_NOTE_DELAY;
@@ -564,8 +566,14 @@ impl ProfileScreen {
                 Some((self.link(link)?, key))
             })
             .collect();
-        let header = header(profile, &links, store, inside.width.saturating_sub(2));
-        let height = (header.len() as u16 + 2).min(inside.height.saturating_sub(8));
+        // The graph goes first when the header would leave the list too little room.
+        let room = usize::from(inside.height.saturating_sub(8));
+        let width = inside.width.saturating_sub(2);
+        let mut header = header(profile, &links, store, width, true);
+        if header.len() + 2 > room {
+            header = self::header(profile, &links, store, width, false);
+        }
+        let height = (header.len() as u16 + 2).min(room as u16);
         let [top, rule, list] = Layout::vertical([
             Constraint::Length(height),
             Constraint::Length(1),
@@ -676,6 +684,7 @@ fn header(
     links: &[(String, String)],
     store: &Store,
     width: u16,
+    graph: bool,
 ) -> Vec<Line<'static>> {
     let width = usize::from(width);
     let person = &profile.person;
@@ -749,6 +758,11 @@ fn header(
     let bold = Style::new()
         .fg(theme::FOREGROUND)
         .add_modifier(Modifier::BOLD);
+    let lane = theme::lane(user.lane);
+    let standing = profile.level.as_ref().map(|level| {
+        let mine = user.username == store.me.username;
+        standing(level, mine, lane)
+    });
     let bio = |width: usize, lines: &mut Vec<Vec<Span<'static>>>| {
         if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
             lines.push(Vec::new());
@@ -781,6 +795,10 @@ fn header(
                 SIDE,
             ));
         }
+        if let Some(standing) = standing {
+            side.push(Vec::new());
+            side.extend(standing.into_iter().map(|line| right(line, SIDE)));
+        }
         for row in 0..body.len().max(side.len()) {
             let mut line = body.get(row).cloned().unwrap_or_default();
             let used = Line::from(line.clone()).width();
@@ -805,9 +823,125 @@ fn header(
             })
             .collect();
         lines.extend(flow(counts, faint, width));
+        if let Some(standing) = standing {
+            lines.push(Vec::new());
+            lines.extend(standing);
+        }
+    }
+    if graph && let Some(activity) = &profile.activity {
+        lines.push(Vec::new());
+        lines.extend(self::activity(activity, profile.streaks, lane, width));
     }
 
     lines.into_iter().map(Line::from).collect()
+}
+
+/// Their level and rank, and on your own profile how far you are from the next rank.
+fn standing(level: &Level, mine: bool, lane: Color) -> Vec<Vec<Span<'static>>> {
+    let quiet = Style::new().fg(theme::MUTED_FOREGROUND);
+    let mut lines = vec![vec![
+        Span::styled(
+            format!("Lv. {}", level.level),
+            Style::new().fg(lane).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {}", level.rank), quiet),
+    ]];
+    if mine {
+        let xp = match level.next_level_xp {
+            Some(next) => format!("  {}/{} xp", grouped(level.xp), grouped(next)),
+            None => format!("  {} xp", grouped(level.xp)),
+        };
+        let filled = usize::from(level.level_progress.min(100)).div_ceil(10);
+        lines.push(vec![
+            Span::styled("▰".repeat(filled), Style::new().fg(lane)),
+            Span::styled("▱".repeat(10 - filled), Style::new().fg(theme::RAIL)),
+            Span::styled(xp, quiet),
+        ]);
+    }
+    lines
+}
+
+/// Their commits over the graph's window as bars two rows tall, a year a week to a bar and
+/// shorter windows a bucket to a bar, then the total and their streaks.
+fn activity(
+    activity: &Activity,
+    streaks: Option<Streaks>,
+    lane: Color,
+    width: usize,
+) -> Vec<Vec<Span<'static>>> {
+    const BARS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    let quiet = Style::new().fg(theme::MUTED_FOREGROUND);
+    let bold = Style::new()
+        .fg(theme::FOREGROUND)
+        .add_modifier(Modifier::BOLD);
+    let total: u32 = activity.counts.iter().sum();
+
+    let mut lines = Vec::new();
+    if total > 0 || activity.scale == Scale::Year {
+        let (bars, cell) = if activity.scale == Scale::Year {
+            let skip = activity.first.weekday().num_days_from_sunday() as usize;
+            let mut weeks = vec![0; (skip + activity.counts.len()).div_ceil(7)];
+            for (day, count) in activity.counts.iter().enumerate() {
+                weeks[(skip + day) / 7] += count;
+            }
+            (weeks, 1)
+        } else {
+            (activity.counts.clone(), 3)
+        };
+        let bars = &bars[bars.len().saturating_sub(width / cell)..];
+        let peak = bars.iter().copied().max().unwrap_or(0).max(1);
+        for row in [1, 0] {
+            lines.push(
+                bars.iter()
+                    .map(|&count| {
+                        let height = (count * 16).div_ceil(peak);
+                        let part = height.saturating_sub(row * 8).min(8) as usize;
+                        let (bar, color) = if count == 0 && row == 0 {
+                            ("▁", theme::MUTED)
+                        } else {
+                            (BARS[part], lane)
+                        };
+                        let bar = format!("{bar:<cell$}", bar = bar.repeat(cell.min(2)));
+                        Span::styled(bar, Style::new().fg(color))
+                    })
+                    .collect(),
+            );
+        }
+        lines.push(Vec::new());
+    }
+
+    let window = match activity.scale {
+        Scale::Day => "in the last 24 hours",
+        Scale::Week => "in the last 7 days",
+        Scale::Month => "in the last 30 days",
+        Scale::Year => "in the last year",
+    };
+    let mut summary = vec![if total == 0 && activity.scale != Scale::Year {
+        vec![Span::styled("No commits yet", quiet)]
+    } else {
+        let noun = if total == 1 { "commit" } else { "commits" };
+        vec![
+            Span::styled(grouped(total), bold),
+            Span::styled(format!(" {noun} {window}"), quiet),
+        ]
+    }];
+    if let Some(streaks) = streaks.filter(|streaks| streaks.longest > 0) {
+        let days = if streaks.longest == 1 { "day" } else { "days" };
+        summary.push(vec![
+            Span::styled("longest streak ", quiet),
+            Span::styled(streaks.longest.to_string(), bold),
+            Span::styled(format!(" {days}"), quiet),
+        ]);
+        if streaks.current > 0 {
+            summary.push(vec![
+                Span::styled("● ", Style::new().fg(lane)),
+                Span::styled("current ", quiet),
+                Span::styled(streaks.current.to_string(), bold),
+            ]);
+        }
+    }
+    lines.extend(flow(summary, Style::new().fg(theme::FAINT), width));
+    lines
 }
 
 /// The width of the header's right column, which fits both chips side by side.
