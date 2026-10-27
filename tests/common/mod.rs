@@ -388,6 +388,10 @@ pub fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
 
+pub fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
 /// Presses ctrl-r, which reloads everything.
 pub fn reload(engine: &mut Engine, at: Instant) -> Vec<Effect> {
     let mut effects = engine.update(

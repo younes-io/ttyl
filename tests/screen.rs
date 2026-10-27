@@ -838,3 +838,35 @@ fn a_block_without_a_language_shows_no_tag() {
     assert_eq!(rows[code - 1].trim(), "┃", "{rows:#?}");
     assert!(contains(&rows, "hook: add_action();"), "{rows:#?}");
 }
+
+fn card_tint(app: &mut (Engine, Instant), at: Instant) -> Color {
+    let buffer = common::buffer(&mut app.0, 80, 30, at);
+    (1..29)
+        .flat_map(|y| (0..80).map(move |x| (x, y)))
+        .map(|cell| buffer[cell].bg)
+        .find(|bg| ![Color::Reset, theme::BACKGROUND, theme::MUTED].contains(bg))
+        .expect("a card is selected")
+}
+
+#[test]
+fn a_new_selection_lifts_into_its_tint_and_settles_within_a_blink() {
+    let mut app = app();
+    press(&mut app, "2");
+    let start = app.1;
+    card_tint(&mut app, start);
+    let moved = start + secs(1);
+    common::press(&mut app.0, "j", moved);
+    let rising = card_tint(&mut app, moved);
+    let wake = app.0.next_wake(moved).expect("the lift asks for frames");
+    let settled = card_tint(&mut app, moved + Duration::from_millis(150));
+    assert_ne!(rising, settled, "the card starts below its tint");
+    assert!(
+        wake <= moved + Duration::from_millis(33),
+        "frames come fast while it lifts"
+    );
+    assert_eq!(
+        settled,
+        card_tint(&mut app, moved + secs(2)),
+        "the lift is over by 150ms"
+    );
+}

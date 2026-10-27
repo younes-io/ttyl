@@ -1,9 +1,9 @@
 mod common;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use common::{
-    account, answer, boot, boot_as, buffer, commit, contains, help_entry, log_of, marked, page,
+    account, answer, boot, boot_as, buffer, commit, contains, help_entry, log_of, marked, ms, page,
     press, profile, reload, runs, screen, secs, tap,
 };
 use ratatui::crossterm::event::KeyCode;
@@ -81,10 +81,6 @@ fn footer(engine: &mut Engine, at: Instant) -> String {
         .trim_end_matches(|c| ('\u{2800}'..='\u{28ff}').contains(&c))
         .trim_end()
         .to_owned()
-}
-
-fn ms(n: u64) -> Duration {
-    Duration::from_millis(n)
 }
 
 /// Grace's star as drawn once any pop has finished.

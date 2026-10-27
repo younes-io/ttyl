@@ -101,16 +101,24 @@ pub fn contrast(color: Color) -> f64 {
     (luminance(color) + 0.05) / (luminance(BACKGROUND) + 0.05)
 }
 
-/// `lane` washed faintly over the background, for the selected card.
+/// `lane` washed faintly over the background, for the selected card. A card just selected starts
+/// halfway and settles as the lift plays.
 pub fn tint(lane: Lane) -> Color {
-    let (Color::Rgb(r, g, b), Color::Rgb(under_r, under_g, under_b)) =
-        (self::lane(lane), BACKGROUND)
-    else {
-        unreachable!("lanes and the background are RGB");
+    blend(
+        self::lane(lane),
+        BACKGROUND,
+        0.12 * (0.5 + 0.5 * LIFT.get()),
+    )
+}
+
+/// `over` laid on `under`, from nothing of it at 0 to all of it at 1.
+pub fn blend(over: Color, under: Color, amount: f32) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(under_r, under_g, under_b)) = (over, under) else {
+        unreachable!("the theme is RGB");
     };
+    let amount = amount.clamp(0.0, 1.0);
     let mix = |over: u8, under: u8| {
-        u8::try_from((u16::from(over) * 3 + u16::from(under) * 22) / 25)
-            .expect("a mix of bytes fits")
+        (f32::from(under) + (f32::from(over) - f32::from(under)) * amount).round() as u8
     };
     Color::Rgb(mix(r, under_r), mix(g, under_g), mix(b, under_b))
 }
@@ -215,6 +223,19 @@ const PLAIN: Icons = Icons {
 
 thread_local! {
     static PASTEIS: Cell<bool> = const { Cell::new(false) };
+    static LIFT: Cell<f32> = const { Cell::new(1.0) };
+}
+
+/// How far the selected card has risen into its tint, eased, from 0 to 1. The engine sets it before
+/// each frame.
+pub fn set_lift(progress: f32) {
+    LIFT.set(1.0 - (1.0 - progress.clamp(0.0, 1.0)).powi(3));
+}
+
+/// Whether the screen moves, or `TTYL_MOTION=off` to have every change land at once.
+pub fn motion() -> bool {
+    static MOTION: OnceLock<bool> = OnceLock::new();
+    *MOTION.get_or_init(|| std::env::var("TTYL_MOTION").as_deref() != Ok("off"))
 }
 
 /// Whether the viewer has pastéis mode on. Off, the feed shows pastéis as plain words and no

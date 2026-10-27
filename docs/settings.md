@@ -8,6 +8,7 @@ uses what your terminal can do.
 | Variable | What it does |
 | --- | --- |
 | `TTYL_ICONS` | Set to `plain` if icons look like boxes or question marks. ttyl then uses plain Unicode symbols instead of Nerd Font icons. |
+| `TTYL_MOTION` | Set to `off` to have the selection and messages appear at once, with no fade. Stars and sparks still show, then settle. |
 | `VISUAL`, `EDITOR` | The editor that <kbd>ctrl-e</kbd> opens in the composer. ttyl tries `$VISUAL`, then `$EDITOR`, then `vi`. |
 | `DEVNULL_URL` | The server ttyl talks to. The default is `https://dev-null.sh`. Set it to use a local copy of dev-null.sh while you develop. |
 | `XDG_CONFIG_HOME` | Where ttyl keeps the key this terminal signs in with, in `ttyl/device_ed25519`. The default is `~/.config`. |

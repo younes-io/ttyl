@@ -11,6 +11,8 @@ pub const GLOW: Duration = Duration::from_secs(5);
 pub const FRAME: Duration = Duration::from_millis(100);
 pub const SECOND: Duration = Duration::from_secs(1);
 pub const SPARK_FRAME: Duration = Duration::from_millis(33);
+/// How long the selection takes to settle and a toast to come and go. Quick enough to never feel waited on.
+pub const FADE: Duration = Duration::from_millis(120);
 /// How long after a reload coming back to the terminal reloads again, so flicking between windows doesn't.
 pub const FOCUS_RELOAD: Duration = Duration::from_secs(10);
 
@@ -39,6 +41,7 @@ pub enum Timer {
     RelativeTimes,
     Toast,
     Glow,
+    Lift,
     Reload(Log),
     Older(Log),
     Commit(CommitId),
