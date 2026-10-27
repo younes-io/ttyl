@@ -8,10 +8,10 @@ python3 ../scripts/latest.py log-latest.json
 # The viewer, ada, follows nobody: Following holds her own commits, and SuggestedCommitsQuery adds the latest commit
 # of each of the three most recent other authors, with stars but no card data.
 jq '.log = "following" | .meta.path |= sub("latest$"; "following")
-    | .suggestions = (reduce (.data[] | select(.author.username != "ada")) as $c ([];
+    | .suggestions = (reduce (.data[] | select(.author.handle != "ada")) as $c ([];
         if any(.[]; .author.id == $c.author.id) then . else . + [$c] end) | .[:3]
         | map(del(.replies_count, .link_preview, .images, .quoted_commit, .poll, .reply_preview)))
-    | .data |= map(select(.author.username == "ada")) | .links.next = null | .meta.next_cursor = null' \
+    | .data |= map(select(.author.handle == "ada")) | .links.next = null | .meta.next_cursor = null' \
     log-latest.json > log-following.json
 
 jq '.log = "trending" | .meta.path |= sub("latest$"; "trending") | .is_ranked = true | .data |= sort_by(-.stars_count)
