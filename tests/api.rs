@@ -88,13 +88,13 @@ fn signature_holds(key: &DeviceKey, seen: &Seen, method: &str, path: &str, dir: 
 fn redeeming_posts_the_code_signed_and_reads_the_user() {
     let (base, server) = serve(
         "200 OK",
-        r#"{"data":{"id":7,"username":"ada","name":"Ada","bio":null},"unread_notifications_count":2}"#,
+        r#"{"data":{"id":7,"handle":"ada","name":"Ada","bio":null},"unread_notifications_count":2}"#,
     );
     let client = Client::new(base, DeviceKey::generate().unwrap());
     let account = client.redeem("the-code", "the-verifier").unwrap();
     let seen = server.join().unwrap();
 
-    assert_eq!(account.me.username, "ada");
+    assert_eq!(account.me.handle, "ada");
     assert_eq!(account.me.name.as_deref(), Some("Ada"));
     assert_eq!(account.unread, 2);
     assert!(seen.head.starts_with("POST /api/v1/devices HTTP/1.1\r\n"));
@@ -115,12 +115,12 @@ fn redeeming_posts_the_code_signed_and_reads_the_user() {
 
 #[test]
 fn me_is_a_signed_get_without_a_body() {
-    let (base, server) = serve("200 OK", r#"{"data":{"username":"grace","name":null}}"#);
+    let (base, server) = serve("200 OK", r#"{"data":{"handle":"grace","name":null}}"#);
     let client = Client::new(base, DeviceKey::generate().unwrap());
     let account = client.me().unwrap();
     let seen = server.join().unwrap();
 
-    assert_eq!(account.me.username, "grace");
+    assert_eq!(account.me.handle, "grace");
     assert_eq!(account.unread, 0);
     assert!(seen.head.starts_with("GET /api/v1/me HTTP/1.1\r\n"));
     assert_eq!(seen.body, "");
@@ -305,7 +305,7 @@ fn json_of_the_wrong_shape_names_the_field() {
         .unwrap_err();
 
     assert!(
-        matches!(&error, Error::WrongShape(detail) if detail.contains("username")),
+        matches!(&error, Error::WrongShape(detail) if detail.contains("handle")),
         "{error:?}"
     );
 }
@@ -667,7 +667,7 @@ fn starring_and_following_post_to_turn_on_and_delete_to_turn_off() {
         );
 
         let follow = Call::Follow {
-            username: "ada".to_owned(),
+            handle: "ada".to_owned(),
             on,
         };
         let (reply, seen) = exchange(&follow, &serde_json::json!({}));
@@ -689,7 +689,7 @@ fn a_profile_and_its_lists_are_read_from_the_user_routes() {
     });
     let (reply, seen) = exchange(&Call::User("ada".to_owned()), &profile);
     assert!(
-        matches!(reply, Reply::User(profile) if profile.person.user.username == "ada" && profile.is_following)
+        matches!(reply, Reply::User(profile) if profile.person.user.handle == "ada" && profile.is_following)
     );
     assert_eq!(request_line(&seen), "GET /api/v1/users/ada HTTP/1.1");
 
@@ -698,7 +698,7 @@ fn a_profile_and_its_lists_are_read_from_the_user_routes() {
         "meta": { "next_cursor": "next" },
     });
     let commits = |replies, cursor: Option<&str>| Call::Commits {
-        username: "ada".to_owned(),
+        handle: "ada".to_owned(),
         replies,
         cursor: cursor.map(str::to_owned),
     };
@@ -737,7 +737,7 @@ fn a_profile_and_its_lists_are_read_from_the_user_routes() {
         ),
     ] {
         let call = Call::People {
-            username: "ada".to_owned(),
+            handle: "ada".to_owned(),
             circle,
             cursor: Some("a+b".to_owned()),
         };
@@ -840,7 +840,7 @@ fn a_reply_names_its_parent_and_a_quote_names_its_commit() {
     }
 }
 
-const ME: &str = r#"{"data":{"username":"ada","name":"Ada"},"unread_notifications_count":2}"#;
+const ME: &str = r#"{"data":{"handle":"ada","name":"Ada"},"unread_notifications_count":2}"#;
 
 fn answered(dir: &Path, status: &str, body: &str, call: &Call) -> Result<Reply, Error> {
     let (base, server) = serve(status, body);
@@ -864,7 +864,7 @@ fn the_account_and_first_page_are_kept_for_the_next_launch() {
     .unwrap();
 
     let start = Cache::at(dir).load().unwrap();
-    assert_eq!(start.account.me.username, "ada");
+    assert_eq!(start.account.me.handle, "ada");
     assert_eq!(start.account.unread, 2);
     let logs: Vec<Log> = start.pages.iter().map(|page| page.log).collect();
     assert_eq!(logs, [Log::Latest]);

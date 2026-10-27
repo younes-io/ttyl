@@ -226,18 +226,18 @@ fn serve(call: &Call) -> Result<Reply, Error> {
             ..common::page(*log)
         }),
         Call::Commit(_) | Call::Replies { .. } => return common::from_world(call),
-        Call::User(username) => Reply::User(Box::new(profile(username))),
-        Call::Commits { username, .. } => Reply::Rows(RowPage {
+        Call::User(handle) => Reply::User(Box::new(profile(handle))),
+        Call::Commits { handle, .. } => Reply::Rows(RowPage {
             rows: latest()
                 .into_iter()
-                .filter(|row| &row.commit.author.username == username)
+                .filter(|row| &row.commit.author.handle == handle)
                 .collect(),
             next_cursor: None,
         }),
         Call::Starred { .. } => Reply::Rows(RowPage {
             rows: latest()
                 .into_iter()
-                .filter(|row| row.commit.author.username != "ada")
+                .filter(|row| row.commit.author.handle != "ada")
                 .map(|row| Row {
                     starred: true,
                     ..row
@@ -276,24 +276,24 @@ fn segments(text: &str) -> Vec<Segment> {
     serde_json::from_value(commit["body_segments"].clone()).unwrap()
 }
 
-fn profile(username: &str) -> Profile {
+fn profile(handle: &str) -> Profile {
     let row = latest()
         .into_iter()
-        .find(|row| row.commit.author.username == username)
-        .unwrap_or_else(|| panic!("no fixture commit by {username}"));
+        .find(|row| row.commit.author.handle == handle)
+        .unwrap_or_else(|| panic!("no fixture commit by {handle}"));
     let json = serde_json::json!({
         "data": {
-            "id": format!("u-{username}"),
-            "username": username,
+            "id": format!("u-{handle}"),
+            "handle": handle,
             "name": row.commit.author.name,
             "avatar_url": null,
-            "html_url": format!("https://dev-null.sh/@{username}"),
+            "html_url": format!("https://dev-null.sh/@{handle}"),
             "lane": 5,
             "bio": "writes down what the locks protect.",
             "company": null,
             "location": "Arlington, VA",
             "website": "https://example.com",
-            "github_url": format!("https://github.com/{username}"),
+            "github_url": format!("https://github.com/{handle}"),
             "created_at": "2025-03-14T00:00:00Z",
             "commits_count": 42,
             "followers_count": 1337,

@@ -98,7 +98,7 @@ fn row() -> impl Strategy<Value = Row> {
         0u32..2_000_000,
     )
         .prop_map(
-            |(segments, preview, name, username, body, hours, status, replies, stars)| {
+            |(segments, preview, name, handle, body, hours, status, replies, stars)| {
                 let mut row = fixture_row();
                 row.replies_count = replies;
                 row.stars_count = stars;
@@ -106,7 +106,7 @@ fn row() -> impl Strategy<Value = Row> {
                 commit.body_segments = segments;
                 commit.preview_segments = preview;
                 commit.author.name = name;
-                commit.author.username = username;
+                commit.author.handle = handle;
                 commit.body = body;
                 commit.created_at = now().to_utc() - chrono::Duration::hours(hours);
                 commit.status = status;
@@ -252,7 +252,7 @@ proptest! {
         prop_assert!(line.width() <= usize::from(width), "{width}: {:?}", text(line));
         let shown = text(line);
         let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
-        let full = format!("● {} @{}  {collapsed}", author.name, author.username);
+        let full = format!("● {} @{}  {collapsed}", author.name, author.handle);
         let fits = shown == full;
         let cut = shown
             .strip_suffix('…')

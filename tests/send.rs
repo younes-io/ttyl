@@ -56,7 +56,7 @@ fn posted(body: &str, status: Status, parent: Option<CommitId>) -> Reply {
     card.commit.status = status;
     card.commit.parent_id = parent;
     card.commit.quoted_commit_id = None;
-    card.commit.author.username = "ada".to_owned();
+    card.commit.author.handle = "ada".to_owned();
     card.commit.author.name = "Ada".to_owned();
     card.quoted_commit = None;
     card.stars_count = 0;

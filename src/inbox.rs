@@ -380,7 +380,7 @@ impl GroupList {
     pub fn opens(&self) -> Option<profile::Opens> {
         let event = &self.list.selected()?.event;
         if event.kind == Kind::Followed {
-            return Some(profile::Opens::Profile(event.actor.username.clone()));
+            return Some(profile::Opens::Profile(event.actor.handle.clone()));
         }
         event.commit_id().cloned().map(profile::Opens::Thread)
     }
@@ -573,10 +573,7 @@ fn sentence(group: &Group, unread: bool) -> Vec<Span<'static>> {
         _ => 0,
     };
     if !grouped {
-        spans.push(Span::styled(
-            format!(" @{}", actor.username),
-            theme::muted(),
-        ));
+        spans.push(Span::styled(format!(" @{}", actor.handle), theme::muted()));
     } else if others > 0 {
         let noun = if others == 1 { "other" } else { "others" };
         spans.push(Span::styled(format!(" and {others} {noun}"), text));

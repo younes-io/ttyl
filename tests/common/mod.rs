@@ -231,7 +231,7 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
 
 pub fn account(unread: u32) -> Account {
     serde_json::from_value(serde_json::json!({
-        "data": { "username": "ada", "name": "Ada" },
+        "data": { "handle": "ada", "name": "Ada" },
         "unread_notifications_count": unread,
     }))
     .unwrap()
@@ -413,20 +413,20 @@ pub fn tap(engine: &mut Engine, code: KeyCode, at: Instant) -> Vec<Effect> {
     effects
 }
 
-pub fn profile(username: &str, is_following: bool) -> Reply {
+pub fn profile(handle: &str, is_following: bool) -> Reply {
     let json = serde_json::json!({
         "data": {
-            "id": format!("u-{username}"),
-            "username": username,
-            "name": username,
+            "id": format!("u-{handle}"),
+            "handle": handle,
+            "name": handle,
             "avatar_url": null,
-            "html_url": format!("https://dev-null.sh/{username}"),
+            "html_url": format!("https://dev-null.sh/{handle}"),
             "lane": 0,
             "bio": null,
             "company": null,
             "location": null,
             "website": null,
-            "github_url": format!("https://github.com/{username}"),
+            "github_url": format!("https://github.com/{handle}"),
             "created_at": "2025-01-01T00:00:00Z",
             "commits_count": 0,
             "followers_count": 0,

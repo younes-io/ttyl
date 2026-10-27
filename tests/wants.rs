@@ -19,7 +19,7 @@ fn fixture(name: &str) -> String {
 fn store() -> Store {
     let mut store = Store::new(Account {
         me: Me {
-            username: "ada".to_owned(),
+            handle: "ada".to_owned(),
             name: None,
             pasteis_mode: false,
             pasteis_remaining: None,
@@ -161,7 +161,7 @@ fn a_follow_with_no_known_state_asks_the_server_first() {
     store.apply(&Call::User("grace".to_owned()), profile("grace", false));
     assert_eq!(store.following("grace"), Some(true));
     let follow = Call::Follow {
-        username: "grace".to_owned(),
+        handle: "grace".to_owned(),
         on: true,
     };
     assert_eq!(store.writes(idle), vec![follow.clone()]);
@@ -178,7 +178,7 @@ fn a_refused_follow_goes_back_to_what_the_server_has() {
     store.apply(&Call::User("grace".to_owned()), profile("grace", true));
     assert_eq!(store.following("grace"), Some(false));
     let unfollow = Call::Follow {
-        username: "grace".to_owned(),
+        handle: "grace".to_owned(),
         on: false,
     };
     assert_eq!(store.writes(idle), vec![unfollow.clone()]);

@@ -170,7 +170,7 @@ impl From<WireSegment> for Segment {
 #[derive(Debug, Clone, Deserialize)]
 pub struct User {
     pub id: UserId,
-    pub username: String,
+    pub handle: String,
     pub name: String,
     pub avatar_url: Option<String>,
     pub html_url: String,
@@ -179,7 +179,7 @@ pub struct User {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mention {
-    pub username: String,
+    pub handle: String,
     pub offset: usize,
     pub length: usize,
 }

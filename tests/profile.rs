@@ -14,7 +14,7 @@ fn at_other() -> usize {
     page(Log::Latest)
         .rows
         .iter()
-        .position(|row| row.commit.author.username != "ada")
+        .position(|row| row.commit.author.handle != "ada")
         .expect("the fixture has someone else's commit")
 }
 
@@ -22,7 +22,7 @@ fn author() -> String {
     page(Log::Latest).rows[at_other()]
         .commit
         .author
-        .username
+        .handle
         .clone()
 }
 
@@ -40,8 +40,8 @@ fn ticket(effects: &[Effect], want: impl Fn(&Call) -> bool) -> Ticket {
         .unwrap_or_else(|| panic!("no such call in {:#?}", runs(effects)))
 }
 
-fn person(username: &str) -> Person {
-    let Reply::User(profile) = profile(username, false) else {
+fn person(handle: &str) -> Person {
+    let Reply::User(profile) = profile(handle, false) else {
         unreachable!("profile builds a user reply");
     };
     Person {
@@ -84,7 +84,7 @@ fn p_opens_the_selected_authors_profile() {
     assert!(calls.contains(&&Call::User(author())), "{calls:#?}");
     assert!(
         calls.contains(&&Call::Commits {
-            username: author(),
+            handle: author(),
             replies: false,
             cursor: None,
         }),
@@ -118,7 +118,7 @@ fn tab_walks_the_tabs_and_loads_each_once() {
     let replies = tap(&mut engine, KeyCode::Tab, at);
     assert!(
         runs(&replies).contains(&&Call::Commits {
-            username: author(),
+            handle: author(),
             replies: true,
             cursor: None,
         }),
@@ -320,7 +320,7 @@ fn your_own_profile_shows_how_far_you_are_from_the_next_rank() {
     let mine = page(Log::Latest)
         .rows
         .iter()
-        .position(|row| row.commit.author.username == "ada")
+        .position(|row| row.commit.author.handle == "ada")
         .expect("the fixture has a commit by @ada");
     let effects = press(&mut engine, &format!("2{}p", "j".repeat(mine)), at);
     let user = ticket(&effects, |call| matches!(call, Call::User(_)));
