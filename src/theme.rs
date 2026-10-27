@@ -1,7 +1,8 @@
 //! The web's dark theme tokens from `resources/css/app.css`.
 
 use std::cell::Cell;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, OnceLock};
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
@@ -248,11 +249,18 @@ pub fn set_pasteis(on: bool) {
     PASTEIS.set(on);
 }
 
-/// Nerd Font icons, or plain Unicode when `TTYL_ICONS=plain`.
+/// Nerd Font icons, or plain Unicode when `TTYL_ICONS=plain` or the viewer picked them.
 pub fn icons() -> &'static Icons {
-    static ICONS: OnceLock<&Icons> = OnceLock::new();
-    ICONS.get_or_init(|| match std::env::var("TTYL_ICONS").as_deref() {
-        Ok("plain") => &PLAIN,
-        _ => &NERD,
-    })
+    if plain_icons() { &PLAIN } else { &NERD }
+}
+
+static PLAIN_ICONS: LazyLock<AtomicBool> =
+    LazyLock::new(|| AtomicBool::new(std::env::var("TTYL_ICONS").as_deref() == Ok("plain")));
+
+pub fn plain_icons() -> bool {
+    PLAIN_ICONS.load(Ordering::Relaxed)
+}
+
+pub fn set_plain_icons(on: bool) {
+    PLAIN_ICONS.store(on, Ordering::Relaxed);
 }

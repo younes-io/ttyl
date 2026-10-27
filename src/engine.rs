@@ -96,6 +96,8 @@ pub enum Effect {
     Clip,
     /// Fetches an image for the viewer.
     Fetch(String),
+    /// Remembers whether the viewer picked plain symbols over Nerd Font icons.
+    Icons(bool),
 }
 
 pub enum Phase {
@@ -725,6 +727,7 @@ fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
         (Phase::SignIn(step), Action::StartOver) => matches!(step, Step::Browser(_)),
+        (Phase::SignIn(step), Action::Icons) => matches!(step, Step::Ready(_)),
         (Phase::SignIn(_), _) => false,
         (Phase::Ready(session), action) => session.can(action),
     }
@@ -1331,6 +1334,11 @@ impl Engine {
             }
             (Phase::SignIn(_), Action::SignIn) => return vec![Effect::StartSignIn],
             (Phase::SignIn(step), Action::StartOver) => *step = Step::Ready(None),
+            (Phase::SignIn(_), Action::Icons) => {
+                let plain = !theme::plain_icons();
+                theme::set_plain_icons(plain);
+                return vec![Effect::Icons(plain)];
+            }
             (Phase::Ready(session), Action::Inbox) => {
                 if !session.on_inbox() {
                     session.stack.push(Screen::Inbox);

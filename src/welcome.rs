@@ -9,7 +9,7 @@ use std::time::Duration;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::api::Client;
@@ -114,6 +114,8 @@ pub fn draw(frame: &mut Frame, step: &Step, device_name: &str, keys: &str) {
             lines.push(Line::raw(format!(
                 "Your browser opens dev-null.sh, where you approve this terminal as \"{device_name}\"."
             )));
+            lines.push(Line::default());
+            lines.push(icon_check());
             if let Some(notice) = notice {
                 lines.push(Line::default());
                 lines.push(Line::styled(
@@ -150,4 +152,28 @@ pub fn draw(frame: &mut Frame, step: &Step, device_name: &str, keys: &str) {
         height: area.height - area.height / 5,
     };
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), column);
+}
+
+/// The icons the feed will use, so a font without them shows here, once, rather than as boxes
+/// all over the feed.
+fn icon_check() -> Line<'static> {
+    let icons = theme::icons();
+    let shown = [
+        icons.star,
+        icons.reply,
+        icons.quote,
+        icons.link,
+        icons.image,
+        icons.poll,
+    ];
+    let ask = if theme::plain_icons() {
+        "Plain symbols. Press i to try Nerd Font icons."
+    } else {
+        "If these look like boxes, press i for plain symbols."
+    };
+    Line::from(vec![
+        Span::raw(shown.join("  ")),
+        Span::raw("   "),
+        Span::styled(ask, theme::muted()),
+    ])
 }

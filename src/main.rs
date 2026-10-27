@@ -30,9 +30,11 @@ use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{Effect, Engine, Event, WORKERS};
 use ttyl::sched::Ticket;
-use ttyl::{editor, signin, viewer, welcome};
+use ttyl::{editor, signin, theme, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
+/// The file in ttyl's state that remembers the icons the viewer picked on the welcome screen.
+const ICONS: &str = "icons";
 
 enum Command<'a> {
     Run,
@@ -153,6 +155,12 @@ fn run(
     let jobs = spawn_workers(Arc::clone(&client), events.clone());
     let input = spawn_input(events.clone());
     let device_name = welcome::device_name();
+    if env::var_os("TTYL_ICONS").is_none()
+        && let Some(saved) =
+            draft::state().and_then(|state| fs::read_to_string(state.join(ICONS)).ok())
+    {
+        theme::set_plain_icons(saved.trim() == "plain");
+    }
     let drafts = draft::dir();
     let saved = drafts.as_deref().map(draft::load).unwrap_or_default();
     if let Some(dir) = drafts.as_deref() {
@@ -266,6 +274,13 @@ impl Runtime {
                     let event = self.clip();
                     let effects = self.engine.update(event, Instant::now());
                     self.perform(terminal, effects)?;
+                }
+                Effect::Icons(plain) => {
+                    if let Some(state) = draft::state() {
+                        let _ = fs::create_dir_all(&state).and_then(|()| {
+                            fs::write(state.join(ICONS), if plain { "plain" } else { "nerd" })
+                        });
+                    }
                 }
                 Effect::Draft(write) => {
                     let stored = match &self.drafts {

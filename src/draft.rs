@@ -107,10 +107,15 @@ impl Drafts {
 }
 
 pub fn dir() -> Option<PathBuf> {
+    state().map(|state| state.join("drafts"))
+}
+
+/// Where ttyl keeps what it remembers between runs.
+pub fn state() -> Option<PathBuf> {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .map(|state| state.join("ttyl/drafts"))
+        .map(|state| state.join("ttyl"))
 }
 
 pub fn load(dir: &Path) -> HashMap<Target, Draft> {

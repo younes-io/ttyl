@@ -446,7 +446,10 @@ fn a_device_the_server_does_not_know_is_sent_to_sign_in() {
     );
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "Sign in to read your logs."), "{rows:#?}");
-    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+    assert!(
+        contains(&rows, "enter sign in  i switch icons  Q quit"),
+        "{rows:#?}"
+    );
 
     assert!(press(&mut engine, "j", at).is_empty());
     let effects = engine.update(
@@ -457,7 +460,10 @@ fn a_device_the_server_does_not_know_is_sent_to_sign_in() {
     engine.update(Event::SignIn(Err(io::Error::other("no browser here"))), at);
     let rows = screen(&mut engine, 80, 20, at);
     assert!(contains(&rows, "no browser here"), "{rows:#?}");
-    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+    assert!(
+        contains(&rows, "enter sign in  i switch icons  Q quit"),
+        "{rows:#?}"
+    );
 }
 
 #[test]
@@ -475,7 +481,10 @@ fn a_device_revoked_while_the_app_runs_returns_to_sign_in() {
     );
     let rows = screen(&mut engine, 80, 20, at + secs(30));
     assert!(contains(&rows, "Sign in to read your logs."), "{rows:#?}");
-    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+    assert!(
+        contains(&rows, "enter sign in  i switch icons  Q quit"),
+        "{rows:#?}"
+    );
     assert!(engine.log().is_none());
     assert!(press(&mut engine, "j", at + secs(30)).is_empty());
     assert!(
@@ -603,7 +612,10 @@ fn a_denied_link_says_so_and_offers_to_try_again() {
         contains(&rows, "You cancelled in the browser."),
         "{rows:#?}"
     );
-    assert!(contains(&rows, "enter sign in  Q quit"), "{rows:#?}");
+    assert!(
+        contains(&rows, "enter sign in  i switch icons  Q quit"),
+        "{rows:#?}"
+    );
 }
 
 #[test]
