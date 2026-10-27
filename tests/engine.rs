@@ -109,6 +109,25 @@ fn g_twice_goes_to_the_top_and_g_then_an_unbound_key_does_nothing() {
 }
 
 #[test]
+fn help_groups_its_keys_in_two_columns_when_they_fit() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, page);
+    press(&mut engine, "?", at);
+    let rows = screen(&mut engine, 120, 36, at);
+    let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
+    let titles = ["move", "read", "act", "while writing"].map(|title| {
+        row_of(&format!("  {title}  ")).unwrap_or_else(|| panic!("{title}: {rows:#?}"))
+    });
+    assert!(titles.is_sorted(), "groups run top to bottom: {rows:#?}");
+    let beside = &rows[titles[0]];
+    assert!(
+        beside.contains(" write ") && beside.find(" write ") > beside.find(" move "),
+        "write heads the second column: {rows:#?}"
+    );
+    assert!(!contains(&rows, "↓ more"), "{rows:#?}");
+}
+
+#[test]
 fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     let at = Instant::now();
     let mut engine = boot_serving(at, |log| match log {
@@ -131,7 +150,7 @@ fn help_lists_every_key_and_dims_the_ones_that_dont_work_now() {
     press(&mut engine, "?", at);
     let rows = screen(&mut engine, 80, 30, at);
     assert!(contains(&rows, " keys "), "{rows:#?}");
-    for shown in ["following", "starred commits", "↓ more", "j/k scroll"] {
+    for shown in ["move down", "open the thread", "↓ more", "j/k scroll"] {
         assert!(contains(&rows, shown), "{shown}: {rows:#?}");
     }
     assert!(contains(&rows, "? close"), "{rows:#?}");

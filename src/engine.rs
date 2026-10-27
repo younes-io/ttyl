@@ -2244,9 +2244,14 @@ impl Engine {
                         let area = framed_as(frame, body, framed, "");
                         group.draw(frame, area, now, wall)
                     }
-                    Some(Screen::Profile(profile)) => {
-                        profile.draw(frame, log::column(inset(body)), &session.store, &self.timers, now, wall)
-                    }
+                    Some(Screen::Profile(profile)) => profile.draw(
+                        frame,
+                        log::column(inset(body)),
+                        &session.store,
+                        &self.timers,
+                        now,
+                        wall,
+                    ),
                     Some(Screen::Starred(starred)) => {
                         let area = framed_as(frame, body, framed, "");
                         starred.draw(frame, area, &session.store, &self.timers, now, wall)
@@ -2348,52 +2353,170 @@ fn news_of(count: u32) -> String {
     format!("↑ {count} new {noun} · ctrl-r to load")
 }
 
-/// The keys help lists, the box they go in, and the furthest row the list can scroll to.
-fn help_layout(
-    screen: Rect,
-    session: &Session,
-) -> (Vec<(String, &'static str, bool)>, Rect, usize) {
+/// A line of help: a group's title, one of its keys, or the gap before the next group.
+enum HelpRow {
+    Title(&'static str),
+    Key(keys::Entry),
+    Gap,
+}
+
+type Section = (&'static str, Vec<keys::Entry>);
+
+/// The keys for this screen in their groups, and the composer's apart from them.
+fn help_sections(session: &Session) -> (Vec<Section>, Section) {
     let allows = |action| session.screen_allows(action);
-    let mut rows = keys::help(session.screen_scopes(), &allows);
+    let mut entries = keys::help(session.screen_scopes(), &allows);
+    entries.sort_by_key(|entry| entry.group);
+    let mut sections: Vec<Section> = Vec::new();
+    for entry in entries {
+        match sections.last_mut() {
+            Some((title, list)) if *title == entry.group.label() => list.push(entry),
+            _ => sections.push((entry.group.label(), vec![entry])),
+        }
+    }
     // `?` types itself in the composer, so its keys are listed here instead.
-    rows.push((String::new(), "", false));
-    rows.push((String::new(), "while writing", false));
-    rows.extend(
-        keys::help(COMPOSER_SCOPES, &|action| action != Action::Quit)
-            .into_iter()
-            .filter(|(_, _, live)| *live),
-    );
-    let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
+    let writing = keys::help(COMPOSER_SCOPES, &|action| action != Action::Quit)
+        .into_iter()
+        .filter(|entry| entry.live)
+        .collect();
+    (sections, ("while writing", writing))
+}
+
+fn help_rows(sections: &[Section]) -> Vec<HelpRow> {
+    let mut rows = Vec::new();
+    for (title, entries) in sections {
+        if !rows.is_empty() {
+            rows.push(HelpRow::Gap);
+        }
+        rows.push(HelpRow::Title(title));
+        rows.extend(entries.iter().cloned().map(HelpRow::Key));
+    }
+    rows
+}
+
+/// How wide a column's keys are, and the whole column.
+fn help_widths(rows: &[HelpRow]) -> (usize, usize) {
+    let keys = rows
+        .iter()
+        .filter_map(|row| match row {
+            HelpRow::Key(entry) => Some(entry.keys.width()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
     let width = rows
         .iter()
-        .map(|(_, help, _)| key_width + 2 + help.width())
+        .map(|row| match row {
+            HelpRow::Key(entry) => keys + 2 + entry.help.width(),
+            HelpRow::Title(title) => keys + 2 + title.width(),
+            HelpRow::Gap => 0,
+        })
         .max()
-        .unwrap_or(0)
-        + 6;
-    let width = u16::try_from(width).unwrap_or(u16::MAX);
-    let height = u16::try_from(rows.len() + 4).unwrap_or(u16::MAX);
+        .unwrap_or(0);
+    (keys, width)
+}
+
+const HELP_GUTTER: u16 = 6;
+
+/// Help laid out in bands, top to bottom, each band columns side by side.
+type HelpBands = Vec<Vec<Vec<HelpRow>>>;
+
+/// The bands help shows, the box they go in, and the furthest row the list can scroll to.
+/// The screen's groups split into two even columns with the composer's keys across
+/// the foot when that fits; otherwise everything is one column that scrolls.
+fn help_layout(screen: Rect, session: &Session) -> (HelpBands, Rect, usize) {
+    let (sections, writing) = help_sections(session);
+    let size = |bands: &HelpBands| {
+        let width = bands
+            .iter()
+            .map(|band| {
+                band.iter().map(|rows| help_widths(rows).1).sum::<usize>()
+                    + usize::from(HELP_GUTTER) * (band.len() - 1)
+            })
+            .max()
+            .unwrap_or(0)
+            + 6;
+        let height = bands
+            .iter()
+            .map(|band| band.iter().map(Vec::len).max().unwrap_or(0))
+            .sum::<usize>()
+            + bands.len()
+            - 1
+            + 4;
+        (
+            u16::try_from(width).unwrap_or(u16::MAX),
+            u16::try_from(height).unwrap_or(u16::MAX),
+        )
+    };
+    let columns = (1..sections.len())
+        .map(|at| {
+            let (left, right) = sections.split_at(at);
+            vec![help_rows(left), help_rows(right)]
+        })
+        .min_by_key(|columns| columns.iter().map(Vec::len).max());
+    if let Some(columns) = columns {
+        let bands = vec![columns, vec![help_rows(std::slice::from_ref(&writing))]];
+        let (width, height) = size(&bands);
+        // Like a scrolling list, the columns give up their blank rows before they give up.
+        if width < screen.width && height - 2 < screen.height {
+            return (bands, popup::place(screen, width, height, None), 0);
+        }
+    }
+    let mut all = sections;
+    all.push(writing);
+    let bands = vec![vec![help_rows(&all)]];
+    let (width, height) = size(&bands);
     let area = popup::place(screen, width, height, None);
     let last = if area.height < height {
-        rows.len()
+        bands[0][0]
+            .len()
             .saturating_sub(usize::from(area.height.saturating_sub(2)))
     } else {
         0
     };
-    (rows, area, last)
+    (bands, area, last)
+}
+
+fn help_line(row: HelpRow, key_width: usize) -> Line<'static> {
+    match row {
+        HelpRow::Title(title) => Line::from(vec![
+            Span::raw(" ".repeat(key_width + 2)),
+            Span::styled(title, theme::muted().add_modifier(Modifier::BOLD)),
+        ]),
+        HelpRow::Key(entry) => {
+            let (key_style, help_style) = if entry.live {
+                (
+                    Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+                    Style::new().fg(theme::FOREGROUND),
+                )
+            } else {
+                (Style::new().fg(theme::FAINT), Style::new().fg(theme::FAINT))
+            };
+            Line::from(vec![
+                Span::styled(format!("{:>key_width$}", entry.keys), key_style),
+                Span::raw("  "),
+                Span::styled(entry.help, help_style),
+            ])
+        }
+        HelpRow::Gap => Line::default(),
+    }
 }
 
 /// Draws the keys from row `top`, which the caller has already held within reach.
 fn draw_help(frame: &mut Frame, screen: Rect, session: &Session, top: usize) {
-    let (rows, area, last) = help_layout(screen, session);
-    let key_width = rows.iter().map(|(key, ..)| key.width()).max().unwrap_or(0);
+    let (bands, area, last) = help_layout(screen, session);
     let block = Block::bordered().title(Span::styled(
         " keys ",
         Style::new()
             .fg(theme::FOREGROUND)
             .add_modifier(Modifier::BOLD),
     ));
+    let content: usize = bands
+        .iter()
+        .map(|band| band.iter().map(Vec::len).max().unwrap_or(0) + 1)
+        .sum();
     // A list too tall for the screen gives up its blank rows before it scrolls.
-    let block = if last > 0 {
+    let block = if usize::from(area.height) < content + 3 {
         block.padding(Padding::horizontal(2))
     } else {
         block.padding(Padding::new(2, 2, 1, 1))
@@ -2404,26 +2527,29 @@ fn draw_help(frame: &mut Frame, screen: Rect, session: &Session, top: usize) {
         block
     };
     let inner = popup::raise(frame, area, block);
-    let lines: Vec<Line> = rows
-        .into_iter()
-        .skip(top)
-        .map(|(key, help, live)| {
-            let (key_style, help_style) = if live {
-                (
-                    Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-                    Style::new().fg(theme::FOREGROUND),
-                )
-            } else {
-                (Style::new().fg(theme::FAINT), Style::new().fg(theme::FAINT))
-            };
-            Line::from(vec![
-                Span::styled(format!("{key:>key_width$}"), key_style),
-                Span::raw("  "),
-                Span::styled(help, help_style),
-            ])
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), inner);
+    let mut y = inner.y;
+    for band in bands {
+        let height = band.iter().map(Vec::len).max().unwrap_or(0);
+        let mut x = inner.x;
+        for rows in band {
+            let (key_width, width) = help_widths(&rows);
+            let lines: Vec<Line> = rows
+                .into_iter()
+                .skip(top)
+                .map(|row| help_line(row, key_width))
+                .collect();
+            let column = Rect {
+                x,
+                y,
+                width: u16::try_from(width).unwrap_or(u16::MAX),
+                height: inner.bottom().saturating_sub(y),
+            }
+            .intersection(inner);
+            frame.render_widget(Paragraph::new(lines), column);
+            x = column.right().saturating_add(HELP_GUTTER);
+        }
+        y = y.saturating_add(u16::try_from(height + 1).unwrap_or(u16::MAX));
+    }
 }
 
 /// Asks why a commit is being reported, beside the card it reports when there is room.

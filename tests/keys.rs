@@ -111,7 +111,12 @@ fn a_binding_the_screen_cannot_do_is_not_dispatched_listed_or_hinted() {
     assert!(!hints(LOG_SCOPES, &[], &no_star).contains("s star"));
     assert!(hints(LOG_SCOPES, &[], &all).contains("s star"));
     let listed = help(LOG_SCOPES, &no_star);
-    let live = |what: &str| listed.iter().find(|row| row.1 == what).map(|row| row.2);
+    let live = |what: &str| {
+        listed
+            .iter()
+            .find(|row| row.help == what)
+            .map(|row| row.live)
+    };
     assert_eq!(live("star or unstar"), Some(false));
     assert_eq!(live("follow or unfollow the author"), Some(true));
 }

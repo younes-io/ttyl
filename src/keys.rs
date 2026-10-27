@@ -68,6 +68,81 @@ pub enum Act {
     OpenQuote,
 }
 
+/// Where a key sits in help: what it does, not where it works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Group {
+    Move,
+    Read,
+    Act,
+    Write,
+    Go,
+}
+
+impl Group {
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Move => "move",
+            Group::Read => "read",
+            Group::Act => "act",
+            Group::Write => "write",
+            Group::Go => "go",
+        }
+    }
+}
+
+impl Action {
+    pub fn group(self) -> Group {
+        match self {
+            Action::Down
+            | Action::Up
+            | Action::Top
+            | Action::Bottom
+            | Action::Next
+            | Action::Previous
+            | Action::NextFilter
+            | Action::PreviousFilter
+            | Action::Choose(_) => Group::Move,
+            Action::Open
+            | Action::Expand
+            | Action::Back
+            | Action::Profile
+            | Action::Preview
+            | Action::Link(_)
+            | Action::Commit(Act::Images | Act::OpenQuote) => Group::Read,
+            Action::Compose
+            | Action::Send
+            | Action::Editor
+            | Action::Poll
+            | Action::Attach
+            | Action::Commit(Act::Reply | Act::Quote) => Group::Write,
+            Action::Show(_)
+            | Action::NextLog
+            | Action::Inbox
+            | Action::Starred
+            | Action::Refresh
+            | Action::Help
+            | Action::Close
+            | Action::Saver
+            | Action::Quit => Group::Go,
+            Action::Commit(_)
+            | Action::Confirm
+            | Action::Pick(_)
+            | Action::Site
+            | Action::SignIn
+            | Action::StartOver => Group::Act,
+        }
+    }
+}
+
+/// One row of help: its keys, what they do, whether they work right now, and its group.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub keys: String,
+    pub help: &'static str,
+    pub live: bool,
+    pub group: Group,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     Always,
@@ -1102,8 +1177,8 @@ pub fn fit(hints: &str, width: usize) -> String {
 
 /// Every key in `scopes`, each with whether it works right now, so help can show a key
 /// like `v` dimmed instead of hiding it until a poll is selected.
-pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'static str, bool)> {
-    let mut listed: Vec<(String, &'static str, bool)> = Vec::new();
+pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<Entry> {
+    let mut listed: Vec<Entry> = Vec::new();
     let mut last: Option<&Binding> = None;
     for binding in TABLE
         .iter()
@@ -1113,25 +1188,32 @@ pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<(String, &'st
         let live = can(binding.action);
         // Neighbours that say the same thing share a row.
         match listed.last_mut() {
-            Some((shown, _, on))
+            Some(entry)
                 if last.is_some_and(|l| l.scope == binding.scope && l.help == binding.help) =>
             {
-                shown.push('/');
-                shown.push_str(&keys.join("/"));
-                *on |= live;
+                entry.keys.push('/');
+                entry.keys.push_str(&keys.join("/"));
+                entry.live |= live;
             }
-            _ => listed.push((keys.join("/"), binding.help, live)),
+            _ => listed.push(Entry {
+                keys: keys.join("/"),
+                help: binding.help,
+                live,
+                group: binding.action.group(),
+            }),
         }
         last = Some(binding);
     }
     let mut shown: Vec<&'static str> = Vec::new();
     listed
         .iter()
-        .filter(|(_, help, live)| {
-            let twin = listed.iter().any(|(_, other, on)| other == help && *on);
-            let keep = *live || (!twin && !shown.contains(help));
-            if keep && !*live {
-                shown.push(help);
+        .filter(|entry| {
+            let twin = listed
+                .iter()
+                .any(|other| other.help == entry.help && other.live);
+            let keep = entry.live || (!twin && !shown.contains(&entry.help));
+            if keep && !entry.live {
+                shown.push(entry.help);
             }
             keep
         })
