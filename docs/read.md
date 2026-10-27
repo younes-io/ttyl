@@ -22,6 +22,10 @@ Press <kbd>tab</kbd> to go to the next log.
 Older commits load when you reach the bottom. When new commits arrive, a note
 appears at the top of the log. Press <kbd>ctrl-r</kbd> to load them.
 
+When you open ttyl again, `HEAD@{last visit}` marks where you left off in
+Following and Latest. The commits above it are the ones that came in while
+you were gone.
+
 ## Open a thread
 
 Press <kbd>enter</kbd> to open the selected commit with its replies. Press

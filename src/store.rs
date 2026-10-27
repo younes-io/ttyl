@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
@@ -26,6 +26,7 @@ pub struct Store {
     deleting: HashSet<CommitId>,
     unsent_pastels: HashMap<CommitId, u32>,
     picking: Option<(CommitId, usize)>,
+    left_off: HashMap<Log, DateTime<Utc>>,
     generation: u64,
 }
 
@@ -157,6 +158,7 @@ impl Store {
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
             picking: None,
+            left_off: HashMap::new(),
             generation: 0,
         }
     }
@@ -783,6 +785,18 @@ impl Store {
                 Some(row)
             })
             .collect()
+    }
+
+    /// Remembers the newest commit a log showed the last run, so its feed marks where the reader left off.
+    pub fn leave_off(&mut self, page: &LogPage) {
+        let newest = page.rows.iter().map(|row| row.commit.created_at).max();
+        if let (false, Some(at)) = (page.is_ranked, newest) {
+            self.left_off.insert(page.log, at);
+        }
+    }
+
+    pub fn left_off(&self, log: Log) -> Option<DateTime<Utc>> {
+        self.left_off.get(&log).copied()
     }
 
     pub fn page(&self, log: Log) -> Option<LogPage> {

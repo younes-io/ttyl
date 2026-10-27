@@ -789,6 +789,7 @@ impl Engine {
         self.open(start.account, now);
         if let Phase::Ready(session) = &mut self.phase {
             for page in start.pages {
+                session.store.leave_off(&page);
                 session
                     .store
                     .apply(&Call::Page(page.log), Reply::Page(page));
