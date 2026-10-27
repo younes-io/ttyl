@@ -1,6 +1,6 @@
 [package]
 name = "ttyl"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "A terminal client for the dev-null.sh social network"
