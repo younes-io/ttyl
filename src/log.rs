@@ -50,6 +50,8 @@ struct LaidOut {
 /// From this width the selected commit's thread gets a pane of its own beside the feed.
 const WIDE: u16 = 110;
 const TALL: u16 = 8;
+const FEED_MAX: u16 = 100;
+const COLUMN_MAX: u16 = 118;
 /// How long the selection rests on a commit before the pane fetches its thread, so scrolling past
 /// commits sends nothing.
 const DWELL: Duration = LOADING_NOTE_DELAY;
@@ -346,7 +348,7 @@ impl LogScreen {
             Slot::Loaded(listing) => {
                 let wide = self.has_pane(area, store);
                 let (area, pane) = if wide {
-                    let feed = area.width * 3 / 5;
+                    let feed = (area.width * 3 / 5).min(FEED_MAX);
                     let [feed, pane] =
                         Layout::horizontal([Constraint::Length(feed), Constraint::Fill(1)])
                             .spacing(1)
@@ -459,6 +461,16 @@ impl LogScreen {
 /// Whether a screen drawn in this area sits in a box, as the feed does once a pane fits beside it.
 pub fn boxes(area: Rect) -> bool {
     area.width >= WIDE && area.height >= TALL
+}
+
+/// A screen with no pane beside it keeps a readable width, centered in a wide `area`.
+pub fn column(area: Rect) -> Rect {
+    let width = area.width.min(COLUMN_MAX);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        width,
+        ..area
+    }
 }
 
 pub struct Panes {

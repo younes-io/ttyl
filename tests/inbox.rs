@@ -30,6 +30,13 @@ fn gn_opens_the_inbox_and_esc_returns_to_the_same_place() {
         wide[2].starts_with(" ╭─ /all ── replies ── quotes ── stars ── mentions ── follows ──"),
         "a wide inbox sits in a box with its filters along the top, like the feed: {wide:#?}"
     );
+    let widest = screen(&mut engine, 200, 30, at);
+    let edge = format!("{}╭", " ".repeat(41));
+    assert!(
+        widest[2].starts_with(&edge) && widest[2].trim_end().ends_with('╮'),
+        "a very wide inbox keeps the 120-column width, centered: {widest:#?}"
+    );
+    assert_eq!(widest[2].trim().chars().count(), 118, "{widest:#?}");
     assert!(
         rows[29].starts_with(" tab filter  esc back  ? help  Q quit"),
         "{rows:#?}"
