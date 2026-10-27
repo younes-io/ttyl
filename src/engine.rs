@@ -2234,7 +2234,7 @@ impl Engine {
                             older: self.timers.remaining(&Timer::OlderInbox(filter), now),
                         };
                         let area = if framed {
-                            session.inbox.draw_box(frame, inset(body))
+                            session.inbox.draw_box(frame, log::column(inset(body)))
                         } else {
                             inset(body)
                         };
@@ -2245,7 +2245,7 @@ impl Engine {
                         group.draw(frame, area, now, wall)
                     }
                     Some(Screen::Profile(profile)) => {
-                        profile.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                        profile.draw(frame, log::column(inset(body)), &session.store, &self.timers, now, wall)
                     }
                     Some(Screen::Starred(starred)) => {
                         let area = framed_as(frame, body, framed, "");
@@ -2524,7 +2524,7 @@ fn keyed(hints: &str) -> Line<'static> {
 /// screen draws.
 fn framed_as(frame: &mut Frame, body: Rect, framed: bool, title: &str) -> Rect {
     if framed {
-        log::draw_box(frame, inset(body), title, true)
+        log::draw_box(frame, log::column(inset(body)), title, true)
     } else {
         inset(body)
     }
