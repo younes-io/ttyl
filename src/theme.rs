@@ -18,6 +18,8 @@ pub const DESTRUCTIVE: Color = Color::Rgb(0xff, 0x6b, 0x6b);
 pub const RAIL: Color = Color::Rgb(0x36, 0x36, 0x3a);
 pub const FAINT: Color = Color::Rgb(0x6b, 0x6b, 0x72);
 pub const BRAND: Color = Color::Rgb(0xff, 0x2d, 0x20);
+/// What a raised box casts on the screen below it.
+pub const SHADOW: Color = Color::Rgb(0x08, 0x08, 0x09);
 
 const LANES: [Color; 6] = [
     Color::Rgb(0xff, 0x8a, 0x4c),
