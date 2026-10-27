@@ -1216,12 +1216,42 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
+/// The terminal sizes the gallery draws every screen at, from a split laptop pane to a wide monitor.
+const SIZES: &[(u16, u16)] = &[(70, 24), (100, 30), (120, 34), (200, 50)];
+
+/// Draws every screen at every size in `SIZES` into `target/gallery`, one page to compare them on.
+fn gallery(picture: &Path) {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .parent()
+        .unwrap()
+        .join("gallery");
+    let _ = fs::remove_dir_all(&out);
+    fs::create_dir_all(&out).unwrap();
+    let mut index = String::from(
+        "<!doctype html><title>ttyl gallery</title>\
+         <style>body{background:#0b0b0c;color:#ececec;font:14px system-ui;margin:24px}\
+         h2{font-weight:500;margin:32px 0 8px}img{display:block;margin:8px 0;max-width:100%}</style>",
+    );
+    for shot in SHOTS {
+        let mut engine = shoot(shot, picture);
+        let _ = write!(index, "<h2>{}</h2>", shot.name);
+        for &(width, height) in SIZES {
+            let buffer = common::buffer(&mut engine, width, height, Instant::now());
+            let name = format!("{}-{width}.svg", shot.name);
+            fs::write(out.join(&name), svg(&buffer, shot.alt)).unwrap();
+            let _ = write!(index, "<img src=\"{name}\" alt=\"{width} columns\">");
+        }
+    }
+    fs::write(out.join("index.html"), index).unwrap();
+}
+
 #[test]
 fn the_docs_site_builds() {
     // SAFETY: this binary runs this one test, before the engine starts any thread.
     unsafe { std::env::set_var("TTYL_ICONS", "plain") };
     let picture_path = common::scratch("site").join("desk.png");
     picture().save(&picture_path).unwrap();
+    gallery(&picture_path);
     let files = site(&picture_path);
     let out = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .parent()
