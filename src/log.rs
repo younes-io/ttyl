@@ -276,9 +276,10 @@ impl LogScreen {
                 right.push(Span::styled(format!("{}  ", store.unread), number));
             }
         }
-        if kept(Cut::Handle) {
+        let mine = format!("@{}", store.me.handle);
+        if kept(Cut::Handle) && title != Some(mine.as_str()) {
             right.push(Span::styled(
-                format!("@{} ", store.me.handle),
+                format!("{mine} "),
                 theme::muted(),
             ));
         }
@@ -312,7 +313,7 @@ impl LogScreen {
 
     /// Whether a feed in this area shows the selected commit's thread beside it.
     pub fn has_pane(&self, area: Rect, store: &Store) -> bool {
-        area.width >= WIDE && area.height >= TALL && !self.ids(store).is_empty()
+        boxes(area) && !self.ids(store).is_empty()
     }
 
     /// On a wide terminal, returns the feed's box and the box beside it left for a thread.
@@ -455,6 +456,11 @@ impl LogScreen {
     }
 }
 
+/// Whether a screen drawn in this area sits in a box, as the feed does once a pane fits beside it.
+pub fn boxes(area: Rect) -> bool {
+    area.width >= WIDE && area.height >= TALL
+}
+
 pub struct Panes {
     pub feed: Rect,
     pub pane: Rect,
@@ -480,10 +486,10 @@ pub fn named_tabs(
 fn tab_line(names: &[&str], active: usize, focused: bool, named: bool) -> Line<'static> {
     let edge = Style::new().fg(edge(focused));
     let slash = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
-    let lit = if focused {
-        theme::FOREGROUND
+    let (lit, unlit) = if focused {
+        (theme::FOREGROUND, theme::MUTED_FOREGROUND)
     } else {
-        theme::MUTED_FOREGROUND
+        (theme::MUTED_FOREGROUND, theme::FAINT)
     };
     let lit = Style::new().fg(lit).add_modifier(Modifier::BOLD);
     let mut spans = vec![Span::styled("─ ", edge)];
@@ -500,7 +506,7 @@ fn tab_line(names: &[&str], active: usize, focused: bool, named: bool) -> Line<'
             spans.push(Span::styled("/", slash));
             spans.push(Span::styled(name, lit));
         } else {
-            spans.push(Span::styled(name, Style::new().fg(theme::FAINT)));
+            spans.push(Span::styled(name, Style::new().fg(unlit)));
         }
     }
     spans.push(Span::styled(" ", edge));
@@ -524,9 +530,9 @@ pub fn draw_tabbed(
     render_box(frame, area, line, focused)
 }
 
-/// A box edge, lit when the box holds the keys.
+/// A box edge, brighter when the box holds the keys. Blue stays for links, selection and news.
 pub fn edge(focused: bool) -> Color {
-    if focused { theme::PRIMARY } else { theme::RAIL }
+    if focused { theme::FAINT } else { theme::RAIL }
 }
 
 fn frame_block(title: Line<'static>, focused: bool) -> Block<'static> {
@@ -541,19 +547,21 @@ fn boxed(area: Rect) -> Rect {
     frame_block(Line::default(), false).inner(area)
 }
 
-/// The box whose border is lit holds the keys.
+/// The box whose border is brighter holds the keys. An empty `title` leaves the top edge bare.
 pub fn draw_box(frame: &mut Frame, area: Rect, title: &str, focused: bool) -> Rect {
     let label = if focused {
-        Style::new().fg(theme::PRIMARY).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(theme::FOREGROUND)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::new().fg(theme::FAINT)
     };
-    render_box(
-        frame,
-        area,
-        Line::styled(format!(" {title} "), label),
-        focused,
-    )
+    let title = if title.is_empty() {
+        Line::default()
+    } else {
+        Line::styled(format!(" {title} "), label)
+    };
+    render_box(frame, area, title, focused)
 }
 
 fn render_box(frame: &mut Frame, area: Rect, title: Line<'static>, focused: bool) -> Rect {

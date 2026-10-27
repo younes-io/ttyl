@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Clear};
 
-use crate::theme;
+use crate::{log, theme};
 
 /// Fades everything in `area` but `lit`, so a box raised over it reads as closer than the screen.
 pub fn dim(buf: &mut Buffer, area: Rect, lit: Option<Rect>) {
@@ -39,7 +39,7 @@ pub fn raise(frame: &mut Frame, area: Rect, block: Block) -> Rect {
     }
     let block = block
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(theme::PRIMARY))
+        .border_style(Style::new().fg(log::edge(true)))
         .style(Style::new().bg(theme::MUTED).fg(theme::FOREGROUND));
     let inner = block.inner(area);
     frame.render_widget(Clear, area);

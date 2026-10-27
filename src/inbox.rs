@@ -150,14 +150,24 @@ impl Inbox {
         self.list_mut().draw(frame, area, filter, retry, now, wall);
     }
 
+    /// Draws a box with the filters as tabs along its top, as the feed's box has its logs, and
+    /// returns the inside.
+    pub fn draw_box(&self, frame: &mut Frame, area: Rect) -> Rect {
+        log::draw_tabbed(frame, area, &Filter::ALL.map(Filter::slug), self.at(), true)
+    }
+
+    fn at(&self) -> usize {
+        Filter::ALL
+            .iter()
+            .position(|filter| *filter == self.filter)
+            .unwrap_or(0)
+    }
+
     /// The filters as tabs along a rule, like the log's. When the names don't fit they stay as words,
     /// with single gaps when narrow, because no key picks a filter by number.
     pub fn filter_bar(&self, width: u16) -> Line<'static> {
         let names = Filter::ALL.map(Filter::slug);
-        let active = Filter::ALL
-            .iter()
-            .position(|filter| *filter == self.filter)
-            .unwrap_or(0);
+        let active = self.at();
         let width = usize::from(width);
         if let Some(mut rule) = log::named_tabs(&names, active, true, width) {
             let fill = width.saturating_sub(rule.width());

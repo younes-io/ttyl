@@ -2115,7 +2115,8 @@ impl Engine {
                     Slot::Loading | Slot::Failed(_) => None,
                 };
                 let on_log = session.stack.is_empty();
-                if session.on_inbox() {
+                let framed = log::boxes(inset(body));
+                if session.on_inbox() && !framed {
                     let banner = inset(banner);
                     frame.render_widget(session.inbox.filter_bar(banner.width), banner);
                 }
@@ -2224,21 +2225,31 @@ impl Engine {
                         }
                     }
                     Some(Screen::Thread(thread)) => {
-                        thread.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                        let area = framed_as(frame, body, framed, "thread");
+                        thread.draw(frame, area, &session.store, &self.timers, now, wall)
                     }
                     Some(Screen::Inbox) => {
                         let retry = Retry {
                             page: self.timers.remaining(&Timer::Inbox(filter), now),
                             older: self.timers.remaining(&Timer::OlderInbox(filter), now),
                         };
-                        session.inbox.draw(frame, inset(body), retry, now, wall);
+                        let area = if framed {
+                            session.inbox.draw_box(frame, inset(body))
+                        } else {
+                            inset(body)
+                        };
+                        session.inbox.draw(frame, area, retry, now, wall);
                     }
-                    Some(Screen::Group(group)) => group.draw(frame, inset(body), now, wall),
+                    Some(Screen::Group(group)) => {
+                        let area = framed_as(frame, body, framed, "");
+                        group.draw(frame, area, now, wall)
+                    }
                     Some(Screen::Profile(profile)) => {
                         profile.draw(frame, inset(body), &session.store, &self.timers, now, wall)
                     }
                     Some(Screen::Starred(starred)) => {
-                        starred.draw(frame, inset(body), &session.store, &self.timers, now, wall)
+                        let area = framed_as(frame, body, framed, "");
+                        starred.draw(frame, area, &session.store, &self.timers, now, wall)
                     }
                     None => {
                         let pane = session.log.draw(
@@ -2507,6 +2518,16 @@ fn keyed(hints: &str) -> Line<'static> {
         }
     }
     Line::from(spans)
+}
+
+/// The body as a box titled `title` when `framed`, else as a bare inset, returning where its
+/// screen draws.
+fn framed_as(frame: &mut Frame, body: Rect, framed: bool, title: &str) -> Rect {
+    if framed {
+        log::draw_box(frame, inset(body), title, true)
+    } else {
+        inset(body)
+    }
 }
 
 fn inset(area: Rect) -> Rect {

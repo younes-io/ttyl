@@ -92,10 +92,10 @@ fn p_opens_the_selected_authors_profile() {
     );
     let mut engine = on_profile(at);
     let rows = screen(&mut engine, 100, 30, at);
-    assert!(rows[4].contains(&author()), "{rows:#?}");
-    assert!(rows[4].contains(" following "), "{rows:#?}");
+    assert!(rows[3].contains(&author()), "{rows:#?}");
+    assert!(rows[3].ends_with(" following"), "{rows:#?}");
     assert!(contains(&rows, "Joined January 2025"), "{rows:#?}");
-    assert!(contains(&rows, "├─ /commits ── replies"), "{rows:#?}");
+    assert!(contains(&rows, "─ /commits ── replies"), "{rows:#?}");
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn a_short_terminal_drops_the_graph_and_keeps_the_commits() {
     let rows = screen(&mut engine, 100, 24, at);
     assert!(!contains(&rows, "████"), "{rows:#?}");
     assert!(contains(&rows, "Lv. 4  daemon"), "{rows:#?}");
-    assert!(contains(&rows, "├─ /commits ── replies"), "{rows:#?}");
+    assert!(contains(&rows, "─ /commits ── replies"), "{rows:#?}");
 }
 
 #[test]
@@ -331,4 +331,13 @@ fn your_own_profile_shows_how_far_you_are_from_the_next_rank() {
     engine.update(Event::Reply(user, Ok(Reply::User(header))), at);
     let rows = screen(&mut engine, 100, 40, at);
     assert!(contains(&rows, "▰▰▰▰▱▱▱▱▱▱  1,200/2,000 xp"), "{rows:#?}");
+}
+
+#[test]
+fn your_own_profile_names_you_once_in_the_top_bar() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2p", at);
+    let top = &screen(&mut engine, 100, 30, at)[0];
+    assert_eq!(top.matches("@ada").count(), 1, "{top:?}");
 }

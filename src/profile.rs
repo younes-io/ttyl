@@ -552,13 +552,21 @@ impl ProfileScreen {
             }
             return;
         };
-        // One frame holds the header and the list, with the tabs as the rule between them.
+        // The tabs are the rule between the header and the list, and on a wide screen they join
+        // the box that holds both.
         let edge = Style::new().fg(log::edge(true));
-        let panel = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(edge);
-        let inside = panel.inner(area);
-        frame.render_widget(panel, area);
+        let framed = log::boxes(area);
+        let inside = if framed {
+            let panel = Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(edge);
+            let inside = panel.inner(area);
+            frame.render_widget(panel, area);
+            inside
+        } else {
+            area
+        };
+        let pad = u16::from(framed);
         let links: Vec<(String, String)> = [Link::Website, Link::GitHub, Link::Page]
             .into_iter()
             .filter_map(|link| {
@@ -568,7 +576,7 @@ impl ProfileScreen {
             .collect();
         // The graph goes first when the header would leave the list too little room.
         let room = usize::from(inside.height.saturating_sub(8));
-        let width = inside.width.saturating_sub(2);
+        let width = inside.width.saturating_sub(2 * pad);
         let mut header = header(profile, &links, store, width, true);
         if header.len() + 2 > room {
             header = self::header(profile, &links, store, width, false);
@@ -581,7 +589,7 @@ impl ProfileScreen {
         ])
         .areas(inside);
         frame.render_widget(
-            Paragraph::new(header).block(Block::new().padding(Padding::new(1, 1, 1, 1))),
+            Paragraph::new(header).block(Block::new().padding(Padding::new(pad, pad, 1, 1))),
             top,
         );
         let names = Tab::ALL.map(Tab::slug);
@@ -591,10 +599,11 @@ impl ProfileScreen {
             .unwrap_or(0);
         let tabs = log::tabs(&names, active, true, usize::from(rule.width));
         let fill = usize::from(rule.width).saturating_sub(tabs.width());
-        let mut spans = vec![Span::styled("├", edge)];
+        let (open, close) = if framed { ("├", "┤") } else { ("", "") };
+        let mut spans = vec![Span::styled(open, edge)];
         spans.extend(tabs.spans);
         spans.push(Span::styled("─".repeat(fill), edge));
-        spans.push(Span::styled("┤", edge));
+        spans.push(Span::styled(close, edge));
         frame.render_widget(
             Line::from(spans),
             Rect {
@@ -603,7 +612,7 @@ impl ProfileScreen {
                 ..rule
             },
         );
-        let area = list.inner(Margin::new(1, 0));
+        let area = list.inner(Margin::new(pad, 0));
 
         let loading = format!("loading {}", self.tab.slug());
         let empty = self.tab.empty_copy(&self.handle);
