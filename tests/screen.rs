@@ -471,9 +471,9 @@ fn the_logs_are_the_feed_box_top_edge_with_the_open_one_slashed() {
     assert_eq!(buffer[(17, 2)].fg, theme::ACCENT);
     assert_eq!(buffer[(18, 2)].fg, theme::FOREGROUND);
     assert!(buffer[(18, 2)].modifier.contains(bold));
-    assert_eq!(buffer[(4, 2)].fg, theme::FAINT);
+    assert_eq!(buffer[(4, 2)].fg, theme::MUTED_FOREGROUND);
     assert!(!buffer[(4, 2)].modifier.contains(bold));
-    assert_eq!(buffer[(2, 2)].fg, theme::PRIMARY);
+    assert_eq!(buffer[(2, 2)].fg, theme::FAINT);
 
     let rows = screen(&mut app, 100, 12);
     assert_eq!(

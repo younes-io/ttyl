@@ -24,6 +24,12 @@ fn gn_opens_the_inbox_and_esc_returns_to_the_same_place() {
         rows[1].starts_with(" ─ /all ── replies ── quotes ── stars ── mentions ── follows ──"),
         "the filters are tabs along a rule, like the log's: {rows:#?}"
     );
+    let wide = screen(&mut engine, 120, 30, at);
+    assert!(wide[1].trim().is_empty(), "{wide:#?}");
+    assert!(
+        wide[2].starts_with(" ╭─ /all ── replies ── quotes ── stars ── mentions ── follows ──"),
+        "a wide inbox sits in a box with its filters along the top, like the feed: {wide:#?}"
+    );
     assert!(
         rows[29].starts_with(" tab filter  esc back  ? help  Q quit"),
         "{rows:#?}"
