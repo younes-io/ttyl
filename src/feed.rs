@@ -643,7 +643,12 @@ pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row, every: bo
         (icons.star, row.stars_count, star, row.starred),
     ];
     if theme::pasteis() {
-        counts.push((icons.pastel, row.commit.pasteis_count, theme::muted(), false));
+        counts.push((
+            icons.pastel,
+            row.commit.pasteis_count,
+            theme::muted(),
+            false,
+        ));
     }
     let mut spans = Vec::new();
     for (icon, count, style, lit) in counts {

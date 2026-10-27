@@ -242,6 +242,10 @@ fn a_reply_shows_only_the_counts_it_has() {
             format!(" ┃ {} 12   {} 12", icons.reply, icons.star)
         );
         let next = row_of(&rows, "0000011");
-        assert_eq!(rows[next - 2], format!("       │ {} 1", icons.reply), "{rows:#?}");
+        assert_eq!(
+            rows[next - 2],
+            format!("       │ {} 1", icons.reply),
+            "{rows:#?}"
+        );
     }
 }
