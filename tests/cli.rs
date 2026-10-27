@@ -1,4 +1,11 @@
+mod common;
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::process::{Command, Output, Stdio};
+use std::thread::{self, JoinHandle};
+
+use common::scratch;
 
 fn ttyl(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ttyl"))
@@ -43,6 +50,8 @@ fn unknown_arguments_are_a_usage_error() {
         &["--bogus"][..],
         &["--version", "--bogus"],
         &["--bogus", "x"],
+        &["status", "--bogus"],
+        &["commit", "--bogus"],
     ] {
         let output = ttyl(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -59,4 +68,158 @@ fn running_outside_a_terminal_says_so_instead_of_panicking() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert_eq!(stderr, "ttyl: not a terminal; run ttyl in one\n");
+}
+
+/// Answers one request with a canned response and hands back the body the client sent.
+fn serve(status: &str, body: &str) -> (String, JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut sent = vec![0; length];
+        reader.read_exact(&mut sent).unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        String::from_utf8(sent).unwrap()
+    });
+    (base, server)
+}
+
+/// Runs ttyl against `base` with its key in a scratch config, feeding `stdin` when given.
+fn against(name: &str, base: &str, args: &[&str], stdin: Option<&str>) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ttyl"))
+        .args(args)
+        .env("XDG_CONFIG_HOME", scratch(name))
+        .env("DEVNULL_URL", base)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    if let Some(text) = stdin {
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+    }
+    child.wait_with_output().unwrap()
+}
+
+fn posted() -> String {
+    std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/commit-quote.json"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn status_prints_the_unread_count_alone() {
+    let (base, _server) = serve(
+        "200 OK",
+        r#"{"data":{"handle":"ada","name":"Ada"},"unread_notifications_count":3}"#,
+    );
+    let output = against("cli-status", &base, &["status"], None);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
+}
+
+#[test]
+fn status_when_not_signed_in_says_how_to_sign_in() {
+    let (base, _server) = serve(
+        "403 Forbidden",
+        r#"{"message":"This device is not approved.","code":"device_not_approved"}"#,
+    );
+    let output = against("cli-status-out", &base, &["status"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: not signed in; run ttyl to sign in\n"
+    );
+}
+
+#[test]
+fn commit_sends_the_message_and_prints_it_the_way_git_does() {
+    let (base, server) = serve("201 Created", &posted());
+    let output = against(
+        "cli-commit",
+        &base,
+        &["commit", "-m", "shipped the parser"],
+        None,
+    );
+    let sent: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+    assert_eq!(sent["body"], "shipped the parser");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[log 000000a] this is the clearest explanation of keyset paging I have read.\n\
+         https://dev-null.sh/@ken/commits/7a000000-0000-4000-8000-00000000000a\n"
+    );
+}
+
+#[test]
+fn commit_reads_its_text_from_stdin_without_m() {
+    let (base, server) = serve("201 Created", &posted());
+    let output = against(
+        "cli-commit-stdin",
+        &base,
+        &["commit"],
+        Some("piped in\n\nwith a body\n"),
+    );
+    let sent: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+    assert_eq!(sent["body"], "piped in\n\nwith a body\n");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn an_empty_commit_is_refused_before_anything_is_sent() {
+    let output = against(
+        "cli-commit-empty",
+        "http://127.0.0.1:9",
+        &["commit"],
+        Some("  \n"),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: nothing to commit. the body is empty.\n"
+    );
+}
+
+#[test]
+fn a_first_commit_points_to_the_rules_on_the_web() {
+    let (base, _server) = serve(
+        "403 Forbidden",
+        r#"{"message":"Read the commit rules first.","code":"commit_rules_required"}"#,
+    );
+    let output = against("cli-commit-rules", &base, &["commit", "-m", "hi"], None);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: Your first commit has to come from the web, so you can read the commit rules first.\n"
+    );
 }

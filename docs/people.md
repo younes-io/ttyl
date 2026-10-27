@@ -15,6 +15,13 @@ arrive, the count lights up and a note at the bottom says how many came in.
   list of everyone in it.
 - Press <kbd>esc</kbd> to go back.
 
+Run `ttyl status` to print the unread count and exit. It prints only the
+number, so a status line can show it. For example, add this to `~/.tmux.conf`:
+
+```
+set -g status-right '#(ttyl status)'
+```
+
 ## Open a profile
 
 Press <kbd>p</kbd> to open the profile of the selected commit's author. A

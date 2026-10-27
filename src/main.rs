@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, IsTerminal as _, Write as _};
+use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::ops::ControlFlow;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -22,15 +22,16 @@ use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScr
 use ratatui::layout::Size;
 use ratatui_image::FontSize;
 use ratatui_image::picker::Picker;
-use ttyl::api::{self, Call, Client};
+use ttyl::api::{self, Call, Client, Reply};
 use ttyl::attach::{self, Attachment};
 use ttyl::cache::{Cache, Start};
 use ttyl::desktop::{self, Clipped};
 use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
-use ttyl::engine::{Effect, Engine, Event, WORKERS};
+use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
+use ttyl::model::Status;
 use ttyl::sched::Ticket;
-use ttyl::{editor, signin, theme, viewer, welcome};
+use ttyl::{body, compose, editor, signin, theme, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 /// The file in ttyl's state that remembers the icons the viewer picked on the welcome screen.
@@ -39,6 +40,9 @@ const ICONS: &str = "icons";
 enum Command<'a> {
     Run,
     Redirect(&'a str),
+    Status,
+    /// A commit from the shell, with its text from `-m` or else from stdin.
+    Commit(Option<&'a str>),
     Version,
     Help,
     Unknown(&'a str),
@@ -48,6 +52,10 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
     match args {
         [] => Command::Run,
         ["--redirect", url] => Command::Redirect(url),
+        ["status"] => Command::Status,
+        ["commit"] => Command::Commit(None),
+        ["commit", "-m", text] => Command::Commit(Some(text)),
+        ["status" | "commit", arg, ..] => Command::Unknown(arg),
         ["--version" | "-V"] => Command::Version,
         ["--help" | "-h"] => Command::Help,
         ["--version" | "-V" | "--help" | "-h", arg, ..] | [arg, ..] => Command::Unknown(arg),
@@ -60,13 +68,15 @@ fn main() -> ExitCode {
     match command(&args) {
         Command::Run => report(start()),
         Command::Redirect(url) => report(signin::forward(url).map_err(|error| error.to_string())),
+        Command::Status => report(status()),
+        Command::Commit(text) => report(commit(text)),
         Command::Version => {
             println!("ttyl {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n\nCommands:\n  status  print how many notifications are unread\n  commit  send a commit, with its text from -m or from stdin\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -93,9 +103,7 @@ fn start() -> Result<(), String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err("not a terminal; run ttyl in one".to_owned());
     }
-    let path = device::key_path().map_err(|error| error.to_string())?;
-    let key = DeviceKey::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let base = env::var("DEVNULL_URL").unwrap_or_else(|_| api::BASE.to_owned());
+    let (base, key) = device()?;
     let cache = Cache::locate(&base, &key);
     let start = cache.as_ref().and_then(Cache::load);
     let mut client = Client::new(base, key);
@@ -115,6 +123,81 @@ fn start() -> Result<(), String> {
     let _ = execute!(io::stdout(), DisableBracketedPaste, DisableFocusChange);
     ratatui::restore();
     result.map_err(|error| error.to_string())
+}
+
+/// The server and the key this terminal signs in with.
+fn device() -> Result<(String, DeviceKey), String> {
+    let path = device::key_path().map_err(|error| error.to_string())?;
+    let key = DeviceKey::open(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let base = env::var("DEVNULL_URL").unwrap_or_else(|_| api::BASE.to_owned());
+    Ok((base, key))
+}
+
+fn client() -> Result<Client, String> {
+    let (base, key) = device()?;
+    Ok(Client::new(base, key))
+}
+
+fn refused(error: &api::Error) -> String {
+    if error.needs_sign_in() {
+        "not signed in; run ttyl to sign in".to_owned()
+    } else if error.is("commit_rules_required") {
+        compose::RULES.join(" ")
+    } else {
+        error.to_string()
+    }
+}
+
+fn status() -> Result<(), String> {
+    let me = client()?.me().map_err(|error| refused(&error))?;
+    println!("{}", me.unread);
+    Ok(())
+}
+
+fn commit(text: Option<&str>) -> Result<(), String> {
+    let text = match text {
+        Some(text) => text.to_owned(),
+        None if io::stdin().is_terminal() => {
+            return Err("nothing to commit; pass -m <text> or pipe the text in".to_owned());
+        }
+        None => {
+            let mut text = String::new();
+            io::stdin()
+                .read_to_string(&mut text)
+                .map_err(|error| format!("can't read stdin: {error}"))?;
+            text
+        }
+    };
+    if let Some(refusal) = body::refusal(&text) {
+        return Err(refusal);
+    }
+    let post = Call::Post {
+        target: Target::New,
+        body: text,
+        attachment: Attachment::None,
+    };
+    let reply = client()?.call(&post).map_err(|error| {
+        if error.may_have_landed() {
+            engine::NO_ANSWER.to_owned()
+        } else {
+            refused(&error)
+        }
+    })?;
+    let Reply::Commit(focus) = reply else {
+        unreachable!("a post answers with its commit")
+    };
+    let commit = &focus.card.commit;
+    match commit.status {
+        Status::Pending => {
+            println!("{}", engine::PENDING);
+        }
+        Status::Approved | Status::Rejected => {
+            let first = commit.body.lines().next().unwrap_or("");
+            println!("[log {}] {first}", commit.short_hash);
+        }
+    }
+    println!("{}", commit.html_url);
+    Ok(())
 }
 
 /// Whether ttyl runs in a tmux pane that drops passthrough, as tmux does unless told otherwise. The
