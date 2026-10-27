@@ -17,7 +17,7 @@ use crate::api::{self, Account, Call, Error, Failure, Reply};
 use crate::attach::{self, Look};
 use crate::cache::Start;
 use crate::clock::{
-    FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
+    FADE, FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
     Timers,
 };
 use crate::compose::{Composer, Prompt};
@@ -743,6 +743,8 @@ pub struct Engine {
     saver: Option<saver::Saver>,
     gallery: Gallery,
     reloaded_at: Option<Instant>,
+    /// What the last frame had selected, so a new selection can lift into place.
+    lifted: Option<String>,
 }
 
 impl Engine {
@@ -762,6 +764,7 @@ impl Engine {
             saver: None,
             gallery: Gallery::new(Picker::halfblocks()),
             reloaded_at: None,
+            lifted: None,
         }
     }
 
@@ -937,7 +940,7 @@ impl Engine {
                 Timer::Retry => self.sched.send(Call::Me, Priority::Now),
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
-                Timer::Glow | Timer::Spark(..) => {}
+                Timer::Glow | Timer::Spark(..) | Timer::Lift => {}
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
                 Timer::Inbox(filter) => {
                     if let Phase::Ready(session) = &mut self.phase
@@ -987,8 +990,9 @@ impl Engine {
             self.placeholder_at().filter(|at| *at > now),
             self.saver.as_ref().map(|_| now + saver::STEP),
             self.timers
-                .any(|timer| matches!(timer, Timer::Spark(..)))
+                .any(|timer| matches!(timer, Timer::Spark(..) | Timer::Lift))
                 .then(|| now + SPARK_FRAME),
+            self.toast_fading(now),
         ]
         .into_iter()
         .flatten()
@@ -2028,10 +2032,54 @@ impl Engine {
         self.timers.set(Timer::Toast, now + TOAST);
     }
 
-    pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
-        if let Phase::Ready(session) = &self.phase {
-            theme::set_pasteis(session.store.me.pasteis_mode);
+    /// When the toast next needs a frame to fade, at the start and end of its time.
+    fn toast_fading(&self, now: Instant) -> Option<Instant> {
+        let left = self.timers.remaining(&Timer::Toast, now)?;
+        let fading = TOAST.saturating_sub(left) < FADE || left < FADE;
+        theme::motion().then(|| {
+            if fading {
+                now + SPARK_FRAME
+            } else {
+                now + left - FADE
+            }
+        })
+    }
+
+    /// How much of the toast shows, rising as it arrives and falling away before it goes.
+    fn toast_shown(&self, now: Instant) -> f32 {
+        match self.timers.remaining(&Timer::Toast, now) {
+            Some(left) if theme::motion() => {
+                let edge = TOAST.saturating_sub(left).min(left);
+                edge.as_secs_f32() / FADE.as_secs_f32()
+            }
+            _ => 1.0,
         }
+    }
+
+    pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
+        let selected = match &self.phase {
+            Phase::Ready(session) => {
+                theme::set_pasteis(session.store.me.pasteis_mode);
+                session.selected().map(|selected| match selected {
+                    Selected::Row(row) => row.commit.id.0.clone(),
+                    Selected::Note(commit) => commit.id.0.clone(),
+                    Selected::Person(user) => user.handle.clone(),
+                })
+            }
+            _ => None,
+        };
+        if selected != self.lifted {
+            // Only a move from one card to another lifts. The first frame lands whole.
+            if theme::motion() && self.lifted.is_some() && selected.is_some() {
+                self.timers.set(Timer::Lift, now + FADE);
+            }
+            self.lifted = selected;
+        }
+        theme::set_lift(
+            self.timers
+                .remaining(&Timer::Lift, now)
+                .map_or(1.0, |left| 1.0 - left.as_secs_f32() / FADE.as_secs_f32()),
+        );
         if let Some(saver) = &mut self.saver {
             return saver.draw(frame, now);
         }
@@ -2071,6 +2119,7 @@ impl Engine {
             _ => None,
         };
         let bottom = toast.clone().unwrap_or_else(|| hints.clone());
+        let toast_shown = self.toast_shown(now);
         let next_call = self.next_call(now);
         match &mut self.phase {
             Phase::Splash => self.draw_splash(frame, now, &bottom),
@@ -2197,9 +2246,14 @@ impl Engine {
                         Span::styled(help, theme::muted()),
                     ]),
                     (None, None) => match &toast {
-                        Some(toast) => {
-                            Line::styled(format!("{HINT_INDENT}{toast}"), theme::muted())
-                        }
+                        Some(toast) => Line::styled(
+                            format!("{HINT_INDENT}{toast}"),
+                            Style::new().fg(theme::blend(
+                                theme::MUTED_FOREGROUND,
+                                theme::MUTED,
+                                toast_shown,
+                            )),
+                        ),
                         None => keyed(&hints),
                     },
                 };

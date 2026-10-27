@@ -332,7 +332,7 @@ impl LogScreen {
         };
         match store.slot(self.active) {
             Slot::Loading => {
-                frame.render_widget(Line::styled("Loading…", theme::muted()), area);
+                frame.render_widget(Paragraph::new(skeleton(area)), area);
                 None
             }
             Slot::Failed(failure) => {
@@ -578,4 +578,38 @@ fn render_box(frame: &mut Frame, area: Rect, title: Line<'static>, focused: bool
     let inner = block.inner(area);
     frame.render_widget(block, area);
     inner
+}
+
+/// Cards in the shape of the feed, blank bars where names and prose will land, while the first page
+/// comes. Their widths vary so they read as a timeline rather than a grid.
+fn skeleton(area: Rect) -> Vec<Line<'static>> {
+    const CARDS: [(usize, &[usize]); 4] = [
+        (14, &[52, 30]),
+        (10, &[44]),
+        (18, &[58, 46, 20]),
+        (12, &[36]),
+    ];
+    let room = usize::from(area.width).saturating_sub(2);
+    let bar =
+        |width: usize, color| Span::styled(" ".repeat(width.min(room)), Style::new().bg(color));
+    let prose = theme::blend(theme::MUTED, theme::BACKGROUND, 0.6);
+    CARDS
+        .iter()
+        .cycle()
+        .flat_map(|(name, body)| {
+            let header = Line::from(vec![
+                Span::styled("● ", Style::new().fg(theme::RAIL)),
+                bar(*name, theme::MUTED),
+                Span::raw("  "),
+                bar(4, prose),
+            ]);
+            let body = body
+                .iter()
+                .map(move |width| Line::from(vec![Span::raw("  "), bar(*width, prose)]));
+            std::iter::once(Line::default())
+                .chain(std::iter::once(header))
+                .chain(body)
+        })
+        .take(usize::from(area.height))
+        .collect()
 }

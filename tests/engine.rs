@@ -1,16 +1,18 @@
 mod common;
 
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use common::{
-    account, answer_pages, boot, boot_serving, contains, following_nobody, help_entry, key,
-    open_browser, page, press, reload, runs, screen, secs, serve,
+    account, answer_pages, boot, boot_serving, buffer, contains, following_nobody, help_entry, key,
+    ms, open_browser, page, press, reload, runs, screen, secs, serve,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Color;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::Log;
+use ttyl::theme;
 
 fn fresh(at: Instant) -> (Engine, ttyl::sched::Ticket) {
     let mut engine = Engine::new("ttyl".to_owned(), at);
@@ -48,8 +50,17 @@ fn keys_answer_while_a_page_is_still_loading() {
 
     assert!(press(&mut engine, "2", at).is_empty());
     let rows = screen(&mut engine, 80, 20, at);
-    assert!(contains(&rows, "Loading…"), "{rows:#?}");
     assert!(rows[0].ends_with("@ada"), "{:?}", rows[0]);
+    let placeholder = buffer(&mut engine, 80, 20, at);
+    let bars = (2..19)
+        .filter(|&y| {
+            (0..80).any(|x| ![theme::BACKGROUND, Color::Reset].contains(&placeholder[(x, y)].bg))
+        })
+        .count();
+    assert!(
+        bars >= 10,
+        "cards in the feed's shape hold the page while it loads"
+    );
 
     let Effect::Run(latest, _) = &effects[1] else {
         unreachable!()
@@ -608,6 +619,21 @@ fn refresh_toasts_then_the_hints_come_back() {
     answer_pages(&mut engine, &queued, at + secs(1));
     let rows = screen(&mut engine, 80, 20, at + secs(1));
     assert_eq!(rows[19], " following refreshed");
+    let ink = |engine: &mut Engine, after: Duration| buffer(engine, 80, 20, at + after)[(1, 19)].fg;
+    let full = ink(&mut engine, secs(2));
+    assert_eq!(full, theme::MUTED_FOREGROUND);
+    for (after, moment) in [
+        (secs(1) + ms(40), "comes up"),
+        (secs(5) - ms(40), "falls away"),
+    ] {
+        let Color::Rgb(r, ..) = ink(&mut engine, after) else {
+            panic!("the toast is drawn in RGB");
+        };
+        let Color::Rgb(full_r, ..) = full else {
+            panic!("the toast is drawn in RGB");
+        };
+        assert!(r < full_r, "the toast fades as it {moment}");
+    }
 
     press(&mut engine, "2g", at + secs(2));
     let rows = screen(&mut engine, 80, 20, at + secs(2));
