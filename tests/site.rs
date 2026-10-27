@@ -915,12 +915,12 @@ fn keys_reference() -> String {
              <h2 id=\"{id}-title\">{}</h2><dl class=\"keys\">",
             heading(scope)
         );
-        for (chords, help, _) in keys::help(&[scope], &|_| true) {
+        for entry in keys::help(&[scope], &|_| true) {
             let _ = write!(
                 out,
                 "<div><dt>{}</dt><dd>{}</dd></div>",
-                kbd(&chords),
-                escape(help)
+                kbd(&entry.keys),
+                escape(entry.help)
             );
         }
         out.push_str("</dl></section>\n");
