@@ -31,7 +31,7 @@ const SENDING: &str = "committing…";
 const COUNT_FROM: isize = 200;
 const ASK: &str = "possible secret detected. commit anyway? [y/N]";
 const ASK_SHORT: &str = "possible secret. commit anyway? [y/N]";
-const RULES: [&str; 2] = [
+pub const RULES: [&str; 2] = [
     "Your first commit has to come from the web,",
     "so you can read the commit rules first.",
 ];

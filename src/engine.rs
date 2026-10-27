@@ -53,10 +53,11 @@ pub const AHEAD: usize = 5;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_CELLS: usize = 2;
 const HINT_INDENT: &str = " ";
-const PENDING: &str = "Your commit is pending review. Everyone will see it once it is approved.";
+pub const PENDING: &str =
+    "Your commit is pending review. Everyone will see it once it is approved.";
 const EDITOR_FAILED: &str = "editor exited with an error. draft unchanged.";
 const EDITOR_FAILED_SHORT: &str = "editor failed. draft unchanged.";
-const NO_ANSWER: &str = "fatal: no answer from dev-null.sh. it may have gone through. check your log before sending again.";
+pub const NO_ANSWER: &str = "fatal: no answer from dev-null.sh. it may have gone through. check your log before sending again.";
 const VANISHED: &str = "That commit is no longer available to reply to.";
 
 pub enum Event {

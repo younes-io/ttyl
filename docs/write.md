@@ -62,6 +62,18 @@ read instead. Press <kbd>tab</kbd> to move to it and type the description.
 
 Press <kbd>backspace</kbd> on an empty description to remove its image.
 
+## Commit from the shell
+
+Run `ttyl commit -m "your text"` to send a commit without opening ttyl. To
+send longer text, pipe it in instead of passing `-m`:
+
+```sh
+git log -1 --format=%B | ttyl commit
+```
+
+ttyl prints the commit's short hash, its first line and its link. Your first
+commit still has to come from the web, so you can read the commit rules.
+
 ## If ttyl stops before sending
 
 - If the text looks like it holds a secret, such as an API key, ttyl asks
