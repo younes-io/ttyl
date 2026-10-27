@@ -1,13 +1,10 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Clear};
 
 use crate::theme;
-
-/// What a box casts on the screen below it.
-const SHADOW: Color = Color::Rgb(0x08, 0x08, 0x09);
 
 /// Fades everything in `area` but `lit`, so a box raised over it reads as closer than the screen.
 pub fn dim(buf: &mut Buffer, area: Rect, lit: Option<Rect>) {
@@ -31,7 +28,7 @@ pub fn raise(frame: &mut Frame, area: Rect, block: Block) -> Rect {
     let buf = frame.buffer_mut();
     let shade = |buf: &mut Buffer, x: u16, y: u16| {
         if screen.contains((x, y).into()) {
-            buf[(x, y)].set_bg(SHADOW).set_fg(theme::RAIL);
+            buf[(x, y)].set_bg(theme::SHADOW).set_fg(theme::RAIL);
         }
     };
     for y in area.top() + 1..=area.bottom() {
