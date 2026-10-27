@@ -390,7 +390,7 @@ fn every_line_fits_the_width_it_was_laid_out_for() {
         .map(|row| row.commit.id.clone())
         .collect::<HashSet<_>>();
     for width in [24, 40, 57, 80, 120] {
-        let (feed, _) = feed::layout(&page, width, &expanded, true, &now());
+        let (feed, _) = feed::layout(&page, width, &expanded, true, None, &now());
         for line in &feed.lines {
             assert!(line.width() <= usize::from(width), "{width}: {line:?}");
         }

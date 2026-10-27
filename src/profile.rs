@@ -302,7 +302,7 @@ impl Paged {
                 pinned_first(rows, rest, area.width, &self.expanded, wall)
             } else {
                 let page = page(rows, is_ranked);
-                feed::layout(&page, area.width, &self.expanded, true, wall)
+                feed::layout(&page, area.width, &self.expanded, true, None, wall)
             }
         };
         self.folded = folded;
@@ -659,7 +659,7 @@ fn pinned_first<Tz: TimeZone>(
         if !entries.is_empty() {
             out.gap();
         }
-        let (feed, cut) = feed::layout(&page(rows, is_ranked), width, expanded, true, wall);
+        let (feed, cut) = feed::layout(&page(rows, is_ranked), width, expanded, true, None, wall);
         let shift = out.lines.len();
         entries.extend(feed.entries.into_iter().map(|entry| Entry {
             lines: entry.lines.start + shift..entry.lines.end + shift,

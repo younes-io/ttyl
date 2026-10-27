@@ -99,3 +99,43 @@ fn a_device_the_server_no_longer_knows_leaves_the_timeline_for_sign_in() {
     assert!(contains(&rows, "Sign in to read your logs."), "{rows:#?}");
     assert!(!contains(&rows, "e4f5a61"), "{rows:#?}");
 }
+
+fn seen(log: Log) -> LogPage {
+    let mut page = page(log);
+    page.rows.drain(..2);
+    page
+}
+
+#[test]
+fn the_feed_marks_where_the_last_visit_left_off() {
+    let at = Instant::now();
+    let (mut engine, effects) = launch(seen, at);
+    assert!(!contains(
+        &screen(&mut engine, 100, 30, at),
+        "HEAD@{last visit}"
+    ));
+
+    reply(&mut engine, effects, at, |call| match call {
+        Call::Page(log) => Ok(Reply::Page(page(*log))),
+        _ => Ok(Reply::Account(account(3))),
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, "HEAD@{last visit} · 2 new commits above"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_feed_with_nothing_new_has_no_mark() {
+    let at = Instant::now();
+    let (mut engine, effects) = launch(page, at);
+    reply(&mut engine, effects, at, |call| match call {
+        Call::Page(log) => Ok(Reply::Page(page(*log))),
+        _ => Ok(Reply::Account(account(3))),
+    });
+    assert!(!contains(
+        &screen(&mut engine, 100, 30, at),
+        "HEAD@{last visit}"
+    ));
+}

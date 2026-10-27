@@ -366,8 +366,14 @@ impl LogScreen {
                     Some(laid_out) if laid_out.inputs == inputs => laid_out,
                     _ => {
                         let page = store.page(self.active).expect("a loaded slot has a page");
-                        let (feed, folded) =
-                            feed::layout(&page, area.width, &self.expanded, !wide, now);
+                        let (feed, folded) = feed::layout(
+                            &page,
+                            area.width,
+                            &self.expanded,
+                            !wide,
+                            store.left_off(self.active),
+                            now,
+                        );
                         LaidOut {
                             inputs,
                             feed,

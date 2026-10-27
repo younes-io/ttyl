@@ -349,12 +349,14 @@ pub fn older_failed(what: &str, retry: Duration) -> [Line<'static>; 2] {
 }
 
 /// Lays the page out one dense row per commit, and says which rows were cut short. With `inline_replies`
-/// the newest reply sits under its commit, for terminals too narrow for the context pane.
+/// the newest reply sits under its commit, for terminals too narrow for the context pane. `left_off` is
+/// the newest commit the last run saw, marked where the newer ones end.
 pub fn layout<Tz: TimeZone>(
     page: &LogPage,
     width: u16,
     expanded: &HashSet<CommitId>,
     inline_replies: bool,
+    left_off: Option<DateTime<Utc>>,
     now: &DateTime<Tz>,
 ) -> (Feed, Vec<bool>) {
     let mut out = Writer::new(width);
@@ -370,11 +372,21 @@ pub fn layout<Tz: TimeZone>(
     let mut entries = Vec::with_capacity(page.rows.len());
     let mut folded = Vec::with_capacity(page.rows.len());
     let mut last_day = None;
+    let mut left_off = left_off.filter(|_| !page.is_ranked);
     for (index, row) in page.rows.iter().enumerate() {
         if index > 0 {
             out.gap();
         }
         let start = out.lines.len();
+        if let Some(at) = left_off
+            && row.commit.created_at <= at
+        {
+            if index > 0 {
+                last_visit(&mut out, index);
+                out.gap();
+            }
+            left_off = None;
+        }
         if !page.is_ranked {
             let day = row
                 .commit
@@ -419,6 +431,19 @@ pub fn layout<Tz: TimeZone>(
         entries,
     };
     (feed, folded)
+}
+
+/// Where the reader left off last time, under the `new` commits that came after.
+fn last_visit(out: &mut Writer, new: usize) {
+    let accent = Style::new().fg(theme::PRIMARY);
+    let what = if new == 1 { "commit" } else { "commits" };
+    out.push(
+        Span::styled("┆ ", accent),
+        vec![
+            Span::styled("HEAD@{last visit}", accent.add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" · {new} new {what} above"), theme::muted()),
+        ],
+    );
 }
 
 pub(crate) struct Writer {
