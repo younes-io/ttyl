@@ -217,25 +217,23 @@ impl Session {
     }
 
     /// Every open profile of this person, wherever it sits in the stack.
-    fn profiles_mut(&mut self, username: &str) -> impl Iterator<Item = &mut ProfileScreen> {
+    fn profiles_mut(&mut self, handle: &str) -> impl Iterator<Item = &mut ProfileScreen> {
         self.stack
             .iter_mut()
             .filter_map(move |screen| match screen {
-                Screen::Profile(profile) if profile.username() == username => {
-                    Some(profile.as_mut())
-                }
+                Screen::Profile(profile) if profile.handle() == handle => Some(profile.as_mut()),
                 _ => None,
             })
     }
 
     /// Whose profile p opens: the selected commit's author or the selected person, unless already shown.
     fn profile_target(&self) -> Option<String> {
-        let username = match self.selected()? {
-            Selected::Row(row) => row.commit.author.username.clone(),
-            Selected::Note(commit) => commit.author.username.clone(),
-            Selected::Person(user) => user.username.clone(),
+        let handle = match self.selected()? {
+            Selected::Row(row) => row.commit.author.handle.clone(),
+            Selected::Note(commit) => commit.author.handle.clone(),
+            Selected::Person(user) => user.handle.clone(),
         };
-        (self.profile().map(ProfileScreen::username) != Some(&username)).then_some(username)
+        (self.profile().map(ProfileScreen::handle) != Some(&handle)).then_some(handle)
     }
 
     fn on_inbox(&self) -> bool {
@@ -305,10 +303,10 @@ impl Session {
     }
 
     fn allows(&self, act: Act) -> bool {
-        let me = &self.store.me.username;
+        let me = &self.store.me.handle;
         match self.selected() {
             Some(Selected::Row(row)) => {
-                let own = row.commit.author.username == *me;
+                let own = row.commit.author.handle == *me;
                 row.deletion.is_none()
                     && match act {
                         Act::Star | Act::Follow => !own,
@@ -327,7 +325,7 @@ impl Session {
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
-                Act::Follow => commit.author.username != *me,
+                Act::Follow => commit.author.handle != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
                 Act::Star
                 | Act::Pastel
@@ -337,7 +335,7 @@ impl Session {
                 | Act::Images
                 | Act::OpenQuote => false,
             },
-            Some(Selected::Person(user)) => act == Act::Follow && user.username != *me,
+            Some(Selected::Person(user)) => act == Act::Follow && user.handle != *me,
             None => false,
         }
     }
@@ -666,9 +664,9 @@ fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, no
     );
 }
 
-fn open_profile(sched: &mut Scheduler, session: &mut Session, username: String, now: Instant) {
-    let profile = ProfileScreen::new(username, now);
-    sched.send(Call::User(profile.username().to_owned()), Priority::Now);
+fn open_profile(sched: &mut Scheduler, session: &mut Session, handle: String, now: Instant) {
+    let profile = ProfileScreen::new(handle, now);
+    sched.send(Call::User(profile.handle().to_owned()), Priority::Now);
     sched.send(profile.tab_call(), Priority::Now);
     session.stack.push(Screen::Profile(Box::new(profile)));
 }
@@ -710,9 +708,9 @@ fn opened(session: &mut Session, composer: Composer) -> Vec<Effect> {
     }
 }
 
-fn followed(username: &str, on: bool) -> String {
+fn followed(handle: &str, on: bool) -> String {
     let done = if on { "following" } else { "unfollowed" };
-    format!("{done} @{username} · f to undo")
+    format!("{done} @{handle} · f to undo")
 }
 
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
@@ -1367,8 +1365,8 @@ impl Engine {
                 }
             }
             (Phase::Ready(session), Action::Profile) => {
-                if let Some(username) = session.profile_target() {
-                    open_profile(&mut self.sched, session, username, now);
+                if let Some(handle) = session.profile_target() {
+                    open_profile(&mut self.sched, session, handle, now);
                 }
             }
             (Phase::Ready(session), Action::Open) if session.group().is_some() => {
@@ -1454,7 +1452,7 @@ impl Engine {
                 Screen::Profile(profile) => {
                     profile.reload(now);
                     self.sched
-                        .send(Call::User(profile.username().to_owned()), Priority::Now);
+                        .send(Call::User(profile.handle().to_owned()), Priority::Now);
                     self.sched.send(profile.tab_call(), Priority::Now);
                 }
                 Screen::Starred(starred) => {
@@ -1478,8 +1476,8 @@ impl Engine {
                     .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
                 fetch_thread(&mut self.sched, &mut self.timers, id);
             }
-            Some(profile::Opens::Profile(username)) => {
-                open_profile(&mut self.sched, session, username, now);
+            Some(profile::Opens::Profile(handle)) => {
+                open_profile(&mut self.sched, session, handle, now);
             }
             None => {}
         }
@@ -1493,7 +1491,7 @@ impl Engine {
             Some(Selected::Row(row)) => row.commit.clone(),
             Some(Selected::Note(commit)) => commit.clone(),
             Some(Selected::Person(user)) => {
-                let author = user.username.clone();
+                let author = user.handle.clone();
                 if let Some(on) = session.store.follow(&author) {
                     self.toast(followed(&author, on), now);
                 }
@@ -1501,7 +1499,7 @@ impl Engine {
             }
             None => return Vec::new(),
         };
-        let (id, author, url) = (commit.id, commit.author.username, commit.html_url);
+        let (id, author, url) = (commit.id, commit.author.handle, commit.html_url);
         let (toast, effects) = match act {
             Act::Star => {
                 let spark = Timer::Spark(Spark::Star, id.clone());
@@ -1683,7 +1681,7 @@ impl Engine {
                 return Vec::new();
             }
             Call::Commits { .. } | Call::People { .. } => {
-                let Some((username, tab, cursor)) = Tab::of(call) else {
+                let Some((handle, tab, cursor)) = Tab::of(call) else {
                     return Vec::new();
                 };
                 let (items, next): (Vec<Item>, _) = match reply {
@@ -1706,14 +1704,14 @@ impl Engine {
                     }
                     _ => return Vec::new(),
                 };
-                for profile in session.profiles_mut(username) {
+                for profile in session.profiles_mut(handle) {
                     profile.land(tab, cursor, items.clone(), next.clone());
                 }
                 return Vec::new();
             }
-            Call::User(username) => {
+            Call::User(handle) => {
                 if let Reply::User(profile) = &reply {
-                    for screen in session.profiles_mut(username) {
+                    for screen in session.profiles_mut(handle) {
                         screen.set_profile(profile.as_ref().clone());
                     }
                 }
@@ -1722,15 +1720,13 @@ impl Engine {
         }
         let (Call::Page(log) | Call::Older { log, .. }) = call else {
             let answered = match (call, &reply) {
-                (Call::User(username), Reply::User(profile)) => {
-                    Some((username, profile.is_following))
-                }
+                (Call::User(handle), Reply::User(profile)) => Some((handle, profile.is_following)),
                 _ => None,
             };
             let said = match (call, &reply) {
                 (_, Reply::Pastel { commit, remaining }) => Some(format!(
                     "gave a pastel to @{} · {remaining} left today",
-                    commit.card.commit.author.username
+                    commit.card.commit.author.handle
                 )),
                 (Call::Delete(id), Reply::Done) => Some(format!("deleted {}", id.short_hash())),
                 (Call::Report { id, .. }, Reply::Done) => {
@@ -1765,9 +1761,9 @@ impl Engine {
                 }
             }
             let toast = said.or_else(|| {
-                let (username, server) = answered?;
-                let want = session.store.following(username)?;
-                (want != server).then(|| followed(username, want))
+                let (handle, server) = answered?;
+                let want = session.store.following(handle)?;
+                (want != server).then(|| followed(handle, want))
             });
             if let Some(text) = toast {
                 self.toast(text, now);
@@ -1853,8 +1849,8 @@ impl Engine {
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
                 let offline = matches!(failure, Failure::Offline(_));
-                if let Call::User(username) = &call {
-                    for profile in session.profiles_mut(username) {
+                if let Call::User(handle) = &call {
+                    for profile in session.profiles_mut(handle) {
                         profile.fail_header(failure.clone());
                     }
                 }
@@ -1913,8 +1909,8 @@ impl Engine {
                         offline
                     }
                     Call::Commits { .. } | Call::People { .. } => {
-                        if let Some((username, tab, _)) = Tab::of(&call) {
-                            for profile in session.profiles_mut(username) {
+                        if let Some((handle, tab, _)) = Tab::of(&call) {
+                            for profile in session.profiles_mut(handle) {
                                 profile.fail_tab(tab, failure.clone());
                             }
                         }
@@ -1954,8 +1950,8 @@ impl Engine {
                             }
                             (
                                 Error::WrongShape(_),
-                                Call::Follow { username, .. } | Call::User(username),
-                            ) => format!("fatal: could not follow @{username}"),
+                                Call::Follow { handle, .. } | Call::User(handle),
+                            ) => format!("fatal: could not follow @{handle}"),
                             _ => error.to_string(),
                         };
                         self.toast = Some(text);
@@ -2099,7 +2095,7 @@ impl Engine {
                 .areas(area);
                 let handle = session
                     .profile()
-                    .map(|profile| format!("@{}", profile.username()));
+                    .map(|profile| format!("@{}", profile.handle()));
                 let title = match session.stack.last() {
                     Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
                     Some(Screen::Starred(_)) => Some(starred::TITLE),

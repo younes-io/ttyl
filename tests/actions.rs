@@ -32,7 +32,7 @@ fn star(on: bool) -> Call {
 
 fn follow(on: bool) -> Call {
     Call::Follow {
-        username: "grace".to_owned(),
+        handle: "grace".to_owned(),
         on,
     }
 }

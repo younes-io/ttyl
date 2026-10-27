@@ -14,7 +14,7 @@ fn page(name: &str) -> LogPage {
 fn store() -> Store {
     Store::new(Account {
         me: Me {
-            username: "ada".to_owned(),
+            handle: "ada".to_owned(),
             name: None,
             pasteis_mode: false,
             pasteis_remaining: None,
@@ -78,7 +78,7 @@ fn an_account_reply_moves_the_unread_count() {
         &Call::Me,
         Reply::Account(Account {
             me: Me {
-                username: "ada".to_owned(),
+                handle: "ada".to_owned(),
                 name: Some("Ada".to_owned()),
                 pasteis_mode: false,
                 pasteis_remaining: None,

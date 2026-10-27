@@ -278,7 +278,7 @@ impl LogScreen {
         }
         if kept(Cut::Handle) {
             right.push(Span::styled(
-                format!("@{} ", store.me.username),
+                format!("@{} ", store.me.handle),
                 theme::muted(),
             ));
         }

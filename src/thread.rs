@@ -769,7 +769,7 @@ fn reply<Tz: TimeZone>(
             "replying to"
         };
         let whom = match store.node(parent) {
-            Some(Node::Live(parent)) => format!("@{}", parent.commit.author.username),
+            Some(Node::Live(parent)) => format!("@{}", parent.commit.author.handle),
             Some(Node::Gone(_)) | None => "[deleted]".to_owned(),
         };
         out.push(

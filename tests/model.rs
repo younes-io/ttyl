@@ -1,6 +1,6 @@
 use ttyl::model::{
     CommitPage, Filter, GroupPage, Kind, Lane, Log, LogPage, NotificationPage, RepliesPage, Row,
-    Segment, Shown, Status, Suggestion,
+    Segment, Shown, Status, Suggestion, User,
 };
 
 fn page(log: &str) -> LogPage {
@@ -155,7 +155,7 @@ fn the_reply_preview_holds_the_newest_reply_or_its_tombstone() {
     let page = page("latest");
     let first = &row(&page, "e4f5a61").reply_preview;
     assert!(
-        matches!(first.data.as_slice(), [Shown::Live(reply)] if reply.commit.author.username == "grace")
+        matches!(first.data.as_slice(), [Shown::Live(reply)] if reply.commit.author.handle == "grace")
     );
     assert!(first.next_cursor.is_some());
 
@@ -178,13 +178,13 @@ fn following_suggestions_parse_without_the_row_only_fields() {
     let authors: Vec<_> = page
         .suggestions
         .iter()
-        .map(|suggestion| suggestion.commit.author.username.as_str())
+        .map(|suggestion| suggestion.commit.author.handle.as_str())
         .collect();
     assert_eq!(authors, ["grace", "linus", "margaret"]);
     assert!(
         page.rows
             .iter()
-            .all(|row| row.commit.author.username == "ada")
+            .all(|row| row.commit.author.handle == "ada")
     );
 }
 
@@ -198,7 +198,7 @@ fn a_tombstone_in_a_row_slot_is_refused() {
 fn lane_outside_palette_is_rejected() {
     for lane in ["6", "\"#zzzzzz\"", "\"7048e8\""] {
         let json = format!(
-            r#"{{"id":"u","username":"x","name":"X","avatar_url":null,"html_url":"h","lane":{lane}}}"#
+            r#"{{"id":"u","handle":"x","name":"X","avatar_url":null,"html_url":"h","lane":{lane}}}"#
         );
         assert!(
             serde_json::from_str::<ttyl::model::User>(&json).is_err(),
@@ -219,7 +219,7 @@ fn malformed_commit_reports_the_missing_field() {
 #[test]
 fn a_commit_page_carries_its_ancestors_root_first_with_tombstones() {
     let page = CommitPage::parse(&fixture("commit-thread")).expect("fixture parses");
-    assert_eq!(page.commit.commit.author.username, "grace");
+    assert_eq!(page.commit.commit.author.handle, "grace");
     assert_eq!(page.replies_count, 0);
     let [Shown::Live(root), Shown::Deleted(gone)] = page.ancestors.as_slice() else {
         panic!("a root and a tombstone: {:?}", page.ancestors);
@@ -369,4 +369,14 @@ fn a_dark_custom_lane_is_lifted_until_it_reads_and_a_bright_one_is_kept() {
         }),
         Color::Rgb(0x3b, 0xc9, 0xdb)
     );
+}
+
+#[test]
+fn a_user_from_the_server_names_them_by_handle() {
+    // Trimmed from a live /api/v1/users/{handle} answer on 2026-10-27.
+    let user: User = serde_json::from_str(
+        r#"{"id":"01a1648c-f18e-73b3-b557-21a39e5b69d4","handle":"christopherokonkwo","name":"Christopher C. Okonkwo","avatar_url":null,"html_url":"https://dev-null.sh/@christopherokonkwo","lane":0}"#,
+    )
+    .expect("a live user parses");
+    assert_eq!(user.handle, "christopherokonkwo");
 }

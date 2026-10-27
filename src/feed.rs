@@ -956,7 +956,7 @@ fn one_liner(
                 .fg(theme::lane(author.lane))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" @{}{meta}  ", author.username), theme::muted()),
+        Span::styled(format!(" @{}{meta}  ", author.handle), theme::muted()),
     ];
     spans.extend(one_line(&commit.body_segments, text));
     fit(spans, width)
@@ -1029,7 +1029,7 @@ fn header_with<Tz: TimeZone>(
         .add_modifier(Modifier::BOLD);
     let mut spans = vec![
         Span::styled(author.name.clone(), bold),
-        Span::styled(format!(" @{}", author.username), theme::muted()),
+        Span::styled(format!(" @{}", author.handle), theme::muted()),
     ];
     spans.push(Span::styled(
         format!(" · {}", relative_time(commit.created_at, now)),

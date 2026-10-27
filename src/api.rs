@@ -33,7 +33,7 @@ pub struct Client {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Me {
-    pub username: String,
+    pub handle: String,
     pub name: Option<String>,
     #[serde(default)]
     pub pasteis_mode: bool,
@@ -75,18 +75,18 @@ pub enum Call {
         on: bool,
     },
     Follow {
-        username: String,
+        handle: String,
         on: bool,
     },
     User(String),
     /// Someone's commits, or with `replies` their replies, as their profile lists them.
     Commits {
-        username: String,
+        handle: String,
         replies: bool,
         cursor: Option<String>,
     },
     People {
-        username: String,
+        handle: String,
         circle: Circle,
         cursor: Option<String>,
     },
@@ -290,27 +290,27 @@ impl Client {
             Call::Star { id, on } => self
                 .star(id, *on)
                 .map(|focus| Reply::Commit(Box::new(focus))),
-            Call::Follow { username, on } => {
-                let path = format!("/api/v1/users/{}/follow", escape(username));
+            Call::Follow { handle, on } => {
+                let path = format!("/api/v1/users/{}/follow", escape(handle));
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
-            Call::User(username) => self
-                .user(username)
+            Call::User(handle) => self
+                .user(handle)
                 .map(|profile| Reply::User(Box::new(profile))),
             Call::Commits {
-                username,
+                handle,
                 replies,
                 cursor,
             } => self
-                .commits(username, *replies, cursor.as_deref())
+                .commits(handle, *replies, cursor.as_deref())
                 .map(Reply::Rows),
             Call::People {
-                username,
+                handle,
                 circle,
                 cursor,
             } => self
-                .people(username, *circle, cursor.as_deref())
+                .people(handle, *circle, cursor.as_deref())
                 .map(Reply::People),
             Call::Starred { cursor } => self.starred(cursor.as_deref()).map(Reply::Rows),
             Call::Delete(id) => {
@@ -419,21 +419,21 @@ impl Client {
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
-    pub fn user(&self, username: &str) -> Result<Profile, Error> {
-        let path = format!("/api/v1/users/{}", escape(username));
+    pub fn user(&self, handle: &str) -> Result<Profile, Error> {
+        let path = format!("/api/v1/users/{}", escape(handle));
         let (status, text) = self.send("GET", &path, String::new())?;
         Profile::parse(&text).map_err(|error| unreadable(status, error))
     }
 
     pub fn commits(
         &self,
-        username: &str,
+        handle: &str,
         replies: bool,
         cursor: Option<&str>,
     ) -> Result<RowPage, Error> {
         let mut path = format!(
             "/api/v1/users/{}/commits?replies={}",
-            escape(username),
+            escape(handle),
             u8::from(replies)
         );
         if let Some(cursor) = cursor {
@@ -454,11 +454,11 @@ impl Client {
 
     pub fn people(
         &self,
-        username: &str,
+        handle: &str,
         circle: Circle,
         cursor: Option<&str>,
     ) -> Result<PeoplePage, Error> {
-        let mut path = format!("/api/v1/users/{}/{}", escape(username), circle.slug());
+        let mut path = format!("/api/v1/users/{}/{}", escape(handle), circle.slug());
         if let Some(cursor) = cursor {
             path.push_str(&format!("?cursor={}", escape(cursor)));
         }

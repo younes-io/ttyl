@@ -28,7 +28,7 @@ fn stars(count: usize) -> Vec<Row> {
     let rows: Vec<Row> = page(Log::Latest)
         .rows
         .into_iter()
-        .filter(|row| row.commit.author.username != "ada")
+        .filter(|row| row.commit.author.handle != "ada")
         .take(count)
         .map(|row| Row {
             starred: true,

@@ -171,8 +171,8 @@ impl Store {
     }
 
     /// Flips the follow the user sees and returns it, or `None` while the client still asks the server.
-    pub fn follow(&mut self, username: &str) -> Option<bool> {
-        let next = match self.follows.get(username) {
+    pub fn follow(&mut self, handle: &str) -> Option<bool> {
+        let next = match self.follows.get(handle) {
             None => Follow::Asking { odd_presses: true },
             Some(Follow::Asking { odd_presses }) => Follow::Asking {
                 odd_presses: !odd_presses,
@@ -182,15 +182,15 @@ impl Store {
                 want: !want,
             },
         };
-        self.follows.insert(username.to_owned(), next);
+        self.follows.insert(handle.to_owned(), next);
         match next {
             Follow::Asking { .. } => None,
             Follow::Known { want, .. } => Some(want),
         }
     }
 
-    pub fn following(&self, username: &str) -> Option<bool> {
-        match self.follows.get(username)? {
+    pub fn following(&self, handle: &str) -> Option<bool> {
+        match self.follows.get(handle)? {
             Follow::Asking { .. } => None,
             Follow::Known { want, .. } => Some(*want),
         }
@@ -233,16 +233,16 @@ impl Store {
                 Some(_) | None => false,
             }
         });
-        for (username, follow) in &self.follows {
+        for (handle, follow) in &self.follows {
             match *follow {
-                Follow::Asking { .. } if !pending(&CallKey::User(username.clone())) => {
-                    calls.push(Call::User(username.clone()));
+                Follow::Asking { .. } if !pending(&CallKey::User(handle.clone())) => {
+                    calls.push(Call::User(handle.clone()));
                 }
                 Follow::Known { server, want }
-                    if server != want && !pending(&CallKey::Follow(username.clone())) =>
+                    if server != want && !pending(&CallKey::Follow(handle.clone())) =>
                 {
                     calls.push(Call::Follow {
-                        username: username.clone(),
+                        handle: handle.clone(),
                         on: want,
                     });
                 }
@@ -264,14 +264,14 @@ impl Store {
             Call::Star { id, .. } => {
                 self.star_wants.remove(id);
             }
-            Call::Follow { username, .. } => {
-                if let Some(Follow::Known { server, want }) = self.follows.get_mut(username) {
+            Call::Follow { handle, .. } => {
+                if let Some(Follow::Known { server, want }) = self.follows.get_mut(handle) {
                     *want = *server;
                 }
             }
-            Call::User(username) => {
-                if let Some(Follow::Asking { .. }) = self.follows.get(username) {
-                    self.follows.remove(username);
+            Call::User(handle) => {
+                if let Some(Follow::Asking { .. }) = self.follows.get(handle) {
+                    self.follows.remove(handle);
                 }
             }
             Call::Delete(id) => {
@@ -334,19 +334,19 @@ impl Store {
                 self.me.pasteis_remaining = Some(remaining);
                 self.generation += 1;
             }
-            (Call::User(username), Reply::User(profile)) => {
+            (Call::User(handle), Reply::User(profile)) => {
                 let is_following = profile.is_following;
                 if let Some(pinned) = profile.pinned {
                     self.land_row(pinned);
                     self.generation += 1;
                 }
-                let want = match self.follows.get(username) {
+                let want = match self.follows.get(handle) {
                     Some(Follow::Asking { odd_presses }) => is_following ^ odd_presses,
                     Some(Follow::Known { want, .. }) => *want,
                     None => is_following,
                 };
                 self.follows.insert(
-                    username.clone(),
+                    handle.clone(),
                     Follow::Known {
                         server: is_following,
                         want,
@@ -360,7 +360,7 @@ impl Store {
                 for person in page.people {
                     if let Some(server) = person.is_followed {
                         self.follows
-                            .entry(person.user.username)
+                            .entry(person.user.handle)
                             .or_insert(Follow::Known {
                                 server,
                                 want: server,
@@ -369,8 +369,8 @@ impl Store {
                 }
                 self.generation += 1;
             }
-            (Call::Follow { username, on }, Reply::Done) => {
-                if let Some(Follow::Known { server, .. }) = self.follows.get_mut(username) {
+            (Call::Follow { handle, on }, Reply::Done) => {
+                if let Some(Follow::Known { server, .. }) = self.follows.get_mut(handle) {
                     *server = *on;
                 }
             }

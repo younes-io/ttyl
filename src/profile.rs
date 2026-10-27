@@ -47,16 +47,16 @@ impl Tab {
         self as usize
     }
 
-    fn call(self, username: &str, cursor: Option<String>) -> Call {
-        let username = username.to_owned();
+    fn call(self, handle: &str, cursor: Option<String>) -> Call {
+        let handle = handle.to_owned();
         match self {
             Tab::Commits | Tab::Replies => Call::Commits {
-                username,
+                handle,
                 replies: self == Tab::Replies,
                 cursor,
             },
             Tab::Followers | Tab::Following => Call::People {
-                username,
+                handle,
                 circle: if self == Tab::Followers {
                     Circle::Followers
                 } else {
@@ -71,15 +71,15 @@ impl Tab {
     pub fn of(call: &Call) -> Option<(&str, Tab, Option<&str>)> {
         match call {
             Call::Commits {
-                username,
+                handle,
                 replies,
                 cursor,
             } => {
                 let tab = if *replies { Tab::Replies } else { Tab::Commits };
-                Some((username, tab, cursor.as_deref()))
+                Some((handle, tab, cursor.as_deref()))
             }
             Call::People {
-                username,
+                handle,
                 circle,
                 cursor,
             } => {
@@ -87,18 +87,18 @@ impl Tab {
                     Circle::Followers => Tab::Followers,
                     Circle::Following => Tab::Following,
                 };
-                Some((username, tab, cursor.as_deref()))
+                Some((handle, tab, cursor.as_deref()))
             }
             _ => None,
         }
     }
 
-    fn empty_copy(self, username: &str) -> String {
+    fn empty_copy(self, handle: &str) -> String {
         match self {
-            Tab::Commits => format!("@{username} has no commits yet."),
-            Tab::Replies => format!("@{username} has no replies yet."),
-            Tab::Followers => format!("@{username} has no followers yet."),
-            Tab::Following => format!("@{username} isn't following anyone yet."),
+            Tab::Commits => format!("@{handle} has no commits yet."),
+            Tab::Replies => format!("@{handle} has no replies yet."),
+            Tab::Followers => format!("@{handle} has no followers yet."),
+            Tab::Following => format!("@{handle} isn't following anyone yet."),
         }
     }
 }
@@ -342,7 +342,7 @@ impl Paged {
 
 /// Someone's profile: their header over the tab shown, each tab paged on its own.
 pub struct ProfileScreen {
-    username: String,
+    handle: String,
     profile: Option<Profile>,
     failure: Option<Failure>,
     asked_at: Instant,
@@ -353,11 +353,11 @@ pub struct ProfileScreen {
 }
 
 impl ProfileScreen {
-    pub fn new(username: String, now: Instant) -> Self {
+    pub fn new(handle: String, now: Instant) -> Self {
         let mut lists: [Paged; Tab::ALL.len()] = Default::default();
         lists[Tab::Commits.index()].asked(now);
         ProfileScreen {
-            username,
+            handle,
             profile: None,
             failure: None,
             asked_at: now,
@@ -372,8 +372,8 @@ impl ProfileScreen {
         self.card
     }
 
-    pub fn username(&self) -> &str {
-        &self.username
+    pub fn handle(&self) -> &str {
+        &self.handle
     }
 
     fn list(&self) -> &Paged {
@@ -386,7 +386,7 @@ impl ProfileScreen {
 
     /// The first page of the tab shown.
     pub fn tab_call(&self) -> Call {
-        self.tab.call(&self.username, None)
+        self.tab.call(&self.handle, None)
     }
 
     pub fn set_profile(&mut self, profile: Profile) {
@@ -463,7 +463,7 @@ impl ProfileScreen {
     pub fn opens(&self) -> Option<Opens> {
         match self.selected()? {
             Item::Commit(id) => Some(Opens::Thread(id.clone())),
-            Item::Person(person) => Some(Opens::Profile(person.user.username.clone())),
+            Item::Person(person) => Some(Opens::Profile(person.user.handle.clone())),
         }
     }
 
@@ -527,7 +527,7 @@ impl ProfileScreen {
     /// The next page of the tab shown, once the selection nears its end.
     pub fn wants_older(&self) -> Option<Call> {
         let cursor = self.list().wants_older()?;
-        Some(self.tab.call(&self.username, Some(cursor)))
+        Some(self.tab.call(&self.handle, Some(cursor)))
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -547,7 +547,7 @@ impl ProfileScreen {
                     area,
                 );
             } else if now >= self.asked_at + LOADING_NOTE_DELAY {
-                let loading = format!("loading @{}", self.username);
+                let loading = format!("loading @{}", self.handle);
                 frame.render_widget(Line::styled(loading, theme::muted()), area);
             }
             return;
@@ -606,7 +606,7 @@ impl ProfileScreen {
         let area = list.inner(Margin::new(1, 0));
 
         let loading = format!("loading {}", self.tab.slug());
-        let empty = self.tab.empty_copy(&self.username);
+        let empty = self.tab.empty_copy(&self.handle);
         let list = &mut self.lists[self.tab.index()];
         self.card = list.draw(
             frame, area, store, timers, now, wall, &loading, &empty, false,
@@ -693,10 +693,10 @@ fn header(
     let quiet = Style::new().fg(theme::MUTED_FOREGROUND);
 
     let mut chips = Vec::new();
-    if user.username == store.me.username {
+    if user.handle == store.me.handle {
         chips.push(Span::styled(" you ", quiet.bg(theme::MUTED)));
     } else if store
-        .following(&user.username)
+        .following(&user.handle)
         .unwrap_or(profile.is_following)
     {
         chips.push(Span::styled(
@@ -719,8 +719,8 @@ fn header(
             .fg(theme::lane(user.lane))
             .add_modifier(Modifier::BOLD),
     )];
-    if user.name != user.username {
-        name.push(Span::styled(format!("  @{}", user.username), quiet));
+    if user.name != user.handle {
+        name.push(Span::styled(format!("  @{}", user.handle), quiet));
     }
 
     let given = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
@@ -760,7 +760,7 @@ fn header(
         .add_modifier(Modifier::BOLD);
     let lane = theme::lane(user.lane);
     let standing = profile.level.as_ref().map(|level| {
-        let mine = user.username == store.me.username;
+        let mine = user.handle == store.me.handle;
         standing(level, mine, lane)
     });
     let bio = |width: usize, lines: &mut Vec<Vec<Span<'static>>>| {
@@ -1006,13 +1006,13 @@ fn people(items: &[Item], store: &Store, width: u16) -> Feed {
         let lane = Style::new().fg(theme::lane(user.lane));
         let mut spans = vec![
             Span::styled(user.name.clone(), lane.add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" @{}", user.username), theme::muted()),
+            Span::styled(format!(" @{}", user.handle), theme::muted()),
         ];
         if person.follows_you == Some(true) {
             spans.push(Span::styled(" · follows you", theme::muted()));
         }
         if store
-            .following(&user.username)
+            .following(&user.handle)
             .or(person.is_followed)
             .unwrap_or(false)
         {

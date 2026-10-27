@@ -493,7 +493,7 @@ fn the_people_in_a_follow_group_open_their_profile() {
         event.kind = Kind::Followed;
         event.commit = None;
     }
-    let follower = page.events[0].actor.username.clone();
+    let follower = page.events[0].actor.handle.clone();
     engine.update(Event::Reply(ticket, Ok(Reply::Group(page))), at);
     let effects = press(&mut engine, "o", at);
     assert!(
