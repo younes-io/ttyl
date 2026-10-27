@@ -958,6 +958,41 @@ fn slug(heading: &[MdEvent]) -> String {
         .collect()
 }
 
+/// No screen draws an icon as a character. A viewer whose monospace font lacks the glyph
+/// takes it from another font at another width, which shifts the rest of the row (#27).
+fn check_icons(files: &[(String, Vec<u8>)]) {
+    let icons = theme::icons();
+    let marks = [
+        icons.star,
+        icons.reply,
+        icons.pastel,
+        icons.quote,
+        icons.link,
+        icons.image,
+        icons.sparkle,
+        icons.twinkle,
+    ];
+    for (name, bytes) in files {
+        let text = String::from_utf8_lossy(bytes);
+        let screens: Vec<&str> = if name.ends_with(".svg") {
+            vec![&text]
+        } else if name.ends_with(".html") {
+            text.split("<pre class=\"term")
+                .skip(1)
+                .map(|rest| rest.split("</pre>").next().unwrap())
+                .collect()
+        } else {
+            continue;
+        };
+        for mark in marks {
+            assert!(
+                !screens.iter().any(|screen| screen.contains(mark)),
+                "a screen on {name} draws {mark} with a character"
+            );
+        }
+    }
+}
+
 /// Every link from one page to another lands on a page that exists, and on an anchor that
 /// page has.
 fn check_links(files: &[(String, Vec<u8>)]) {
@@ -1071,6 +1106,7 @@ fn site(picture: &Path) -> Vec<(String, Vec<u8>)> {
         files.push((asset.to_owned(), fs::read(docs.join(asset)).unwrap()));
     }
     check_links(&files);
+    check_icons(&files);
     files
 }
 
