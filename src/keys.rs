@@ -25,6 +25,7 @@ pub enum Action {
     Close,
     SignIn,
     StartOver,
+    Icons,
     Commit(Act),
     Confirm,
     Pick(Reason),
@@ -129,7 +130,8 @@ impl Action {
             | Action::Pick(_)
             | Action::Site
             | Action::SignIn
-            | Action::StartOver => Group::Act,
+            | Action::StartOver
+            | Action::Icons => Group::Act,
         }
     }
 }
@@ -1051,6 +1053,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::StartOver,
         hint: Some("esc start over"),
         help: "start over",
+    },
+    Binding {
+        scope: Scope::Gate,
+        chords: &[&[Key::ch('i')]],
+        action: Action::Icons,
+        hint: Some("i switch icons"),
+        help: "switch between Nerd Font icons and plain symbols",
     },
     Binding {
         scope: Scope::Splash,

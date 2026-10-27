@@ -7,12 +7,12 @@ uses what your terminal can do.
 
 | Variable | What it does |
 | --- | --- |
-| `TTYL_ICONS` | Set to `plain` if icons look like boxes or question marks. ttyl then uses plain Unicode symbols instead of Nerd Font icons. |
+| `TTYL_ICONS` | Set to `plain` if icons look like boxes or question marks. ttyl then uses plain Unicode symbols instead of Nerd Font icons. You can also press <kbd>i</kbd> on the sign-in screen, and ttyl remembers the choice. |
 | `TTYL_MOTION` | Set to `off` to have the selection and messages appear at once, with no fade. Stars and sparks still show, then settle. |
 | `VISUAL`, `EDITOR` | The editor that <kbd>ctrl-e</kbd> opens in the composer. ttyl tries `$VISUAL`, then `$EDITOR`, then `vi`. |
 | `DEVNULL_URL` | The server ttyl talks to. The default is `https://dev-null.sh`. Set it to use a local copy of dev-null.sh while you develop. |
 | `XDG_CONFIG_HOME` | Where ttyl keeps the key this terminal signs in with, in `ttyl/device_ed25519`. The default is `~/.config`. |
-| `XDG_STATE_HOME` | Where ttyl keeps your drafts, in `ttyl/drafts`. The default is `~/.local/state`. |
+| `XDG_STATE_HOME` | Where ttyl keeps your drafts, in `ttyl/drafts`, and the icons you picked, in `ttyl/icons`. The default is `~/.local/state`. |
 
 For example, to start ttyl with plain icons:
 
@@ -26,7 +26,8 @@ Any terminal size works. Colors look best in a terminal with truecolor
 support, which most current terminals have.
 
 ttyl shows Nerd Font icons by default. If your terminal font is not a
-[Nerd Font](https://www.nerdfonts.com), set `TTYL_ICONS=plain`.
+[Nerd Font](https://www.nerdfonts.com), press <kbd>i</kbd> on the sign-in screen
+or set `TTYL_ICONS=plain`.
 
 Images show as real pictures in a terminal that can draw them, such as
 Ghostty, kitty, WezTerm or iTerm2. Other terminals show them with colored

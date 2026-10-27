@@ -229,6 +229,7 @@ impl ThreadScreen {
             | Action::Close
             | Action::SignIn
             | Action::StartOver
+            | Action::Icons
             | Action::Confirm
             | Action::Pick(_)
             | Action::Choose(_)
