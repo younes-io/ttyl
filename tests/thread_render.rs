@@ -229,3 +229,19 @@ fn a_nested_list_shows_its_count_until_it_lands() {
         assert!(contains(&rows, "000000e"));
     }
 }
+
+#[test]
+fn a_reply_shows_only_the_counts_it_has() {
+    let icons = theme::icons();
+    for width in WIDTHS {
+        let (mut engine, at) = opened(ADA, width);
+        let rows = screen(&mut engine, width, HEIGHT, at);
+        let focus = row_of(&rows, "commit e4f5a61");
+        assert_eq!(
+            rows[focus + 1],
+            format!(" ┃ {} 12   {} 12", icons.reply, icons.star)
+        );
+        let next = row_of(&rows, "0000011");
+        assert_eq!(rows[next - 2], format!("       │ {} 1", icons.reply), "{rows:#?}");
+    }
+}

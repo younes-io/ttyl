@@ -545,7 +545,7 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
         spans.push(Span::styled(" · ", theme::muted()));
         spans.push(Span::styled(
             format!("{} {}", theme::icons().reply, row.replies_count),
-            Style::new().fg(theme::PRIMARY),
+            theme::muted(),
         ));
     }
     if row.stars_count > 0 || row.starred {
@@ -623,7 +623,8 @@ pub(crate) fn content<Tz: TimeZone>(
     }
 }
 
-pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
+/// The counts under a commit. The focused commit shows every count, and a reply only those above zero.
+pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row, every: bool) {
     if row.deletion == Some(Deletion::Running) {
         out.push(
             rail.clone(),
@@ -637,22 +638,26 @@ pub(crate) fn stats(out: &mut Writer, rail: &Span<'static>, row: &Row) {
         theme::muted()
     };
     let icons = theme::icons();
-    let mut spans = vec![
-        Span::styled(
-            format!("{} {}", icons.reply, row.replies_count),
-            theme::muted(),
-        ),
-        Span::raw("   "),
-        Span::styled(format!("{} {}", icons.star, row.stars_count), star),
+    let mut counts = vec![
+        (icons.reply, row.replies_count, theme::muted(), false),
+        (icons.star, row.stars_count, star, row.starred),
     ];
     if theme::pasteis() {
-        spans.push(Span::raw("   "));
-        spans.push(Span::styled(
-            format!("{} {}", icons.pastel, row.commit.pasteis_count),
-            theme::muted(),
-        ));
+        counts.push((icons.pastel, row.commit.pasteis_count, theme::muted(), false));
     }
-    out.push(rail.clone(), spans);
+    let mut spans = Vec::new();
+    for (icon, count, style, lit) in counts {
+        if !every && count == 0 && !lit {
+            continue;
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled(format!("{icon} {count}"), style));
+    }
+    if !spans.is_empty() {
+        out.push(rail.clone(), spans);
+    }
 }
 
 /// Images and a poll, each led by its icon in the column the quote and link icons share.

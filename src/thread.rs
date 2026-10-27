@@ -741,7 +741,7 @@ fn focus<Tz: TimeZone>(out: &mut Writer, row: &Row, now: &DateTime<Tz>) {
             theme::muted(),
         )],
     );
-    feed::stats(out, &rail, row);
+    feed::stats(out, &rail, row, true);
 }
 
 fn reply<Tz: TimeZone>(
@@ -779,5 +779,5 @@ fn reply<Tz: TimeZone>(
     }
     let quoted = !quotes_parent && commit.quoted_commit_id.is_some() && row.quoted_commit.is_some();
     feed::content(out, &rail, row, !expanded, quoted, now);
-    feed::stats(out, &rail, row);
+    feed::stats(out, &rail, row, false);
 }
