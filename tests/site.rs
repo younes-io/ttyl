@@ -449,6 +449,87 @@ fn half_block(cell: &ratatui::buffer::Cell) -> Option<(String, &'static str)> {
     ))
 }
 
+/// An icon drawn in a unit square: a filled outline and a stroked one, either empty.
+struct Glyph {
+    fill: &'static str,
+    stroke: &'static str,
+}
+
+const STAR: Glyph = Glyph {
+    fill: "M.5 0L.618.338.976.345.69.562.794.905.5.7.206.905.31.562.024.345.382.338Z",
+    stroke: "",
+};
+const REPLY: Glyph = Glyph {
+    fill: "",
+    stroke: "M.85.25V.5Q.85.68.67.68H.18M.36.5.18.68.36.86",
+};
+const PASTEL: Glyph = Glyph {
+    fill: "",
+    stroke: "M.5.08A.42.42 0 1 0 .5.92A.42.42 0 1 0 .5.08ZM.5.1V.9M.3.18V.82M.7.18V.82",
+};
+const QUOTE: Glyph = Glyph {
+    fill: "M.1.66C.1.36.27.2.44.2V.3C.31.3.22.4.22.55ZM.1.66A.17.17 0 1 0 .44.66A.17.17 0 1 0 .1.66Z\
+           M.56.66C.56.36.73.2.9.2V.3C.77.3.68.4.68.55ZM.56.66A.17.17 0 1 0 .9.66A.17.17 0 1 0 .56.66Z",
+    stroke: "",
+};
+const LINK: Glyph = Glyph {
+    fill: "M.38.12H.88V.62L.7.44.34.8.2.66.56.3Z",
+    stroke: "",
+};
+const IMAGE: Glyph = Glyph {
+    fill: "M.3.3H.7V.7H.3Z",
+    stroke: "M.12.12H.88V.88H.12Z",
+};
+const SPARKLE: Glyph = Glyph {
+    fill: "M.5.02Q.56.44.98.5Q.56.56.5.98Q.44.56.02.5Q.44.44.5.02Z",
+    stroke: "",
+};
+const TWINKLE: Glyph = Glyph {
+    fill: "",
+    stroke: SPARKLE.fill,
+};
+
+/// The icon `symbol` stands for, when it is one most monospace fonts lack. The poll mark and
+/// the mote are in every font, so they stay text.
+fn glyph(symbol: &str) -> Option<&'static Glyph> {
+    let icons = theme::icons();
+    let table = [
+        (icons.star, &STAR),
+        (icons.reply, &REPLY),
+        (icons.pastel, &PASTEL),
+        (icons.quote, &QUOTE),
+        (icons.link, &LINK),
+        (icons.image, &IMAGE),
+        (icons.sparkle, &SPARKLE),
+        (icons.twinkle, &TWINKLE),
+    ];
+    table
+        .into_iter()
+        .find(|(icon, _)| *icon == symbol)
+        .map(|(_, glyph)| glyph)
+}
+
+/// `glyph` as SVG paths in the unit square, each with `attributes` appended.
+fn paths(glyph: &Glyph, color: &str, attributes: &str) -> String {
+    let mut out = String::new();
+    if !glyph.fill.is_empty() {
+        let _ = write!(
+            out,
+            "<path d=\"{}\" fill=\"{color}\"{attributes}/>",
+            glyph.fill
+        );
+    }
+    if !glyph.stroke.is_empty() {
+        let _ = write!(
+            out,
+            "<path d=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\".1\" \
+             stroke-linecap=\"round\" stroke-linejoin=\"round\"{attributes}/>",
+            glyph.stroke
+        );
+    }
+    out
+}
+
 fn html(buffer: &Buffer, alt: &str, class: &str) -> String {
     let area = buffer.area;
     let mut out = format!(
@@ -462,17 +543,24 @@ fn html(buffer: &Buffer, alt: &str, class: &str) -> String {
         while x < area.width {
             let cell = &buffer[(x, y)];
             let (style, symbol) = half_block(cell).unwrap_or_else(|| (css(cell), cell.symbol()));
+            let markup = match glyph(symbol) {
+                Some(glyph) => format!(
+                    "<svg class=\"icon\" viewBox=\"0 0 1 1\">{}</svg>",
+                    paths(glyph, "currentColor", "")
+                ),
+                None => escape(symbol),
+            };
             match runs.last_mut() {
-                Some((last, text)) if *last == style => text.push_str(symbol),
-                _ => runs.push((style, symbol.to_owned())),
+                Some((last, text)) if *last == style => text.push_str(&markup),
+                _ => runs.push((style, markup)),
             }
             x += u16::try_from(symbol.width().max(1)).unwrap();
         }
         for (style, text) in runs {
             if style.is_empty() {
-                out.push_str(&escape(&text));
+                out.push_str(&text);
             } else {
-                let _ = write!(out, "<span style=\"{style}\">{}</span>", escape(&text));
+                let _ = write!(out, "<span style=\"{style}\">{text}</span>");
             }
         }
         out.push('\n');
@@ -483,6 +571,8 @@ fn html(buffer: &Buffer, alt: &str, class: &str) -> String {
 
 const CELL_WIDTH: f32 = 8.4;
 const CELL_HEIGHT: f32 = 17.0;
+/// The side of the square an icon fills, a little over a cell wide like the capitals beside it.
+const ICON: f32 = 9.7;
 const TITLE_BAR: f32 = 30.0;
 const MARGIN: f32 = 32.0;
 const INSET: f32 = 14.0;
@@ -533,6 +623,7 @@ fn svg(buffer: &Buffer, alt: &str) -> String {
         let mut x = 0;
         let mut texts: Vec<(u16, u16, String, String)> = Vec::new();
         let mut fills: Vec<Fill> = Vec::new();
+        let mut icons: Vec<String> = Vec::new();
         while x < area.width {
             let cell = &buffer[(x, y)];
             let symbol = cell.symbol();
@@ -572,6 +663,18 @@ fn svg(buffer: &Buffer, alt: &str) -> String {
                     if bg != background {
                         paint(&bg, row_top, CELL_HEIGHT);
                     }
+                    let symbol = match glyph(symbol) {
+                        Some(glyph) => {
+                            let transform = format!(
+                                " transform=\"translate({:.1} {:.1}) scale({ICON})\"",
+                                cell_left + (CELL_WIDTH - ICON) / 2.0,
+                                row_top + (CELL_HEIGHT - ICON) / 2.0 - 0.6
+                            );
+                            icons.push(paths(glyph, &fg, &transform));
+                            " "
+                        }
+                        None => symbol,
+                    };
                     let mut style = String::new();
                     if fg != foreground {
                         let _ = write!(style, " fill=\"{fg}\"");
@@ -606,6 +709,9 @@ fn svg(buffer: &Buffer, alt: &str) -> String {
                 fill.height + 0.3,
                 fill.color
             );
+        }
+        for icon in icons {
+            out.push_str(&icon);
         }
         for (x, style, text) in texts.iter().flat_map(|(x, _, style, text)| {
             words(text).map(move |(offset, word)| (x + offset, style, word))

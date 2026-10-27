@@ -176,6 +176,12 @@ pre:not(.term) code {
   padding-block: 0.1em;
 }
 
+.term .icon {
+  width: 1ch;
+  height: 1.2ch;
+  vertical-align: -0.12em;
+}
+
 .term.narrow {
   display: none;
 }
