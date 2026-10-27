@@ -9,7 +9,7 @@
       "created_at": "2026-10-21T08:59:00Z",
       "actor": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -26,7 +26,7 @@
       "actors": [
         {
           "id": "0b000000-0000-4000-8000-00000000000b",
-          "username": "grace",
+          "handle": "grace",
           "name": "Grace",
           "avatar_url": null,
           "bio": null,
@@ -54,7 +54,7 @@
         "created_at": "2026-10-21T08:05:00Z",
         "author": {
           "id": "0b000000-0000-4000-8000-00000000000b",
-          "username": "grace",
+          "handle": "grace",
           "name": "Grace",
           "avatar_url": null,
           "bio": null,
@@ -98,7 +98,7 @@
           "created_at": "2026-10-21T09:42:00Z",
           "author": {
             "id": "0a000000-0000-4000-8000-00000000000a",
-            "username": "ada",
+            "handle": "ada",
             "name": "Ada",
             "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
             "bio": "compilers, mostly",
@@ -145,7 +145,7 @@
       "created_at": "2026-10-21T08:58:00Z",
       "actor": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -162,7 +162,7 @@
       "actors": [
         {
           "id": "0b000000-0000-4000-8000-00000000000b",
-          "username": "grace",
+          "handle": "grace",
           "name": "Grace",
           "avatar_url": null,
           "bio": null,
@@ -178,7 +178,7 @@
         },
         {
           "id": "0e000000-0000-4000-8000-00000000000e",
-          "username": "ken",
+          "handle": "ken",
           "name": "Ken",
           "avatar_url": null,
           "bio": null,
@@ -194,7 +194,7 @@
         },
         {
           "id": "0c000000-0000-4000-8000-00000000000c",
-          "username": "linus",
+          "handle": "linus",
           "name": "Linus",
           "avatar_url": null,
           "bio": null,
@@ -222,7 +222,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -268,7 +268,7 @@
       "created_at": "2026-10-21T08:50:00Z",
       "actor": {
         "id": "0d000000-0000-4000-8000-00000000000d",
-        "username": "margaret",
+        "handle": "margaret",
         "name": "Margaret",
         "avatar_url": null,
         "bio": null,
@@ -285,7 +285,7 @@
       "actors": [
         {
           "id": "0d000000-0000-4000-8000-00000000000d",
-          "username": "margaret",
+          "handle": "margaret",
           "name": "Margaret",
           "avatar_url": null,
           "bio": null,
@@ -301,7 +301,7 @@
         },
         {
           "id": "0e000000-0000-4000-8000-00000000000e",
-          "username": "ken",
+          "handle": "ken",
           "name": "Ken",
           "avatar_url": null,
           "bio": null,
@@ -331,7 +331,7 @@
       "created_at": "2026-10-20T20:00:00Z",
       "actor": {
         "id": "0e000000-0000-4000-8000-00000000000e",
-        "username": "ken",
+        "handle": "ken",
         "name": "Ken",
         "avatar_url": null,
         "bio": null,
@@ -348,7 +348,7 @@
       "actors": [
         {
           "id": "0e000000-0000-4000-8000-00000000000e",
-          "username": "ken",
+          "handle": "ken",
           "name": "Ken",
           "avatar_url": null,
           "bio": null,
@@ -376,7 +376,7 @@
         "created_at": "2026-10-20T20:30:00Z",
         "author": {
           "id": "0e000000-0000-4000-8000-00000000000e",
-          "username": "ken",
+          "handle": "ken",
           "name": "Ken",
           "avatar_url": null,
           "bio": null,
@@ -414,7 +414,7 @@
       "created_at": "2026-10-20T19:00:00Z",
       "actor": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,
@@ -431,7 +431,7 @@
       "actors": [
         {
           "id": "0c000000-0000-4000-8000-00000000000c",
-          "username": "linus",
+          "handle": "linus",
           "name": "Linus",
           "avatar_url": null,
           "bio": null,
@@ -459,7 +459,7 @@
         "created_at": "2026-10-21T07:12:00Z",
         "author": {
           "id": "0c000000-0000-4000-8000-00000000000c",
-          "username": "linus",
+          "handle": "linus",
           "name": "Linus",
           "avatar_url": null,
           "bio": null,
@@ -481,7 +481,7 @@
         "preview_segments": null,
         "mentions": [
           {
-            "username": "ada",
+            "handle": "ada",
             "offset": 25,
             "length": 4
           }
@@ -503,7 +503,7 @@
       "created_at": "2026-10-20T18:00:00Z",
       "actor": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,
@@ -520,7 +520,7 @@
       "actors": [
         {
           "id": "0c000000-0000-4000-8000-00000000000c",
-          "username": "linus",
+          "handle": "linus",
           "name": "Linus",
           "avatar_url": null,
           "bio": null,
@@ -536,7 +536,7 @@
         },
         {
           "id": "0e000000-0000-4000-8000-00000000000e",
-          "username": "ken",
+          "handle": "ken",
           "name": "Ken",
           "avatar_url": null,
           "bio": null,
@@ -564,7 +564,7 @@
         "created_at": "2026-10-20T18:20:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -602,7 +602,7 @@
       "created_at": "2026-10-20T17:00:00Z",
       "actor": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -619,7 +619,7 @@
       "actors": [
         {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -647,7 +647,7 @@
         "created_at": "2026-10-20T18:20:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -685,7 +685,7 @@
       "created_at": "2026-10-20T16:00:00Z",
       "actor": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -702,7 +702,7 @@
       "actors": [
         {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -730,7 +730,7 @@
         "created_at": "2026-10-21T09:31:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -768,7 +768,7 @@
       "created_at": "2026-10-20T15:00:00Z",
       "actor": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -785,7 +785,7 @@
       "actors": [
         {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",

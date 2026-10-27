@@ -12,7 +12,7 @@
       "images": [],
       "author": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -54,7 +54,7 @@
       "images": [],
       "author": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -96,7 +96,7 @@
       "images": [],
       "author": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,

@@ -9,7 +9,7 @@
       "created_at": "2026-10-21T08:58:00Z",
       "actor": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -36,7 +36,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -82,7 +82,7 @@
       "created_at": "2026-10-21T08:57:00Z",
       "actor": {
         "id": "0e000000-0000-4000-8000-00000000000e",
-        "username": "ken",
+        "handle": "ken",
         "name": "Ken",
         "avatar_url": null,
         "bio": null,
@@ -109,7 +109,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -155,7 +155,7 @@
       "created_at": "2026-10-21T08:56:00Z",
       "actor": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,
@@ -182,7 +182,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -228,7 +228,7 @@
       "created_at": "2026-10-21T08:55:00Z",
       "actor": {
         "id": "0d000000-0000-4000-8000-00000000000d",
-        "username": "margaret",
+        "handle": "margaret",
         "name": "Margaret",
         "avatar_url": null,
         "bio": null,
@@ -255,7 +255,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",
@@ -301,7 +301,7 @@
       "created_at": "2026-10-21T08:54:00Z",
       "actor": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -328,7 +328,7 @@
         "created_at": "2026-10-21T09:42:00Z",
         "author": {
           "id": "0a000000-0000-4000-8000-00000000000a",
-          "username": "ada",
+          "handle": "ada",
           "name": "Ada",
           "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
           "bio": "compilers, mostly",

@@ -101,19 +101,19 @@ def cursor(created_at, commit_id):
     return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
 
 
-def user(username, name, number, lane, joined, avatar=None, bio=None, location=None):
+def user(handle, name, number, lane, joined, avatar=None, bio=None, location=None):
     return {
         "id": f"{number:02x}000000-0000-4000-8000-0000000000{number:02x}",
-        "username": username,
+        "handle": handle,
         "name": name,
         "avatar_url": avatar,
         "bio": bio,
         "company": None,
         "location": location,
         "website": None,
-        "github_url": f"https://github.com/{username}",
-        "html_url": f"{SITE}/@{username}",
-        "feed_url": f"{SITE}/@{username}/feed.atom",
+        "github_url": f"https://github.com/{handle}",
+        "html_url": f"{SITE}/@{handle}",
+        "feed_url": f"{SITE}/@{handle}/feed.atom",
         "created_at": joined,
         "lane": lane,
     }
@@ -128,7 +128,7 @@ KEN = user("ken", "Ken", 0x0E, 1, "2026-09-04T10:00:00Z")
 
 def mentions(body):
     return [
-        {"username": m.group(1), "offset": m.start(), "length": len(m.group(0))}
+        {"handle": m.group(1), "offset": m.start(), "length": len(m.group(0))}
         for m in re.finditer(r"(?<![\w@])@([A-Za-z0-9-]+)", body)
     ]
 
@@ -141,7 +141,7 @@ def signed(commit_id, author, body, created_at, parent_id=None, status="approved
         "short_hash": short_hash(commit_id),
         "body": body,
         "parent_id": parent_id,
-        "html_url": f"{SITE}/@{author['username']}/commits/{commit_id}",
+        "html_url": f"{SITE}/@{author['handle']}/commits/{commit_id}",
         "created_at": created_at,
         "author": author,
         "body_segments": highlight(body),

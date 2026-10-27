@@ -13,7 +13,7 @@
       "images": [],
       "author": {
         "id": "0d000000-0000-4000-8000-00000000000d",
-        "username": "margaret",
+        "handle": "margaret",
         "name": "Margaret",
         "avatar_url": null,
         "bio": null,
@@ -62,7 +62,7 @@
             "images": [],
             "author": {
               "id": "0a000000-0000-4000-8000-00000000000a",
-              "username": "ada",
+              "handle": "ada",
               "name": "Ada",
               "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
               "bio": "compilers, mostly",
@@ -84,7 +84,7 @@
             "preview_segments": null,
             "mentions": [
               {
-                "username": "margaret",
+                "handle": "margaret",
                 "offset": 0,
                 "length": 9
               }
@@ -114,7 +114,7 @@
       "images": [],
       "author": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -192,7 +192,7 @@
       ],
       "author": {
         "id": "0e000000-0000-4000-8000-00000000000e",
-        "username": "ken",
+        "handle": "ken",
         "name": "Ken",
         "avatar_url": null,
         "bio": null,
@@ -239,7 +239,7 @@
       "images": [],
       "author": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -291,7 +291,7 @@
             "images": [],
             "author": {
               "id": "0b000000-0000-4000-8000-00000000000b",
-              "username": "grace",
+              "handle": "grace",
               "name": "Grace",
               "avatar_url": null,
               "bio": null,
@@ -313,7 +313,7 @@
             "preview_segments": null,
             "mentions": [
               {
-                "username": "ada",
+                "handle": "ada",
                 "offset": 0,
                 "length": 4
               }
@@ -351,7 +351,7 @@
       "images": [],
       "author": {
         "id": "0b000000-0000-4000-8000-00000000000b",
-        "username": "grace",
+        "handle": "grace",
         "name": "Grace",
         "avatar_url": null,
         "bio": null,
@@ -398,7 +398,7 @@
       "images": [],
       "author": {
         "id": "0d000000-0000-4000-8000-00000000000d",
-        "username": "margaret",
+        "handle": "margaret",
         "name": "Margaret",
         "avatar_url": null,
         "bio": null,
@@ -467,7 +467,7 @@
       "images": [],
       "author": {
         "id": "0e000000-0000-4000-8000-00000000000e",
-        "username": "ken",
+        "handle": "ken",
         "name": "Ken",
         "avatar_url": null,
         "bio": null,
@@ -516,7 +516,7 @@
             "images": [],
             "author": {
               "id": "0b000000-0000-4000-8000-00000000000b",
-              "username": "grace",
+              "handle": "grace",
               "name": "Grace",
               "avatar_url": null,
               "bio": null,
@@ -562,7 +562,7 @@
       "images": [],
       "author": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,
@@ -613,7 +613,7 @@
       "images": [],
       "author": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
@@ -651,7 +651,7 @@
         "images": [],
         "author": {
           "id": "0d000000-0000-4000-8000-00000000000d",
-          "username": "margaret",
+          "handle": "margaret",
           "name": "Margaret",
           "avatar_url": null,
           "bio": null,
@@ -703,7 +703,7 @@
       "images": [],
       "author": {
         "id": "0c000000-0000-4000-8000-00000000000c",
-        "username": "linus",
+        "handle": "linus",
         "name": "Linus",
         "avatar_url": null,
         "bio": null,
@@ -750,7 +750,7 @@
       "images": [],
       "author": {
         "id": "0a000000-0000-4000-8000-00000000000a",
-        "username": "ada",
+        "handle": "ada",
         "name": "Ada",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "bio": "compilers, mostly",
