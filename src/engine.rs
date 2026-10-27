@@ -715,6 +715,16 @@ fn followed(handle: &str, on: bool) -> String {
     format!("{done} @{handle} · f to undo")
 }
 
+/// Counts what came in without naming it, since reading the notifications would mark them read.
+fn notified(new: u32) -> String {
+    let what = if new == 1 {
+        "notification"
+    } else {
+        "notifications"
+    };
+    format!("{new} new {what} · gn to read")
+}
+
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
@@ -1766,8 +1776,12 @@ impl Engine {
                     now + Spark::Fill.lasts(),
                 );
             }
+            let mut news = None;
             if session.store.unread > unread {
                 self.timers.set(Timer::Glow, now + GLOW);
+                if !session.on_inbox() {
+                    news = Some(notified(session.store.unread - unread));
+                }
                 // A new notification may be a reply in the thread on screen.
                 if let Some(thread) = session.shown_thread(now) {
                     refresh_thread(&mut self.sched, &mut self.timers, thread, &session.store);
@@ -1778,7 +1792,7 @@ impl Engine {
                 let want = session.store.following(handle)?;
                 (want != server).then(|| followed(handle, want))
             });
-            if let Some(text) = toast {
+            if let Some(text) = toast.or(news) {
                 self.toast(text, now);
             }
             return Vec::new();

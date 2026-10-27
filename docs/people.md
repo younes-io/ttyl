@@ -3,7 +3,8 @@
 ## Read notifications
 
 The number at the top right, such as `● 3`, counts your unread
-notifications. Press <kbd>gn</kbd> from anywhere to read them.
+notifications. Press <kbd>gn</kbd> from anywhere to read them. When new ones
+arrive, the count lights up and a note at the bottom says how many came in.
 
 {{screen notifications}}
 

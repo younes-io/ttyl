@@ -614,6 +614,24 @@ fn a_rising_count_lights_up_for_five_seconds_and_a_steady_one_does_not() {
 }
 
 #[test]
+fn new_notifications_say_how_many_came_in_and_where_to_read_them() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    poll(&mut engine, 4, at + secs(30));
+    let rows = screen(&mut engine, 100, 30, at + secs(31));
+    assert!(
+        contains(&rows, "1 new notification · gn to read"),
+        "{rows:#?}"
+    );
+
+    poll(&mut engine, 4, at + secs(60));
+    assert!(!contains(
+        &screen(&mut engine, 100, 30, at + secs(60)),
+        "new notification"
+    ));
+}
+
+#[test]
 fn a_refresh_says_so_when_the_list_lands_and_opening_stays_quiet() {
     let at = Instant::now();
     let mut engine = boot(at);
