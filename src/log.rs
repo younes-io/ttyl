@@ -280,10 +280,7 @@ impl LogScreen {
         }
         let mine = format!("@{}", store.me.handle);
         if kept(Cut::Handle) && title != Some(mine.as_str()) {
-            right.push(Span::styled(
-                format!("{mine} "),
-                theme::muted(),
-            ));
+            right.push(Span::styled(format!("{mine} "), theme::muted()));
         }
         (Line::from(left), Line::from(right))
     }
