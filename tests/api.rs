@@ -683,6 +683,48 @@ fn starring_and_following_post_to_turn_on_and_delete_to_turn_off() {
 }
 
 #[test]
+fn blocking_posts_to_block_and_deletes_to_unblock() {
+    for (on, method) in [(true, "POST"), (false, "DELETE")] {
+        let block = Call::Block {
+            handle: "grace".to_owned(),
+            on,
+        };
+        let answer = serde_json::json!({ "data": person(), "is_blocking": on });
+        let (reply, seen) = exchange(&block, &answer);
+        assert!(matches!(reply, Reply::Done));
+        assert_eq!(
+            request_line(&seen),
+            format!("{method} /api/v1/users/grace/block HTTP/1.1")
+        );
+    }
+}
+
+#[test]
+fn the_people_you_block_are_read_a_page_at_a_time() {
+    let page = serde_json::json!({
+        "data": [person()],
+        "meta": { "next_cursor": "eyJpZCI6MX0+/=" },
+    });
+    let (base, server) = serve("200 OK", &page.to_string());
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    let blocked = client.blocked(None).unwrap();
+    assert_eq!(blocked.people[0].user.handle, "ada");
+    assert_eq!(blocked.next_cursor.as_deref(), Some("eyJpZCI6MX0+/="));
+    assert_eq!(
+        request_line(&server.join().unwrap()),
+        "GET /api/v1/me/blocked HTTP/1.1"
+    );
+
+    let (base, server) = serve("200 OK", &page.to_string());
+    let client = Client::new(base, DeviceKey::generate().unwrap());
+    client.blocked(Some("eyJpZCI6MX0+/=")).unwrap();
+    assert_eq!(
+        request_line(&server.join().unwrap()),
+        "GET /api/v1/me/blocked?cursor=eyJpZCI6MX0%2B%2F%3D HTTP/1.1"
+    );
+}
+
+#[test]
 fn a_profile_and_its_lists_are_read_from_the_user_routes() {
     let profile = serde_json::json!({
         "data": person(),

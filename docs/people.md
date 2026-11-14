@@ -53,6 +53,27 @@ screen folds into a `muted @name` line at once, and dev-null.sh leaves them
 out of your logs from then on. They are not told. Press <kbd>m</kbd> on a
 folded line to unmute them.
 
+## Block someone
+
+Press <kbd>B</kbd> on a commit to block its author. Blocking goes further
+than muting. It ends the follows both ways, and neither of you can see,
+reply to or star the other's commits. So ttyl asks first, on the bottom row:
+
+```
+block @grace? this ends follows both ways [y/N]
+```
+
+Press <kbd>y</kbd> to block, or any other key to keep things as they are.
+Every commit of theirs on screen then folds into a
+`blocked @grace · B to unblock` line. Press <kbd>B</kbd> on a folded line to
+unblock them, with no question asked. Unblocking doesn't bring the follows
+back.
+
+<kbd>B</kbd> also works on a person in the followers and following tabs of a
+profile, in people search results, and in a group of people who followed you.
+
+Run `ttyl blocked` to print the handles you block, one per line.
+
 ## See your starred commits {#starred}
 
 Press <kbd>gs</kbd> from anywhere to list the commits you starred, newest

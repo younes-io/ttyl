@@ -266,9 +266,9 @@ pub struct Row {
     pub reply_preview: Option<ReplyPreview>,
     #[serde(skip)]
     pub deletion: Option<Deletion>,
-    /// Whether the user just muted the author, so the log folds the commit away.
+    /// Why the log folds the commit away: the user just muted or blocked its author.
     #[serde(skip)]
-    pub muted: bool,
+    pub fold: Option<Fold>,
     /// Whether the body shows a translation, or one is on its way.
     #[serde(skip)]
     pub showing: Showing,
@@ -436,6 +436,12 @@ impl Settings {
                 .collect(),
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fold {
+    Muted,
+    Blocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -89,6 +89,8 @@ pub enum Act {
     Translate,
     /// Lists the commits nearest in meaning to this one.
     Related,
+    /// Asks before blocking the author, or unblocks them.
+    Block,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -654,6 +656,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Person,
+        chords: &[&[Key::ch('B')]],
+        action: Action::Commit(Act::Block),
+        hint: None,
+        help: "block or unblock",
+    },
+    Binding {
+        scope: Scope::Person,
         chords: &[&[Key::ch('p')]],
         action: Action::Profile,
         hint: None,
@@ -679,6 +688,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Follow),
         hint: Some("f follow back"),
         help: "follow back",
+    },
+    Binding {
+        scope: Scope::People,
+        chords: &[&[Key::ch('B')]],
+        action: Action::Commit(Act::Block),
+        hint: None,
+        help: "block or unblock",
     },
     Binding {
         scope: Scope::Commit,
@@ -714,6 +730,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Mute),
         hint: None,
         help: "mute or unmute the author",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('B')]],
+        action: Action::Commit(Act::Block),
+        hint: None,
+        help: "block or unblock the author",
     },
     Binding {
         scope: Scope::Commit,

@@ -53,6 +53,7 @@ fn unknown_arguments_are_a_usage_error() {
         &["status", "--bogus"],
         &["commit", "--bogus"],
         &["headlines", "--bogus"],
+        &["blocked", "--bogus"],
     ] {
         let output = ttyl(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -388,4 +389,31 @@ fn headlines_with_nothing_hot_prints_nothing() {
     let output = against("cli-headlines-none", &base, &["headlines"], None);
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn blocked_prints_one_handle_per_line_for_the_shell() {
+    let person = |handle: &str| {
+        serde_json::json!({
+            "id": format!("id-{handle}"),
+            "handle": handle,
+            "name": handle,
+            "avatar_url": null,
+            "bio": null,
+            "company": null,
+            "location": null,
+            "website": null,
+            "html_url": format!("https://dev-null.sh/@{handle}"),
+            "created_at": "2026-01-01T00:00:00Z",
+            "lane": 1,
+        })
+    };
+    let page = serde_json::json!({
+        "data": [person("grace"), person("linus")],
+        "meta": { "next_cursor": null },
+    });
+    let (base, _server) = serve("200 OK", &page.to_string());
+    let output = against("cli-blocked", &base, &["blocked"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "grace\nlinus\n");
 }
