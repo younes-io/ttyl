@@ -18,6 +18,7 @@ pub mod gitlog;
 pub mod inbox;
 pub mod keys;
 pub mod list;
+pub mod locale;
 pub mod log;
 pub mod model;
 pub mod popup;

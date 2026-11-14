@@ -701,7 +701,12 @@ fn ancestor<Tz: TimeZone>(out: &mut Writer, row: &Row, now: &DateTime<Tz>) {
     out.node(
         node(row),
         feed::rail(),
-        dim(feed::header(commit, out.content(), now, None)),
+        dim(feed::header(
+            commit,
+            out.content(),
+            now,
+            feed::showing(row).into_iter().collect(),
+        )),
     );
     let mut lines = feed::body(&commit.body_segments, out.content());
     if lines.len() > ANCESTOR_LINES {
@@ -722,7 +727,12 @@ fn focus<Tz: TimeZone>(out: &mut Writer, row: &Row, now: &DateTime<Tz>) {
     out.node(
         node(row),
         rail.clone(),
-        feed::header(commit, out.content(), now, None),
+        feed::header(
+            commit,
+            out.content(),
+            now,
+            feed::showing(row).into_iter().collect(),
+        ),
     );
     feed::content(
         out,
@@ -759,11 +769,16 @@ fn reply<Tz: TimeZone>(
     let rail = feed::rail();
     let commit = &row.commit;
     let quotes_parent = commit.quoted_commit_id.as_ref() == Some(parent);
-    let mark = quotes_parent.then_some("quoted");
+    let mark = quotes_parent.then(|| Span::styled(" · quoted", theme::muted()));
     out.node(
         node(row),
         rail.clone(),
-        feed::header(commit, out.content(), now, mark),
+        feed::header(
+            commit,
+            out.content(),
+            now,
+            mark.into_iter().chain(feed::showing(row)).collect(),
+        ),
     );
     if depth > MAX_DEPTH {
         let verb = if quotes_parent {

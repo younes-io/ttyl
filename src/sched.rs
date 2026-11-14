@@ -31,6 +31,8 @@ pub enum CallKey {
     Star(CommitId),
     Follow(String),
     Mute(String),
+    Settings,
+    Translate(CommitId),
     User(String),
     Commits {
         handle: String,
@@ -71,6 +73,8 @@ impl Call {
             Call::Star { id, .. } => CallKey::Star(id.clone()),
             Call::Follow { handle, .. } => CallKey::Follow(handle.clone()),
             Call::Mute { handle, .. } => CallKey::Mute(handle.clone()),
+            Call::Settings => CallKey::Settings,
+            Call::Translate { id, .. } => CallKey::Translate(id.clone()),
             Call::User(handle) => CallKey::User(handle.clone()),
             Call::Commits {
                 handle,

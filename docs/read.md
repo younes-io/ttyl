@@ -52,6 +52,27 @@ Press <kbd>/</kbd> again to change the search. It starts from the last one, and
 
 dev-null.sh allows 15 commit searches a minute.
 
+## Translate a commit
+
+Press <kbd>t</kbd> to read the selected commit in your language. The
+translation takes the place of the text, and the header says
+`translated from French · t original`. Press <kbd>t</kbd> again for the
+original, and again for the translation. ttyl keeps both until you quit, so
+the commit stays translated in its thread, on profiles and in search.
+While dev-null.sh translates, the header says `translating…`.
+
+ttyl translates into the language you picked in your dev-null.sh settings.
+If you picked none, it takes the language of your locale from `LC_ALL`,
+then `LC_MESSAGES`, then `LANG`, so `fr_FR.UTF-8` gives French. A locale
+such as `C` names no language, and ttyl skips it. With none of these, ttyl
+translates into English.
+
+If the commit is already in your language, ttyl says so. If dev-null.sh
+can't translate it, ttyl shows dev-null.sh's message. Press <kbd>t</kbd> to
+try again. A notification's commit translates once you open its thread.
+
+dev-null.sh allows 10 translations a minute.
+
 ## Share a commit
 
 - Press <kbd>y</kbd> to copy the link to the selected commit.
@@ -63,7 +84,8 @@ Inside tmux, copying needs a tmux setting. See [Settings](settings.html#tmux).
 
 Press <kbd>|</kbd>, type a shell command and press <kbd>enter</kbd>. ttyl
 runs it with the commit's text, as written in Markdown, on its standard
-input. Some things to try:
+input. If the commit shows its translation, the command gets the
+translation. Some things to try:
 
 - `wl-copy` or `pbcopy` copies the text.
 - `tee -a ~/notes.md` keeps it in a file.

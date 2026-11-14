@@ -32,7 +32,7 @@ use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
 use ttyl::model::{Log, Status};
 use ttyl::sched::Ticket;
-use ttyl::{body, compose, editor, signin, theme, viewer, welcome};
+use ttyl::{body, compose, editor, locale, signin, theme, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 /// The file in ttyl's state that remembers the icons the viewer picked on the welcome screen.
@@ -306,9 +306,15 @@ fn run(
     }
     let font = picker.font_size();
     let now = Instant::now();
+    let [all, messages, lang] = ["LC_ALL", "LC_MESSAGES", "LANG"].map(|name| env::var(name).ok());
     let mut engine = Engine::new(device_name.clone(), now)
         .with_drafts(Drafts::new(saved))
-        .with_picker(picker);
+        .with_picker(picker)
+        .with_language(locale::device([
+            all.as_deref(),
+            messages.as_deref(),
+            lang.as_deref(),
+        ]));
     if let Some(start) = start {
         engine = engine.with_start(start, now);
     }

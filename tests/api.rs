@@ -13,7 +13,9 @@ use ttyl::attach::{self, Attachment, Image, Poll};
 use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
-use ttyl::model::{Circle, CommitId, Filter, Log, NotificationId, Reason};
+use ttyl::model::{
+    Circle, CommitId, Filter, Log, NotificationId, Reason, Translation, Untranslated,
+};
 
 struct Seen {
     head: String,
@@ -956,5 +958,108 @@ fn search_reads_commits_and_people_from_their_routes() {
     assert_eq!(
         request_line(&seen),
         "GET /api/v1/search/profiles?q=gra HTTP/1.1"
+    );
+}
+
+#[test]
+fn settings_are_read_for_the_translation_language() {
+    let settings = serde_json::json!({ "data": {
+        "timezone": "Europe/Paris",
+        "translation_language": "fr",
+        "automatic_translation": true,
+        "translation_languages": [{ "code": "fr", "name": "French", "native_name": "français" }],
+        "is_admin": false,
+        "push": {},
+    }});
+    let (reply, seen) = exchange(&Call::Settings, &settings);
+    assert!(
+        matches!(&reply, Reply::Settings(settings) if settings.translation_language.as_deref() == Some("fr")),
+        "{reply:?}"
+    );
+    assert_eq!(request_line(&seen), "GET /api/v1/me/settings HTTP/1.1");
+}
+
+fn translate() -> Call {
+    Call::Translate {
+        id: CommitId("7a000000-0000-4000-8000-00000000000a".to_owned()),
+        language: "en".to_owned(),
+    }
+}
+
+#[test]
+fn a_translation_is_asked_for_in_a_language_and_comes_back_as_segments() {
+    let translation = serde_json::json!({ "translation": {
+        "language": "en",
+        "source_language": "fr",
+        "source_name": "French",
+        "available": true,
+        "translated": {
+            "body_segments": [
+                { "type": "text", "text": "run " },
+                { "type": "code", "code": "cargo test" },
+                { "type": "text", "text": " first" },
+            ],
+            "preview_segments": null,
+        },
+    }});
+    let (reply, seen) = exchange(&translate(), &translation);
+    let Reply::Translation(translation) = reply else {
+        panic!("{reply:?}");
+    };
+    let Translation::Done(translated) = *translation else {
+        panic!("{translation:?}");
+    };
+    assert_eq!(translated.from, "French");
+    assert_eq!(translated.body, "run `cargo test` first");
+    assert_eq!(translated.body_segments.len(), 3);
+    assert_eq!(
+        request_line(&seen),
+        "POST /api/v1/commits/7a000000-0000-4000-8000-00000000000a/translation HTTP/1.1"
+    );
+    assert_eq!(sent(&seen), serde_json::json!({ "language": "en" }));
+}
+
+#[test]
+fn a_commit_already_in_the_language_comes_back_untranslated() {
+    let translation = serde_json::json!({ "translation": {
+        "language": "en",
+        "source_language": "en",
+        "source_name": "English",
+        "available": false,
+        "translated": null,
+    }});
+    let (reply, _) = exchange(&translate(), &translation);
+    assert!(
+        matches!(&reply, Reply::Translation(translation) if matches!(&**translation, Translation::Skipped(Untranslated::Already(name)) if name == "English")),
+        "{reply:?}"
+    );
+
+    let emoji = serde_json::json!({ "translation": {
+        "language": "en",
+        "source_language": "und",
+        "source_name": "Unknown language",
+        "available": false,
+        "translated": null,
+    }});
+    let (reply, _) = exchange(&translate(), &emoji);
+    assert!(
+        matches!(&reply, Reply::Translation(translation) if matches!(&**translation, Translation::Skipped(Untranslated::NoLanguage))),
+        "{reply:?}"
+    );
+}
+
+#[test]
+fn a_failed_translation_says_what_dev_null_said() {
+    let (base, server) = serve(
+        "503 Service Unavailable",
+        r#"{"message":"Could not translate this commit. Try again."}"#,
+    );
+    let error = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&translate())
+        .unwrap_err();
+    server.join().unwrap();
+    assert_eq!(
+        error.to_string(),
+        "Could not translate this commit. Try again."
     );
 }

@@ -5,9 +5,10 @@ use chrono::{DateTime, Utc};
 
 use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
+use crate::locale;
 use crate::model::{
-    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Shown, Suggestion,
-    Tombstone,
+    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Showing, Shown,
+    Suggestion, Tombstone, Translated, Translation, Untranslated,
 };
 use crate::sched::CallKey;
 
@@ -24,6 +25,8 @@ pub struct Store {
     star_wants: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
     mutes: HashMap<String, Mute>,
+    language: Language,
+    translations: HashMap<CommitId, Translating>,
     deleting: HashSet<CommitId>,
     unsent_pastels: HashMap<CommitId, u32>,
     picking: Option<(CommitId, usize)>,
@@ -42,6 +45,27 @@ pub enum Follow {
 struct Mute {
     server: bool,
     want: bool,
+}
+
+/// The language commits translate into, settled when the user first asks for a translation.
+enum Language {
+    /// dev-null.sh hasn't said yet whether the user picked one. Holds the device's, if it names one.
+    Unsettled {
+        device: Option<String>,
+    },
+    Settled(String),
+}
+
+/// A commit's translation, and whether the reader wants it in place of the original.
+enum Translating {
+    Asking {
+        show: bool,
+    },
+    Got {
+        translated: Box<Translated>,
+        show: bool,
+    },
+    Skipped(Untranslated),
 }
 
 pub enum Node<'a> {
@@ -164,11 +188,21 @@ impl Store {
             star_wants: HashMap::new(),
             follows: HashMap::new(),
             mutes: HashMap::new(),
+            language: Language::Unsettled { device: None },
+            translations: HashMap::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
             picking: None,
             left_off: HashMap::new(),
             generation: 0,
+        }
+    }
+
+    /// Translates into `device`, the language the device reads in, unless the user picked one on dev-null.sh.
+    pub fn with_device_language(self, device: Option<String>) -> Self {
+        Store {
+            language: Language::Unsettled { device },
+            ..self
         }
     }
 
@@ -214,6 +248,27 @@ impl Store {
         mute.want = !mute.want;
         self.generation += 1;
         mute.want
+    }
+
+    /// Flips the commit between its translation and the original, asking dev-null.sh for the
+    /// translation the first time. Says why instead when dev-null.sh found nothing to translate.
+    pub fn translate(&mut self, id: &CommitId) -> Option<Untranslated> {
+        match self.translations.get_mut(id) {
+            None => {
+                self.translations
+                    .insert(id.clone(), Translating::Asking { show: true });
+            }
+            Some(Translating::Asking { show } | Translating::Got { show, .. }) => *show = !*show,
+            Some(Translating::Skipped(why)) => return Some(why.clone()),
+        }
+        self.generation += 1;
+        None
+    }
+
+    fn settle_language(&mut self, setting: Option<&str>) {
+        if let Language::Unsettled { device } = &self.language {
+            self.language = Language::Settled(locale::target(setting, device.as_deref()));
+        }
     }
 
     pub fn give_pastel(&mut self, id: &CommitId) {
@@ -277,6 +332,24 @@ impl Store {
                 });
             }
         }
+        let mut asking = (self.translations.iter())
+            .filter(|(_, translating)| matches!(translating, Translating::Asking { .. }))
+            .map(|(id, _)| id);
+        match &self.language {
+            Language::Unsettled { .. } => {
+                if !pending(&CallKey::Settings) && asking.next().is_some() {
+                    calls.push(Call::Settings);
+                }
+            }
+            Language::Settled(language) => {
+                for id in asking.filter(|id| !pending(&CallKey::Translate((*id).clone()))) {
+                    calls.push(Call::Translate {
+                        id: id.clone(),
+                        language: language.clone(),
+                    });
+                }
+            }
+        }
         self.unsent_pastels.retain(|id, left| {
             if !pending(&CallKey::Pastel(id.clone())) {
                 calls.push(Call::Pastel(id.clone()));
@@ -313,6 +386,13 @@ impl Store {
             Call::Pastel(id) => {
                 self.unsent_pastels.remove(id);
                 return;
+            }
+            Call::Settings => {
+                self.settle_language(None);
+                return;
+            }
+            Call::Translate { id, .. } => {
+                self.translations.remove(id);
             }
             Call::Me
             | Call::Redeem { .. }
@@ -415,6 +495,22 @@ impl Store {
                     mute.server = *on;
                 }
             }
+            (Call::Settings, Reply::Settings(settings)) => {
+                self.settle_language(settings.translation_language.as_deref());
+            }
+            (Call::Translate { id, .. }, Reply::Translation(translation)) => {
+                if let Some(Translating::Asking { show }) = self.translations.get(id) {
+                    let landed = match *translation {
+                        Translation::Done(translated) => Translating::Got {
+                            translated: Box::new(translated),
+                            show: *show,
+                        },
+                        Translation::Skipped(why) => Translating::Skipped(why),
+                    };
+                    self.translations.insert(id.clone(), landed);
+                    self.generation += 1;
+                }
+            }
             (Call::Delete(id), Reply::Done) => {
                 self.deleting.remove(id);
                 let row = self.rows.get(id);
@@ -437,6 +533,8 @@ impl Store {
                 | Reply::Notifications(_)
                 | Reply::Group(_)
                 | Reply::Preview(_)
+                | Reply::Settings(_)
+                | Reply::Translation(_)
                 | Reply::Done,
             ) => {}
         }
@@ -488,7 +586,22 @@ impl Store {
             .filter(|(on, _)| on == id)
             .map(|(_, at)| *at);
         let muted = (self.mutes.get(&row.commit.author.handle)).is_some_and(|mute| mute.want);
-        if want.is_none() && !deleting && picking.is_none() && !muted {
+        let translating = self.translations.get(id);
+        let asking = matches!(translating, Some(Translating::Asking { show: true }));
+        let translated = match translating {
+            Some(Translating::Got {
+                translated,
+                show: true,
+            }) => Some(translated),
+            _ => None,
+        };
+        if want.is_none()
+            && !deleting
+            && picking.is_none()
+            && !muted
+            && !asking
+            && translated.is_none()
+        {
             return Cow::Borrowed(row);
         }
         let mut row = row.clone();
@@ -504,6 +617,19 @@ impl Store {
             row.deletion = Some(Deletion::Running);
         }
         row.muted = muted;
+        if asking {
+            row.showing = Showing::Translating;
+        }
+        if let Some(translated) = translated {
+            row.commit.body = translated.body.clone();
+            row.commit.body_segments = translated.body_segments.clone();
+            row.commit.preview_segments = translated.preview_segments.clone();
+            // They point into the original's text.
+            row.commit.mentions.clear();
+            row.showing = Showing::Translation {
+                from: translated.from.clone(),
+            };
+        }
         if let Some(poll) = row.media.poll.as_mut() {
             poll.picking = picking;
         }
@@ -551,6 +677,7 @@ impl Store {
                             reply_preview,
                             deletion: None,
                             muted: false,
+                            showing: Showing::Original,
                         },
                     );
                     id
@@ -647,6 +774,7 @@ impl Store {
                 reply_preview,
                 deletion: None,
                 muted: false,
+                showing: Showing::Original,
             },
         );
         self.gone.remove(&id);
