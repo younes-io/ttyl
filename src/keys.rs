@@ -1308,6 +1308,20 @@ pub fn fit(hints: &str, width: usize) -> String {
     hints.join("  ")
 }
 
+/// Fits a pending chord's line, `g-  g top · r commits like this one · …`, by dropping whole
+/// continuations from the end, so the line never ends mid-word.
+pub fn fit_chords(hints: &str, width: usize) -> String {
+    let Some((pending, rest)) = hints.split_once("-  ") else {
+        return hints.to_owned();
+    };
+    let mut rest: Vec<&str> = rest.split(" · ").collect();
+    let line = |rest: &[&str]| format!("{pending}-  {}", rest.join(" · "));
+    while rest.len() > 1 && line(&rest).width() > width {
+        rest.pop();
+    }
+    line(&rest)
+}
+
 /// Every key in `scopes`, each with whether it works right now, so help can show a key
 /// like `v` dimmed instead of hiding it until a poll is selected.
 pub fn help(scopes: &[Scope], can: &dyn Fn(Action) -> bool) -> Vec<Entry> {

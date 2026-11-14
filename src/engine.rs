@@ -2380,9 +2380,10 @@ impl Engine {
         let mut hints = keys::hints(self.scopes(), self.keymap.pending(), &|action| {
             can(&self.phase, self.health.as_ref(), sending, action)
         });
-        if self.keymap.pending().is_empty() {
-            hints = keys::fit(&hints, room);
-        }
+        hints = match self.keymap.pending() {
+            [] => keys::fit(&hints, room),
+            _ => keys::fit_chords(&hints, room),
+        };
         let help = hints
             .split("  ")
             .find(|hint| hint.starts_with("? "))
