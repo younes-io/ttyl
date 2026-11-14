@@ -25,7 +25,9 @@ headings account, region, remotes, muted, blocked and devices.
 - Each device shows its name, the app, when it was last used and its
   fingerprint, and the terminal you are on says `this device`.
   <kbd>D</kbd> revokes one after you answer <kbd>y</kbd>. Revoking this
-  device signs ttyl out, and the question says so first.
+  device signs ttyl out, and the question says so first. It also deletes the
+  timeline ttyl keeps on disk for its next launch, so the next launch asks you
+  to sign in.
 
 From the shell, `ttyl config` reads and writes the same settings the way
 `git config` does:
@@ -41,7 +43,8 @@ A bad key or value prints a `fatal:` line and exits 1. `ttyl --help` lists
 the keys and what each one takes. `ttyl muted` and `ttyl blocked` print
 handles one per line. `ttyl devices` prints one device per line, tab
 separated: id, last used, fingerprint and name. `ttyl devices revoke <id>`
-revokes one, and only by its id.
+revokes one, and only by its id. Revoking this device from the shell also
+deletes the timeline ttyl keeps on disk.
 
 Deleting your account, GitHub sync, live and push notifications stay on the
 web.

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 
 use crate::api::{Account, Call, Failure, Me, Reply};
-use crate::config::{Change, Config, Wants};
+use crate::config::{Change, Config, Field, Wants};
 use crate::draft::Target;
 use crate::locale;
 use crate::model::{
@@ -12,7 +12,7 @@ use crate::model::{
     RepliesPage, Row, Settings, Showing, Shown, Suggestion, Tombstone, Translated, Translation,
     Untranslated, Who,
 };
-use crate::sched::CallKey;
+use crate::sched::{CallKey, Ticket};
 
 pub struct Store {
     pub me: Me,
@@ -37,6 +37,9 @@ pub struct Store {
     settings: Option<Settings>,
     /// Settings the user changed that dev-null.sh hasn't confirmed.
     wants: Wants,
+    /// The first call to go out after dev-null.sh confirmed each setting's last change. A read that
+    /// went out before it may still hold the value from before.
+    confirmed: HashMap<Field, Ticket>,
     translations: HashMap<CommitId, Translating>,
     /// Everyone whose follow of the user a block ended. Unblocking leaves it ended.
     unfollowed_by: HashSet<String>,
@@ -250,6 +253,7 @@ impl Store {
             device_language: None,
             settings: None,
             wants: Wants::default(),
+            confirmed: HashMap::new(),
             translations: HashMap::new(),
             blocks: HashMap::new(),
             filings: HashMap::new(),
@@ -675,7 +679,7 @@ impl Store {
             | Call::Muted { .. }
             | Call::Blocked { .. }
             | Call::Devices
-            | Call::Revoke(_)
+            | Call::Revoke { .. }
             | Call::Redeem { .. }
             | Call::Page(_)
             | Call::Older { .. }
@@ -711,6 +715,33 @@ impl Store {
             | Call::SendMessage { .. } => return,
         }
         self.generation += 1;
+    }
+
+    /// Takes in `reply` to `call`, which went out as `sent` while `next` is the next call to go
+    /// out. A setting dev-null.sh confirmed changing since `sent` went out keeps its new value, as
+    /// the reply may be from before the change.
+    pub fn answer(&mut self, call: &Call, reply: Reply, sent: Ticket, next: Ticket) {
+        let stale: Vec<Field> = match reply {
+            Reply::Account(_) | Reply::Settings(_) => (self.confirmed.iter())
+                .filter(|(_, confirmed)| sent < **confirmed)
+                .map(|(field, _)| *field)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let before = (!stale.is_empty()).then(|| (self.me.clone(), self.settings.clone()));
+        self.apply(call, reply);
+        if let Some((me, settings)) = before {
+            for field in stale {
+                field.carry(&me, &mut self.me);
+                if let (Some(from), Some(to)) = (&settings, &mut self.settings) {
+                    field.carry_regional(from, to);
+                }
+            }
+            self.settle_language();
+        }
+        if let Call::Configure(change) = call {
+            self.confirmed.insert(change.field(), next);
+        }
     }
 
     pub fn apply(&mut self, call: &Call, reply: Reply) {

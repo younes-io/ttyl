@@ -2,10 +2,14 @@ mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::thread::{self, JoinHandle};
 
 use common::scratch;
+use ttyl::api::Client;
+use ttyl::cache::Cache;
+use ttyl::device::DeviceKey;
 
 fn ttyl(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ttyl"))
@@ -126,9 +130,15 @@ fn serve_in_turn(responses: &[(&str, &str)]) -> (String, JoinHandle<Vec<String>>
 
 /// Runs ttyl against `base` with its key in a scratch config, feeding `stdin` when given.
 fn against(name: &str, base: &str, args: &[&str], stdin: Option<&str>) -> Output {
+    at_home(&scratch(name), base, args, stdin)
+}
+
+/// Runs ttyl against `base` with its key and cache under `home`, feeding `stdin` when given.
+fn at_home(home: &Path, base: &str, args: &[&str], stdin: Option<&str>) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ttyl"))
         .args(args)
-        .env("XDG_CONFIG_HOME", scratch(name))
+        .env("XDG_CONFIG_HOME", home)
+        .env("XDG_CACHE_HOME", home.join("cache"))
         .env("DEVNULL_URL", base)
         .env("TZ", "UTC")
         .stdin(if stdin.is_some() {
@@ -712,6 +722,31 @@ fn devices_revoke_takes_an_explicit_id() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(server.join().unwrap().len(), 2, "lists, then revokes");
     assert_eq!(ttyl(&["devices", "revoke"]).status.code(), Some(2));
+}
+
+#[test]
+fn revoking_this_device_forgets_the_timeline_the_next_launch_would_draw() {
+    let home = scratch("cli-revoke-this");
+    let path = home.join("ttyl/device_ed25519");
+    let key = DeviceKey::open(&path).unwrap();
+    let devices = serde_json::json!({ "data": [{
+        "id": "d-laptop", "name": "laptop", "app_name": "ttyl", "fingerprint": key.fingerprint(),
+        "approved_at": "2026-10-20T10:00:00Z", "last_used_at": null,
+    }]});
+    let (base, server) = serve_in_turn(&[
+        ("200 OK", ME),
+        ("200 OK", &devices.to_string()),
+        ("204 No Content", ""),
+    ]);
+    let cache = || Cache::under(&home.join("cache"), &base, &key);
+    let timeline = Client::new(base.clone(), DeviceKey::load(&path).unwrap()).with_cache(cache());
+    timeline.me().unwrap();
+    assert!(cache().load().is_some(), "the timeline kept the account");
+
+    let output = at_home(&home, &base, &["devices", "revoke", "d-laptop"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(server.join().unwrap().len(), 3);
+    assert!(cache().load().is_none(), "nothing left to draw");
 }
 
 const ME: &str = r#"{"data":{"handle":"ada","name":"Ada","pasteis_mode":true,"preferred_lane":null,"automatic_lane":3,"remotes":null},"unread_notifications_count":0}"#;

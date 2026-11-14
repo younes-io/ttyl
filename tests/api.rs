@@ -993,6 +993,43 @@ fn a_device_the_server_forgets_forgets_its_timeline() {
     assert!(!dir.exists());
 }
 
+fn kept(dir: &Path) {
+    answered(dir, "200 OK", ME, &Call::Me).unwrap();
+    answered(
+        dir,
+        "200 OK",
+        &fixture("log-latest").to_string(),
+        &Call::Page(Log::Latest),
+    )
+    .unwrap();
+}
+
+#[test]
+fn revoking_this_device_forgets_the_timeline_the_next_launch_would_draw() {
+    let dir = scratch("cache-revoked");
+    kept(&dir);
+    let id = ttyl::model::DeviceId("0f0e".to_owned());
+    answered(&dir, "204 No Content", "", &Call::Revoke { id, this: true }).unwrap();
+
+    assert!(Cache::at(dir).load().is_none(), "nothing left to draw");
+}
+
+#[test]
+fn revoking_another_device_keeps_this_ones_timeline() {
+    let dir = scratch("cache-revoked-other");
+    kept(&dir);
+    let id = ttyl::model::DeviceId("0f0e".to_owned());
+    answered(
+        &dir,
+        "204 No Content",
+        "",
+        &Call::Revoke { id, this: false },
+    )
+    .unwrap();
+
+    assert_eq!(Cache::at(dir).load().unwrap().pages.len(), 1);
+}
+
 #[test]
 fn what_is_kept_is_readable_only_by_its_owner() {
     use std::os::unix::fs::PermissionsExt;
@@ -1191,7 +1228,8 @@ fn devices_are_listed_and_revoked_by_id() {
         "{reply:?}"
     );
     let id = ttyl::model::DeviceId("0f0e".to_owned());
-    let (reply, seen) = exchange(&Call::Revoke(id), &serde_json::json!({}));
+    let revoke = Call::Revoke { id, this: false };
+    let (reply, seen) = exchange(&revoke, &serde_json::json!({}));
     assert_eq!(
         request_line(&seen),
         "DELETE /api/v1/me/devices/0f0e HTTP/1.1"

@@ -14,7 +14,8 @@ pub const LIMIT: usize = 120;
 pub const WINDOW: Duration = Duration::from_secs(60);
 pub const RESERVE: usize = 40;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A call released to a worker. Tickets count up, so a lower one went out earlier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Ticket(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +134,7 @@ impl Call {
                 older: cursor.is_some(),
             },
             Call::Devices => CallKey::Devices,
-            Call::Revoke(id) => CallKey::Revoke(id.clone()),
+            Call::Revoke { id, .. } => CallKey::Revoke(id.clone()),
             Call::Configure(change) => CallKey::Configure(change.field()),
             Call::User(handle) => CallKey::User(handle.clone()),
             Call::Organization(handle) => CallKey::Organization(handle.clone()),
@@ -270,6 +271,11 @@ impl Scheduler {
 
     pub fn busy(&self) -> bool {
         !self.flying.is_empty()
+    }
+
+    /// The ticket the next call released gets, after every call out so far.
+    pub fn upcoming(&self) -> Ticket {
+        Ticket(self.next_ticket)
     }
 
     pub fn hold(&mut self, until: Instant) {
