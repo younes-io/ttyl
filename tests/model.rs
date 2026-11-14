@@ -153,23 +153,24 @@ fn images_and_polls_come_through() {
 #[test]
 fn the_reply_preview_holds_the_newest_reply_or_its_tombstone() {
     let page = page("latest");
-    let first = &row(&page, "e4f5a61").reply_preview;
+    let first = row(&page, "e4f5a61").reply_preview.as_ref().unwrap();
     assert!(
         matches!(first.data.as_slice(), [Shown::Live(reply)] if reply.commit.author.handle == "grace")
     );
     assert!(first.next_cursor.is_some());
 
-    let deleted = &row(&page, "0000201").reply_preview;
+    let deleted = row(&page, "0000201").reply_preview.as_ref().unwrap();
     assert!(matches!(
         deleted.data.as_slice(),
         [Shown::Deleted(tombstone)] if tombstone.replies_count == Some(0)
     ));
 
-    let whole = &row(&page, "0000501").reply_preview;
+    let whole = row(&page, "0000501").reply_preview.as_ref().unwrap();
     assert_eq!(whole.data.len(), 1);
     assert_eq!(whole.next_cursor, None);
 
-    assert!(row(&page, "0000301").reply_preview.data.is_empty());
+    let none = row(&page, "0000301").reply_preview.as_ref().unwrap();
+    assert!(none.data.is_empty(), "a log row says it has no replies");
 }
 
 #[test]

@@ -153,3 +153,43 @@ fn gr_from_related_commits_walks_on_and_esc_walks_back() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn related_rows_leave_the_reply_line_of_a_card_listed_elsewhere() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let reply = "did you keep an index on created_at?";
+    assert!(contains(&screen(&mut engine, 100, 30, at), reply));
+    let (ticket, _) = related(&mut engine, at);
+    let bare = Row {
+        reply_preview: None,
+        ..page(Log::Following).rows[0].clone()
+    };
+    land(&mut engine, ticket, vec![bare], at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, reply),
+        "its stored preview stays: {rows:#?}"
+    );
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, reply), "the log keeps it: {rows:#?}");
+}
+
+#[test]
+fn a_search_from_related_commits_leaves_them_to_come_back_to() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let (ticket, _) = related(&mut engine, at);
+    land(&mut engine, ticket, alike(), at);
+    let (_, second) = related(&mut engine, at);
+    press(&mut engine, "/rust", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(runs(&effects), [&Call::SearchCommits("rust".to_owned())]);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[0].contains(&format!("related {}", second.short_hash())),
+        "esc leads back to the related commits: {rows:#?}"
+    );
+}

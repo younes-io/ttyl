@@ -1405,10 +1405,9 @@ impl Engine {
                         let list = ListScreen::new(Source::search(&query), now);
                         self.sched.send(list.call(), Priority::Now);
                         // A search from results refines it, so back still leads where the first began.
-                        if session
-                            .list()
-                            .is_some_and(|list| *list.source() != Source::Starred)
-                        {
+                        if session.list().is_some_and(|list| {
+                            matches!(list.source(), Source::Commits(_) | Source::People(_))
+                        }) {
                             session.stack.pop();
                         }
                         session.stack.push(Screen::List(Box::new(list)));

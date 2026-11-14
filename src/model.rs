@@ -260,9 +260,10 @@ pub struct Row {
     pub starred: bool,
     pub replies_count: u32,
     pub quoted_commit: Option<Shown<Quote>>,
-    /// Missing where the server didn't load it, as `search/commits` on dev-null.sh does.
+    /// `None` where the server didn't load it, as `search/commits` and `commits/{id}/related` on
+    /// dev-null.sh do, which says nothing about the commit's replies.
     #[serde(default)]
-    pub reply_preview: ReplyPreview,
+    pub reply_preview: Option<ReplyPreview>,
     #[serde(skip)]
     pub deletion: Option<Deletion>,
     /// Whether the user just muted the author, so the log folds the commit away.
@@ -519,7 +520,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Shown<T> {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReplyPreview {
     pub data: Vec<Shown<Reply>>,
     pub next_cursor: Option<String>,
