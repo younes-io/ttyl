@@ -930,7 +930,11 @@ fn what_is_kept_is_readable_only_by_its_owner() {
 
 #[test]
 fn search_reads_commits_and_people_from_their_routes() {
-    let commits = serde_json::json!({ "data": fixture("log-latest")["data"] });
+    let mut rows = fixture("log-latest")["data"].clone();
+    for row in rows.as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("reply_preview");
+    }
+    let commits = serde_json::json!({ "data": rows });
     let (reply, seen) = exchange(&Call::SearchCommits("offset & cursor".to_owned()), &commits);
     assert!(
         matches!(reply, Reply::Rows(page) if !page.rows.is_empty() && page.next_cursor.is_none())
