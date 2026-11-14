@@ -624,7 +624,7 @@ fn message(to: &str, text: Option<&str>) -> Result<(), String> {
     };
     let client_id = ClientId(Nonce::random().uuid());
     let sent = client
-        .send_message(&chat, body, &client_id)
+        .send_message(&chat, body, &client_id, None)
         .map_err(|error| {
             if error.may_have_landed() {
                 messages::NO_ANSWER.to_owned()

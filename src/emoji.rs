@@ -40,6 +40,11 @@ pub fn search(query: &str) -> Vec<Emoji> {
         .collect()
 }
 
+/// The emoji `glyph` is, under its first name.
+pub fn named(glyph: &str) -> Option<Emoji> {
+    all().iter().find(|emoji| emoji.glyph == glyph).copied()
+}
+
 fn rank(name: &str, query: &str) -> u8 {
     if name.starts_with(query) {
         0

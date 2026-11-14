@@ -4,14 +4,19 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use common::{boot, contains, press, runs, screen, secs, tap};
+use common::{boot, buffer, contains, press, runs, screen, secs, tap};
+use ratatui::buffer::Cell;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Modifier;
 use serde_json::{Value, json};
 use ttyl::api::{Call, Error, Paging, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{
-    Candidate, Chat, ConversationPage, Folder, Hush, Message, MessageId, MessagePage, OrgId, Refile,
+    Candidate, Chat, ConversationPage, Folder, Hush, Message, MessageId, MessagePage, OrgId,
+    ReactionsVersion, Refile,
 };
+use ttyl::theme;
+use unicode_width::UnicodeWidthChar;
 
 const ADA: &str = "0a000000-0000-4000-8000-00000000000a";
 const GRACE: &str = "0b000000-0000-4000-8000-00000000000b";
@@ -137,6 +142,14 @@ fn row<'a>(rows: &'a [String], needle: &str) -> (usize, &'a str) {
         .unwrap_or_else(|| panic!("no row shows {needle:?}: {rows:#?}"))
 }
 
+/// The poll for what came after `after`, and the reactions changed since `reactions`.
+fn since(after: u64, reactions: u64) -> Paging {
+    Paging::Since {
+        after: MessageId(after),
+        reactions: ReactionsVersion(reactions),
+    }
+}
+
 #[test]
 fn gm_lists_conversations_pinned_then_unread_one_line_each() {
     let at = Instant::now();
@@ -243,6 +256,7 @@ fn enter_opens_the_conversation_oldest_first_and_marks_it_read() {
     );
 
     tap(&mut engine, KeyCode::Esc, at);
+    tap(&mut engine, KeyCode::Esc, at);
     let rows = screen(&mut engine, 100, 30, at);
     assert!(!row(&rows, "@grace").1.contains("(2)"), "{rows:#?}");
 }
@@ -269,6 +283,7 @@ fn enter_sends_what_was_typed_and_it_shows_once_dev_null_has_it() {
                 chat,
                 body,
                 client_id,
+                reply_to: None,
             },
         ] if *chat == grace() && body == typed => client_id.clone(),
         other => panic!("enter sends the message: {other:#?}"),
@@ -308,6 +323,7 @@ fn what_was_typed_stays_when_the_conversation_is_left_and_opened_again() {
     open_grace(&mut engine, at);
     press(&mut engine, "half a thought", at);
     tap(&mut engine, KeyCode::Esc, at);
+    tap(&mut engine, KeyCode::Esc, at);
     let effects = tap(&mut engine, KeyCode::Enter, at);
     answer(&mut engine, &effects, at, dev_null);
     let rows = screen(&mut engine, 100, 30, at);
@@ -323,7 +339,7 @@ fn an_open_conversation_brings_in_new_messages_as_they_arrive() {
     let effects = engine.pump(at + secs(3));
     let poll = Call::Messages {
         chat: grace(),
-        paging: Paging::After(MessageId(105)),
+        paging: since(105, 0),
     };
     assert!(runs(&effects).contains(&&poll), "{effects:#?}");
     let arrived = message(
@@ -351,6 +367,7 @@ fn an_open_conversation_brings_in_new_messages_as_they_arrive() {
     );
     assert!(row(&rows, "did you see the cursor patch?").0 < 27);
 
+    tap(&mut engine, KeyCode::Esc, at + secs(3));
     tap(&mut engine, KeyCode::Esc, at + secs(3));
     let effects = engine.pump(at + secs(30));
     assert!(
@@ -555,7 +572,7 @@ fn a_message_grace_sent_just_before_yours_still_comes_in() {
     let effects = engine.pump(at + secs(3));
     let poll = Call::Messages {
         chat: grace(),
-        paging: Paging::After(MessageId(105)),
+        paging: since(105, 0),
     };
     assert!(
         runs(&effects).contains(&&poll),
@@ -598,6 +615,7 @@ fn a_poll_answered_after_the_conversation_reopened_leaves_it_loading() {
     let mut engine = boot(at);
     open_grace(&mut engine, at);
     let stale = engine.pump(at + secs(3));
+    tap(&mut engine, KeyCode::Esc, at + secs(3));
     tap(&mut engine, KeyCode::Esc, at + secs(3));
     tap(&mut engine, KeyCode::Enter, at + secs(3));
     let arrived = message(
@@ -783,7 +801,7 @@ fn a_group_sends_polls_and_marks_read_on_its_own_routes() {
     let effects = engine.pump(at + secs(3));
     let poll = Call::Messages {
         chat: unix_room(),
-        paging: Paging::After(MessageId(210)),
+        paging: since(210, 0),
     };
     assert!(runs(&effects).contains(&&poll), "{effects:#?}");
     let arrived = said(212, "linus", "lgtm, merging", "2026-10-21T09:59:00Z");
@@ -1306,4 +1324,508 @@ fn a_pin_dev_null_refuses_says_why_and_lists_the_folder_again() {
         "{rows:#?}"
     );
     assert!(!row(&rows, "@grace").1.contains("pinned"), "{rows:#?}");
+}
+
+fn chord(engine: &mut Engine, code: KeyCode, modifiers: KeyModifiers, at: Instant) -> Vec<Effect> {
+    let mut effects = engine.update(Event::Key(KeyEvent::new(code, modifiers)), at);
+    effects.extend(engine.pump(at));
+    effects
+}
+
+/// What dev-null.sh answers a reaction with: every emoji on the message and who left it.
+fn reactions(left: &[(&str, &str)]) -> Reply {
+    Reply::Reactions(
+        (left.iter())
+            .map(|(user_id, emoji)| {
+                serde_json::from_value(json!({ "user_id": user_id, "emoji": emoji })).unwrap()
+            })
+            .collect(),
+    )
+}
+
+/// `text` as a screen row reads it, where a wide emoji's second cell is a blank.
+fn drawn(text: &str) -> String {
+    text.chars()
+        .flat_map(|ch| match ch.width() {
+            Some(2) => vec![ch, ' '],
+            _ => vec![ch],
+        })
+        .collect()
+}
+
+/// The cell where `needle` starts on the screen.
+fn cell(engine: &mut Engine, at: Instant, needle: &str) -> Cell {
+    let buffer = buffer(engine, 100, 30, at);
+    let needle = drawn(needle);
+    for y in 0..30 {
+        let mut row = String::new();
+        let mut starts = Vec::new();
+        for x in 0..100 {
+            starts.push(row.len());
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if let Some(found) = row.find(&needle) {
+            let x = starts.iter().position(|start| *start == found).unwrap();
+            return buffer[(x as u16, y)].clone();
+        }
+    }
+    panic!("nothing shows {needle:?}")
+}
+
+#[test]
+fn letters_typed_in_a_conversation_go_into_the_input_and_never_act() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let effects = press(&mut engine, "jkr+i", at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[28].contains("› jkr+i"), "{rows:#?}");
+    assert!(!contains(&rows, "replying to"), "{rows:#?}");
+    assert!(rows[29].contains("esc select"), "{rows:#?}");
+}
+
+#[test]
+fn esc_selects_the_newest_message_i_types_again_and_esc_twice_leaves() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    for hint in [
+        "j/k move",
+        "r reply",
+        "+ react",
+        "ctrl-g ping",
+        "i type",
+        "esc back",
+    ] {
+        assert!(rows[29].contains(hint), "{hint}: {rows:#?}");
+    }
+    assert_eq!(
+        cell(&mut engine, at, "did you see the cursor patch?").bg,
+        theme::MUTED,
+        "the newest message is lit"
+    );
+    assert_ne!(cell(&mut engine, at, "[image]").bg, theme::MUTED);
+
+    let effects = press(&mut engine, "i", at);
+    assert!(runs(&effects).is_empty());
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[28].contains("message @grace"),
+        "i goes back to typing and types nothing: {rows:#?}"
+    );
+    assert!(rows[29].contains("esc select"), "{rows:#?}");
+    assert_ne!(
+        cell(&mut engine, at, "did you see the cursor patch?").bg,
+        theme::MUTED
+    );
+
+    tap(&mut engine, KeyCode::Esc, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "message @grace"), "{rows:#?}");
+    assert!(contains(&rows, "@grace"), "back on the list: {rows:#?}");
+}
+
+#[test]
+fn alt_k_selects_from_the_input_and_k_walks_back_past_what_the_group_was_told() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    chord(&mut engine, KeyCode::Char('k'), KeyModifiers::ALT, at);
+    assert_eq!(
+        cell(&mut engine, at, "pushed the fix for the cursor race").bg,
+        theme::MUTED
+    );
+    press(&mut engine, "kkkkk", at);
+    assert_eq!(
+        cell(&mut engine, at, "who owns the cursor code now?").bg,
+        theme::MUTED,
+        "the oldest message stays selected, since notices can't be answered"
+    );
+    press(&mut engine, "j", at);
+    assert_eq!(
+        cell(&mut engine, at, "grace does, since the wrap rewrite").bg,
+        theme::MUTED
+    );
+}
+
+#[test]
+fn r_replies_to_the_selected_message_and_the_reply_quotes_it() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "kr", at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[27].contains("↳ replying to @grace: [image]"),
+        "{rows:#?}"
+    );
+    assert!(rows[29].contains("esc cancel reply"), "{rows:#?}");
+
+    press(&mut engine, "nice", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let client_id = match runs(&effects).as_slice() {
+        [
+            Call::SendMessage {
+                chat,
+                body,
+                client_id,
+                reply_to: Some(MessageId(104)),
+            },
+        ] if *chat == grace() && body == "nice" => client_id.clone(),
+        other => panic!("enter sends the reply: {other:#?}"),
+    };
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "replying to"), "{rows:#?}");
+    let (waiting, _) = row(&rows, "<ada> nice");
+    assert!(rows[waiting - 1].contains("↳ @grace: [image]"), "{rows:#?}");
+
+    let mut landed = message(106, ADA, "nice", &client_id.0, "2026-10-21T09:58:00Z");
+    landed["reply_to_id"] = json!(104);
+    landed["reply_to"] =
+        json!({ "id": 104, "user_id": GRACE, "body": "", "images_count": 1, "has_voice": false });
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::SendMessage { .. })
+            .then(|| Reply::Message(Box::new(serde_json::from_value(landed.clone()).unwrap())))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    let (said, line) = row(&rows, "<ada> nice");
+    assert!(line.contains("09:58"), "{rows:#?}");
+    assert!(rows[said - 1].contains("↳ @grace: [image]"), "{rows:#?}");
+}
+
+#[test]
+fn esc_takes_back_a_pending_reply_and_keeps_what_was_typed() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "r", at);
+    press(&mut engine, "hm", at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "replying to"), "{rows:#?}");
+    assert!(rows[28].contains("› hm"), "{rows:#?}");
+    assert!(rows[29].contains("esc select"), "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        matches!(
+            runs(&effects).as_slice(),
+            [Call::SendMessage { reply_to: None, .. }]
+        ),
+        "{effects:#?}"
+    );
+}
+
+#[test]
+fn a_reply_in_a_group_names_the_message_and_quotes_its_author() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "kkkr", at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[27].contains("↳ replying to @linus: who owns the cursor code now?"),
+        "{rows:#?}"
+    );
+    press(&mut engine, "grace does", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let client_id = match runs(&effects).as_slice() {
+        [
+            Call::SendMessage {
+                chat,
+                client_id,
+                reply_to: Some(MessageId(203)),
+                ..
+            },
+        ] if *chat == unix_room() => client_id.clone(),
+        other => panic!("enter sends the reply to the org: {other:#?}"),
+    };
+    let mut landed = said(211, "ada", "grace does", "2026-10-21T09:58:00Z");
+    landed["client_id"] = json!(client_id.0);
+    landed["reply_to_id"] = json!(203);
+    let linus = said(203, "linus", "", "2026-10-21T09:00:00Z")["user_id"].clone();
+    landed["reply_to"] = json!({ "id": 203, "user_id": linus, "body": "who owns the cursor code now?", "images_count": 0, "has_voice": false });
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::SendMessage { .. })
+            .then(|| Reply::Message(Box::new(serde_json::from_value(landed.clone()).unwrap())))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    let (said, _) = row(&rows, "09:58   <ada> grace does");
+    assert!(
+        rows[said - 1].contains("↳ @linus: who owns the cursor code now?"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn plus_picks_an_emoji_by_name_and_the_same_one_again_takes_it_back() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "+", at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[28].contains("type an emoji's name"), "{rows:#?}");
+    assert!(rows[29].contains("enter react"), "{rows:#?}");
+    let effects = press(&mut engine, ":white_check", at);
+    assert!(runs(&effects).is_empty(), "a name is typed, not acted on");
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[27].contains(&drawn("✅ white_check_mark")),
+        "{rows:#?}"
+    );
+
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let left = Call::React {
+        chat: grace(),
+        message: MessageId(105),
+        emoji: "✅".to_owned(),
+        on: true,
+    };
+    assert_eq!(runs(&effects), [&left]);
+    let rows = screen(&mut engine, 100, 30, at);
+    let (patch, _) = row(&rows, "it fixes the off-by-one");
+    assert!(
+        rows[patch + 1].contains(&drawn("[✅ 1]")),
+        "it shows at once: {rows:#?}"
+    );
+    assert!(
+        rows[29].contains("r reply"),
+        "back on the message: {rows:#?}"
+    );
+
+    answer(&mut engine, &effects, at, |call| {
+        (*call == left).then(|| reactions(&[(GRACE, "✅"), (ADA, "✅")]))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, &drawn("[✅ 2]")), "{rows:#?}");
+    assert!(
+        cell(&mut engine, at, "✅ 2")
+            .modifier
+            .contains(Modifier::BOLD),
+        "the user's own is lit"
+    );
+
+    press(&mut engine, "+", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let taken = Call::React {
+        chat: grace(),
+        message: MessageId(105),
+        emoji: "✅".to_owned(),
+        on: false,
+    };
+    assert_eq!(
+        runs(&effects),
+        [&taken],
+        "the emoji already there come first"
+    );
+    answer(&mut engine, &effects, at, |call| {
+        (*call == taken).then(|| reactions(&[(GRACE, "✅")]))
+    });
+    assert!(
+        !cell(&mut engine, at, "✅ 1")
+            .modifier
+            .contains(Modifier::BOLD),
+        "grace's stays, unlit"
+    );
+}
+
+#[test]
+fn a_reaction_dev_null_refuses_comes_off_and_says_why() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "+", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    let (patch, _) = row(&rows, "it fixes the off-by-one");
+    assert!(rows[patch + 1].contains(&drawn("[👍 1]")), "{rows:#?}");
+    for effect in &effects {
+        if let Effect::Run(ticket, Call::React { .. }) = effect {
+            let refused = Error::Api {
+                status: 403,
+                code: None,
+                message: "You can't react until the request is merged.".to_owned(),
+                retry_after: None,
+            };
+            engine.update(Event::Reply(*ticket, Err(refused)), at);
+        }
+    }
+    let rows = screen(&mut engine, 100, 30, at);
+    let (patch, _) = row(&rows, "it fixes the off-by-one");
+    assert!(!rows[patch + 1].contains('👍'), "{rows:#?}");
+    assert!(
+        contains(&rows, "You can't react until the request is merged."),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_reaction_in_a_group_counts_the_users_own_by_handle() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "+", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let left = Call::React {
+        chat: unix_room(),
+        message: MessageId(210),
+        emoji: "👍".to_owned(),
+        on: true,
+    };
+    assert_eq!(runs(&effects), [&left]);
+    let ada = said(204, "ada", "", "2026-10-21T09:00:00Z")["user_id"].clone();
+    let linus = said(203, "linus", "", "2026-10-21T09:00:00Z")["user_id"].clone();
+    answer(&mut engine, &effects, at, |call| {
+        (*call == left).then(|| {
+            reactions(&[
+                (linus.as_str().unwrap(), "👍"),
+                (ada.as_str().unwrap(), "👍"),
+            ])
+        })
+    });
+    assert!(
+        cell(&mut engine, at, "👍 2")
+            .modifier
+            .contains(Modifier::BOLD),
+        "{:#?}",
+        screen(&mut engine, 100, 30, at)
+    );
+    press(&mut engine, "+", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let taken = Call::React {
+        chat: unix_room(),
+        message: MessageId(210),
+        emoji: "👍".to_owned(),
+        on: false,
+    };
+    assert_eq!(runs(&effects), [&taken]);
+}
+
+#[test]
+fn ctrl_g_pings_the_person_or_the_group() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let effects = chord(&mut engine, KeyCode::Char('g'), KeyModifiers::CONTROL, at);
+    assert_eq!(runs(&effects), [&Call::Ping(grace())]);
+    let mut ping = message(107, ADA, "", "", "2026-10-21T10:00:00Z");
+    ping["event"] = json!("ping");
+    ping["client_id"] = Value::Null;
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::Ping(_))
+            .then(|| Reply::Message(Box::new(serde_json::from_value(ping.clone()).unwrap())))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "<ada> [ping]").0 == 27,
+        "the ping shows at the bottom: {rows:#?}"
+    );
+    assert!(!row(&rows, "<ada> [ping]").1.contains('✓'), "{rows:#?}");
+
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let effects = chord(&mut engine, KeyCode::Char('g'), KeyModifiers::CONTROL, at);
+    assert_eq!(
+        runs(&effects),
+        [&Call::Ping(unix_room())],
+        "a selected message pings too"
+    );
+}
+
+#[test]
+fn a_poll_asks_for_reactions_changed_since_the_last_and_shows_them() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let effects = engine.pump(at + secs(3));
+    let poll = Call::Messages {
+        chat: grace(),
+        paging: since(105, 0),
+    };
+    assert!(runs(&effects).contains(&&poll), "{effects:#?}");
+    let mut page = fixture("remote-thread");
+    page["data"]["messages"] = json!([]);
+    page["data"]["reactions_version"] = json!(5);
+    page["data"]["reaction_changes"] =
+        json!([{ "id": 101, "reactions": [{ "user_id": GRACE, "emoji": "👀" }] }]);
+    let page = MessagePage::parse(&page.to_string()).unwrap();
+    answer(&mut engine, &effects, at + secs(3), |call| {
+        (*call == poll).then(|| Reply::Messages(Box::new(page.clone())))
+    });
+    let rows = screen(&mut engine, 100, 30, at + secs(3));
+    let (asked, _) = row(&rows, "are you around tomorrow?");
+    assert!(rows[asked + 1].contains(&drawn("[👀 1]")), "{rows:#?}");
+
+    let effects = engine.pump(at + secs(6));
+    assert!(
+        runs(&effects).contains(&&Call::Messages {
+            chat: grace(),
+            paging: since(105, 5),
+        }),
+        "{effects:#?}"
+    );
+}
+
+#[test]
+fn the_users_messages_to_a_person_show_whether_they_read_them_and_in_a_group_dont() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "sure, after the standup").1.ends_with("✓✓"),
+        "grace read through it: {rows:#?}"
+    );
+    assert!(!row(&rows, "did you see the cursor patch?").1.contains('✓'));
+    let (effects, client_id) = send(&mut engine, "on it", at);
+    let mine = message(106, ADA, "on it", &client_id, "2026-10-21T09:59:00Z");
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::SendMessage { .. })
+            .then(|| Reply::Message(Box::new(serde_json::from_value(mine.clone()).unwrap())))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "<ada> on it").1.ends_with("on it ✓"),
+        "dev-null.sh has it, grace hasn't read it: {rows:#?}"
+    );
+
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        !row(&rows, "grace does, since the wrap rewrite")
+            .1
+            .contains('✓'),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_reply_quotes_the_start_of_what_it_answers_and_reactions_show_under_it() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    let (sure, _) = row(&rows, "<ada> sure, after the standup");
+    assert!(
+        rows[sure - 1].starts_with("       ↳ @grace: are you around tomorrow?"),
+        "the quote starts under the nick: {rows:#?}"
+    );
+    assert!(rows[sure + 1].contains(&drawn("[👍 1]")), "{rows:#?}");
+    assert!(
+        !cell(&mut engine, at, "👍 1")
+            .modifier
+            .contains(Modifier::BOLD),
+        "grace's reaction isn't lit as the user's"
+    );
 }
