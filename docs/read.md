@@ -73,6 +73,17 @@ try again. A notification's commit translates once you open its thread.
 
 dev-null.sh allows 10 translations a minute.
 
+## Find commits like one
+
+Press <kbd>gr</kbd> on a commit to list the commits closest to it in
+meaning, the way the web lists them under a thread. The list is titled with
+the commit's short hash, as in `related e4f5a61`, and it works wherever a
+commit is selected: the log, a thread, a profile, starred commits and search
+results.
+
+Press <kbd>gr</kbd> again on one of them to keep going, and <kbd>esc</kbd> to
+walk back. When nothing is close enough, ttyl says so.
+
 ## Share a commit
 
 - Press <kbd>y</kbd> to copy the link to the selected commit.

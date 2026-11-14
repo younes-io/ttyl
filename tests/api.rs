@@ -1063,3 +1063,22 @@ fn a_failed_translation_says_what_dev_null_said() {
         "Could not translate this commit. Try again."
     );
 }
+
+#[test]
+fn related_reads_the_commits_like_one_from_its_route() {
+    let mut rows = fixture("log-latest")["data"].clone();
+    for row in rows.as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("reply_preview");
+    }
+    rows.as_array_mut().unwrap().truncate(3);
+    let id = CommitId("9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61".to_owned());
+    let (reply, seen) = exchange(&Call::Related(id), &serde_json::json!({ "data": rows }));
+    assert!(
+        matches!(&reply, Reply::Rows(page) if page.rows.len() == 3 && page.next_cursor.is_none()),
+        "{reply:?}"
+    );
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/commits/9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61/related HTTP/1.1"
+    );
+}
