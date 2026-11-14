@@ -431,7 +431,8 @@ impl Store {
             | Call::People { .. }
             | Call::Starred { .. }
             | Call::SearchCommits(_)
-            | Call::SearchPeople(_) => return,
+            | Call::SearchPeople(_)
+            | Call::Related(_) => return,
         }
         self.generation += 1;
     }

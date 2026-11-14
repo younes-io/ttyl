@@ -111,6 +111,8 @@ pub enum Call {
     SearchCommits(String),
     /// People whose name or handle matches.
     SearchPeople(String),
+    /// The few commits nearest in meaning to this one, as the web lists them under a thread.
+    Related(CommitId),
     Delete(CommitId),
     /// Undoes deleting the user's commit, within the server's 30-second window.
     Restore(CommitId),
@@ -365,6 +367,13 @@ impl Client {
                 let (status, text) = self.send("GET", &path, String::new())?;
                 (PeoplePage::parse_search(&text))
                     .map(Reply::People)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Related(id) => {
+                let path = format!("/api/v1/commits/{}/related", escape(&id.0));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (RowPage::parse_search(&text))
+                    .map(Reply::Rows)
                     .map_err(|error| unreadable(status, error))
             }
             Call::Delete(id) => {

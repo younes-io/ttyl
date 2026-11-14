@@ -77,6 +77,8 @@ pub enum Act {
     Mute,
     /// Swaps the body for its translation, or back to the original.
     Translate,
+    /// Lists the commits nearest in meaning to this one.
+    Related,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -119,7 +121,9 @@ impl Action {
             | Action::Profile
             | Action::Preview
             | Action::Link(_)
-            | Action::Commit(Act::Images | Act::OpenQuote | Act::Translate) => Group::Read,
+            | Action::Commit(Act::Images | Act::OpenQuote | Act::Translate | Act::Related) => {
+                Group::Read
+            }
             Action::Compose
             | Action::Send
             | Action::Editor
@@ -794,6 +798,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::OpenQuote),
         hint: Some("gq quoted"),
         help: "open the quoted commit",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('g'), Key::ch('r')]],
+        action: Action::Commit(Act::Related),
+        hint: None,
+        help: "commits like this one",
     },
     Binding {
         scope: Scope::Confirm,

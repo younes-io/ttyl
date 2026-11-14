@@ -124,7 +124,7 @@ fn help_groups_its_keys_in_two_columns_when_they_fit() {
     let at = Instant::now();
     let mut engine = boot_serving(at, page);
     press(&mut engine, "?", at);
-    let rows = screen(&mut engine, 120, 38, at);
+    let rows = screen(&mut engine, 120, 39, at);
     let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
     let titles = ["move", "read", "act", "while writing"].map(|title| {
         row_of(&format!("  {title}  ")).unwrap_or_else(|| panic!("{title}: {rows:#?}"))
@@ -650,7 +650,7 @@ fn refresh_toasts_then_the_hints_come_back() {
     press(&mut engine, "2g", at + secs(2));
     let rows = screen(&mut engine, 80, 20, at + secs(2));
     assert_eq!(
-        rows[19], " g-  g top · n notifications · s starred commits",
+        rows[19], " g-  g top · r commits like this one · n notifications · s starred commits",
         "a pending chord outranks the toast"
     );
     press(&mut engine, "g", at + secs(2));

@@ -20,6 +20,8 @@ pub enum Source {
     Commits(String),
     /// People whose name or handle matches.
     People(String),
+    /// The few commits nearest in meaning to this one.
+    Related(CommitId),
 }
 
 impl Source {
@@ -37,6 +39,7 @@ impl Source {
             Call::Starred { cursor } => Some((Source::Starred, cursor.as_deref())),
             Call::SearchCommits(query) => Some((Source::Commits(query.clone()), None)),
             Call::SearchPeople(name) => Some((Source::People(name.clone()), None)),
+            Call::Related(id) => Some((Source::Related(id.clone()), None)),
             _ => None,
         }
     }
@@ -46,12 +49,14 @@ impl Source {
             Source::Starred => Call::Starred { cursor },
             Source::Commits(query) => Call::SearchCommits(query.clone()),
             Source::People(name) => Call::SearchPeople(name.clone()),
+            Source::Related(id) => Call::Related(id.clone()),
         }
     }
 }
 
-/// Starred commits or search results: a list of cards or people, in the order dev-null.sh gives
-/// them. A row that stops matching, such as an unstarred commit, stays until the next reload.
+/// Starred commits, search results or related commits: a list of cards or people, in the order
+/// dev-null.sh gives them. A row that stops matching, such as an unstarred commit, stays until the
+/// next reload.
 pub struct ListScreen {
     source: Source,
     title: String,
@@ -68,6 +73,7 @@ impl ListScreen {
             Source::Starred => "starred".to_owned(),
             Source::Commits(query) => format!("/{query}"),
             Source::People(name) => format!("/@{name}"),
+            Source::Related(id) => format!("related {}", id.short_hash()),
         };
         ListScreen {
             source,
@@ -174,6 +180,10 @@ impl ListScreen {
             ),
             Source::Commits(query) => ("searching", format!("No commits about \"{query}\".")),
             Source::People(name) => ("searching", format!("Nobody goes by \"{name}\".")),
+            Source::Related(_) => (
+                "finding commits like it",
+                "Nothing like this commit yet.".to_owned(),
+            ),
         };
         self.card = self
             .list

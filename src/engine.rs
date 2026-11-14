@@ -357,7 +357,7 @@ impl Session {
                     && match act {
                         Act::Star | Act::Follow | Act::Mute => !own,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
-                        Act::Copy | Act::Browse | Act::Pipe => true,
+                        Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
                         Act::Report => !own,
                         Act::Reply | Act::Quote => true,
@@ -373,7 +373,9 @@ impl Session {
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow | Act::Mute => commit.author.handle != *me,
-                Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe => true,
+                Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe | Act::Related => {
+                    true
+                }
                 Act::Star
                 | Act::Pastel
                 | Act::Delete
@@ -1749,6 +1751,12 @@ impl Engine {
                 }
                 (None, Vec::new())
             }
+            Act::Related => {
+                let list = ListScreen::new(Source::Related(id), now);
+                self.sched.send(list.call(), Priority::Now);
+                session.stack.push(Screen::List(Box::new(list)));
+                (None, Vec::new())
+            }
             Act::Delete => {
                 session.overlay = Some(Overlay::Delete(id));
                 (None, Vec::new())
@@ -1875,7 +1883,8 @@ impl Engine {
             | Call::People { .. }
             | Call::Starred { .. }
             | Call::SearchCommits(_)
-            | Call::SearchPeople(_) => {
+            | Call::SearchPeople(_)
+            | Call::Related(_) => {
                 let (items, next): (Vec<Item>, _) = match reply {
                     Reply::Rows(page) => {
                         let ids = session.store.absorb_rows(page.rows);
@@ -2132,7 +2141,10 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Starred { .. } | Call::SearchCommits(_) | Call::SearchPeople(_) => {
+                    Call::Starred { .. }
+                    | Call::SearchCommits(_)
+                    | Call::SearchPeople(_)
+                    | Call::Related(_) => {
                         if let Some((source, _)) = Source::of(&call) {
                             for list in session.lists_mut(&source) {
                                 list.fail(failure.clone());

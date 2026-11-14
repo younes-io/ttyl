@@ -34,7 +34,8 @@ developers where a post is called a commit.
 - **Star** a commit, or give its author a pastel.
 - **Catch up** on who replied, quoted, starred, mentioned or followed you.
   Open anyone's profile and follow them.
-- **Search** commits by meaning with `/`, or people with `/@`.
+- **Search** commits by meaning with `/`, or people with `/@`, and list
+  the commits like the selected one with `gr`.
 - **Pipe** a commit into any command with `|`, and print a log from the
   shell with `ttyl log`, the way `git log` does.
 - **Keep** your drafts through a closed composer and a quit. ttyl also asks

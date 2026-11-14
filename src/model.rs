@@ -933,7 +933,7 @@ impl RowPage {
         })
     }
 
-    /// The commits `search/commits` finds, closest first, all on one page.
+    /// The commits a search finds, closest first, all on one page: `search/commits` and `commits/{id}/related`.
     pub fn parse_search(json: &str) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Wire {
