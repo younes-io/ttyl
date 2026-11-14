@@ -714,7 +714,10 @@ fn ancestor<Tz: TimeZone>(out: &mut Writer, row: &Row, now: &DateTime<Tz>) {
             commit,
             out.content(),
             now,
-            feed::showing(row).into_iter().collect(),
+            feed::pinned(row)
+                .into_iter()
+                .chain(feed::showing(row))
+                .collect(),
         )),
     );
     let mut lines = feed::body(&commit.body_segments, out.content());
@@ -740,7 +743,10 @@ fn focus<Tz: TimeZone>(out: &mut Writer, row: &Row, now: &DateTime<Tz>) {
             commit,
             out.content(),
             now,
-            feed::showing(row).into_iter().collect(),
+            feed::pinned(row)
+                .into_iter()
+                .chain(feed::showing(row))
+                .collect(),
         ),
     );
     feed::content(

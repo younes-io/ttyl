@@ -2,10 +2,11 @@ mod common;
 
 use std::time::Instant;
 
-use common::{boot, contains, page, press, profile, runs, screen};
+use common::{boot, boot_serving, contains, page, press, profile, runs, screen, tap};
+use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{Card, Focus, Log, Row, RowPage};
+use ttyl::model::{Card, Focus, Log, LogPage, Row, RowPage, Shown};
 use ttyl::sched::Ticket;
 
 fn latest(at: usize) -> Row {
@@ -145,22 +146,127 @@ fn only_your_own_commits_pin() {
 /// Opens your own profile from your first latest commit, with these of your commits listed.
 fn on_your_profile(at: Instant, listed: &[usize]) -> Engine {
     let mut engine = boot(at);
-    let effects = press(&mut engine, "2p", at);
-    for effect in effects {
+    press(&mut engine, "2", at);
+    let rows = listed.iter().map(|at| latest(*at)).collect();
+    open_profile(&mut engine, profile("ada", false), rows, at);
+    engine
+}
+
+/// Presses `p` on the selected commit and answers with this header and these commits.
+fn open_profile(engine: &mut Engine, header: Reply, listed: Vec<Row>, at: Instant) {
+    let mut header = Some(header);
+    let mut listed = Some(listed);
+    for effect in press(engine, "p", at) {
         let Effect::Run(ticket, call) = effect else {
             continue;
         };
         let answer = match call {
-            Call::User(_) => profile("ada", false),
+            Call::User(_) => header.take().unwrap(),
             Call::Commits { .. } => Reply::Rows(RowPage {
-                rows: listed.iter().map(|at| latest(*at)).collect(),
+                rows: listed.take().unwrap(),
                 next_cursor: None,
             }),
             _ => continue,
         };
         engine.update(Event::Reply(ticket, Ok(answer)), at);
     }
-    engine
+}
+
+#[test]
+fn a_refused_pin_leaves_a_later_one_standing() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2", at);
+    let first = one_run(&press(&mut engine, "^", at));
+    assert!(
+        runs(&press(&mut engine, "j^", at)).is_empty(),
+        "one at a time"
+    );
+    let refused = Error::Api {
+        status: 403,
+        code: None,
+        message: "This action is unauthorized.".to_owned(),
+        retry_after: None,
+    };
+    let effects = reply(&mut engine, first, Err(refused), at);
+    assert_eq!(runs(&effects), [&pin(1, true)]);
+}
+
+/// Every log, with the commit e4f5a62 quotes claiming a pin of its own.
+fn quoting_a_pinned_copy(log: Log) -> LogPage {
+    let mut page = page(log);
+    for row in &mut page.rows {
+        if let Some(Shown::Live(quote)) = row.quoted_commit.as_mut()
+            && row.commit.short_hash == "e4f5a62"
+        {
+            quote.commit.is_pinned = true;
+        }
+    }
+    page
+}
+
+#[test]
+fn a_quoted_copy_never_shows_a_pin() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, quoting_a_pinned_copy);
+    press(&mut engine, "2j", at);
+    tap(&mut engine, KeyCode::Enter, at);
+    let rows = screen(&mut engine, 100, 40, at);
+    let quote = header(&rows, "Margaret @margaret");
+    assert!(!quote.contains("pinned"), "{rows:#?}");
+}
+
+/// Every log, with grace's commit 0000201 still marked pinned from before.
+fn graces_old_pin(log: Log) -> LogPage {
+    let mut page = page(log);
+    for row in &mut page.rows {
+        row.commit.is_pinned = row.commit.short_hash == "0000201";
+    }
+    page
+}
+
+#[test]
+fn a_profile_naming_another_pin_unpins_the_old_one_everywhere() {
+    let at = Instant::now();
+    let mut engine = boot_serving(at, graces_old_pin);
+    press(&mut engine, "2jj", at);
+    assert!(header(&screen(&mut engine, 100, 40, at), "0000201").contains("pinned"));
+
+    let Reply::User(mut grace) = profile("grace", false) else {
+        unreachable!();
+    };
+    grace.pinned = Some(latest(5));
+    open_profile(&mut engine, Reply::User(grace), Vec::new(), at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(!header(&rows, "0000201").contains("pinned"), "{rows:#?}");
+    assert!(header(&rows, "0000601").contains("pinned"), "{rows:#?}");
+}
+
+#[test]
+fn your_profile_shows_a_pin_it_has_not_listed() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2j", at);
+    let ticket = one_run(&press(&mut engine, "^", at));
+    reply(&mut engine, ticket, Ok(pinned(1, true)), at);
+
+    press(&mut engine, "k", at);
+    open_profile(
+        &mut engine,
+        profile("ada", false),
+        vec![latest(0), latest(8)],
+        at,
+    );
+    let rows = screen(&mut engine, 100, 40, at);
+    let label = rows.iter().position(|row| row.contains("┆ pinned"));
+    let [moved, first] = order(&rows, &["e4f5a62", "e4f5a61"])[..] else {
+        unreachable!();
+    };
+    assert!(
+        label.is_some_and(|label| label < moved) && moved < first,
+        "{rows:#?}"
+    );
 }
 
 fn order(rows: &[String], hashes: &[&str]) -> Vec<usize> {
