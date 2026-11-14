@@ -14,8 +14,8 @@ use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Circle, ClientId, CommitId, Filter, HeadlineId, Log, MessageId, NotificationId, Reason,
-    ScheduledId, Translation, Untranslated,
+    Chat, Circle, ClientId, CommitId, Filter, HeadlineId, Log, MessageId, Notice, NotificationId,
+    OrgId, Party, Reason, ScheduledId, Translation, Untranslated,
 };
 
 struct Seen {
@@ -1132,13 +1132,23 @@ fn conversations_are_read_from_remotes_and_paged_by_conversation() {
     let Reply::Conversations(page) = reply else {
         panic!("{reply:?}")
     };
-    let handles: Vec<&str> = (page.conversations.iter())
-        .map(|conversation| conversation.partner.handle.as_str())
+    let titles: Vec<String> = (page.conversations.iter())
+        .map(|conversation| conversation.party.title())
         .collect();
     assert_eq!(
-        handles,
-        ["margaret", "linus", "grace", "ken"],
-        "orgs stay out"
+        titles,
+        ["@margaret", "@linus", "@grace", "#unix-room", "@ken"],
+        "orgs come in dev-null.sh's order among the people"
+    );
+    let Party::Org(org) = &page.conversations[3].party else {
+        panic!("{:?}", page.conversations[3])
+    };
+    assert_eq!(org.id, OrgId(UNIX_ROOM.to_owned()));
+    assert_eq!(org.members.len(), 4);
+    let last = page.conversations[3].last.as_ref().unwrap();
+    assert_eq!(
+        last.author.as_ref().map(|author| author.handle.as_str()),
+        Some("grace")
     );
     assert_eq!(page.next, None);
 
@@ -1167,7 +1177,7 @@ fn a_conversation_is_read_newest_page_first_then_before_or_after_a_message() {
         ),
     ] {
         let call = Call::Messages {
-            handle: "grace".to_owned(),
+            chat: Chat::Direct("grace".to_owned()),
             paging,
         };
         let (reply, seen) = exchange(&call, &thread);
@@ -1183,7 +1193,7 @@ fn a_conversation_is_read_newest_page_first_then_before_or_after_a_message() {
 #[test]
 fn marking_read_puts_how_far_and_sending_posts_the_text_with_its_client_id() {
     let call = Call::MarkRead {
-        handle: "grace".to_owned(),
+        chat: Chat::Direct("grace".to_owned()),
         through: MessageId(105),
     };
     let (base, server) = serve("204 No Content", "");
@@ -1200,7 +1210,7 @@ fn marking_read_puts_how_far_and_sending_posts_the_text_with_its_client_id() {
 
     let client_id = "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e11";
     let call = Call::SendMessage {
-        handle: "grace".to_owned(),
+        chat: Chat::Direct("grace".to_owned()),
         body: "merging it now".to_owned(),
         client_id: ClientId(client_id.to_owned()),
     };
@@ -1219,6 +1229,85 @@ fn marking_read_puts_how_far_and_sending_posts_the_text_with_its_client_id() {
         serde_json::json!({ "body": "merging it now", "client_id": client_id })
     );
     assert!(matches!(reply, Reply::Message(message) if message.id == MessageId(106)));
+}
+
+const UNIX_ROOM: &str = "c1000000-0000-4000-8000-0000000000f0";
+
+#[test]
+fn an_org_is_read_marked_and_sent_to_by_its_id() {
+    let thread = fixture("remote-org-thread");
+    let base = format!("/api/v1/remotes/orgs/{UNIX_ROOM}");
+    let org = Chat::Org(OrgId(UNIX_ROOM.to_owned()));
+    for (paging, query) in [
+        (Paging::Latest, ""),
+        (Paging::Before(MessageId(200)), "?before=200"),
+        (Paging::After(MessageId(210)), "?after=210"),
+    ] {
+        let call = Call::Messages {
+            chat: org.clone(),
+            paging,
+        };
+        let (reply, seen) = exchange(&call, &thread);
+        assert_eq!(
+            request_line(&seen),
+            format!("GET {base}/messages{query} HTTP/1.1")
+        );
+        let Reply::Messages(page) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(page.party.title(), "#unix-room");
+        assert_eq!(page.read_through, MessageId(204));
+        let authors: Vec<&str> = (page.messages.iter())
+            .filter_map(|message| message.author.as_ref())
+            .map(|author| author.handle.as_str())
+            .collect();
+        assert_eq!(
+            authors,
+            ["margaret", "margaret", "linus", "ada", "grace", "grace"]
+        );
+        assert_eq!(
+            page.messages[1].notice,
+            Some(Notice::Added("linus".to_owned()))
+        );
+        assert_eq!(
+            page.messages[1].told().as_deref(),
+            Some("margaret added linus")
+        );
+    }
+
+    let (base_url, server) = serve("204 No Content", "");
+    let call = Call::MarkRead {
+        chat: org.clone(),
+        through: MessageId(210),
+    };
+    Client::new(base_url, DeviceKey::generate().unwrap())
+        .call(&call)
+        .unwrap();
+    let seen = server.join().unwrap();
+    assert_eq!(request_line(&seen), format!("PUT {base}/read HTTP/1.1"));
+    assert_eq!(sent(&seen), serde_json::json!({ "through": 210 }));
+
+    let client_id = "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e11";
+    let call = Call::SendMessage {
+        chat: org,
+        body: "reviewing now".to_owned(),
+        client_id: ClientId(client_id.to_owned()),
+    };
+    let message = serde_json::json!({ "data": {
+        "id": 211, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": client_id,
+        "body": "reviewing now", "images": [], "voice": null, "event": null,
+        "created_at": "2026-10-21T09:58:00Z",
+    }});
+    let (reply, seen) = exchange(&call, &message);
+    assert_eq!(
+        request_line(&seen),
+        format!("POST {base}/messages HTTP/1.1")
+    );
+    assert_eq!(
+        sent(&seen),
+        serde_json::json!({ "body": "reviewing now", "client_id": client_id })
+    );
+    assert!(matches!(reply, Reply::Message(message) if message.id == MessageId(211)));
 }
 
 #[test]

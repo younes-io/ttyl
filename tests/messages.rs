@@ -9,10 +9,18 @@ use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
 use ttyl::api::{Call, Error, Paging, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{ConversationPage, Message, MessageId, MessagePage};
+use ttyl::model::{Chat, ConversationPage, Message, MessageId, MessagePage, OrgId};
 
 const ADA: &str = "0a000000-0000-4000-8000-00000000000a";
 const GRACE: &str = "0b000000-0000-4000-8000-00000000000b";
+
+fn grace() -> Chat {
+    Chat::Direct("grace".to_owned())
+}
+
+fn unix_room() -> Chat {
+    Chat::Org(OrgId("c1000000-0000-4000-8000-0000000000f0".to_owned()))
+}
 
 fn fixture(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/{name}.json"));
@@ -35,6 +43,28 @@ fn thread(messages: Option<Vec<Value>>, access: &str) -> Reply {
     }
     page["data"]["access"] = json!(access);
     Reply::Messages(Box::new(MessagePage::parse(&page.to_string()).unwrap()))
+}
+
+/// The #unix-room org's thread, with `messages` in place of the fixture's.
+fn org_thread(messages: Option<Vec<Value>>) -> Reply {
+    let mut page = fixture("remote-org-thread");
+    if let Some(messages) = messages {
+        page["data"]["messages"] = Value::Array(messages);
+    }
+    Reply::Messages(Box::new(MessagePage::parse(&page.to_string()).unwrap()))
+}
+
+/// A message in #unix-room from the member with `handle`, who an org's thread names.
+fn said(id: u64, handle: &str, body: &str, at: &str) -> Value {
+    let members = fixture("remote-org-thread")["data"]["members"].clone();
+    let user = (members.as_array().unwrap().iter())
+        .map(|member| member["user"].clone())
+        .find(|user| user["handle"] == handle)
+        .unwrap();
+    let mut said = message(id, user["id"].as_str().unwrap(), body, "", at);
+    said["client_id"] = Value::Null;
+    said["user"] = user;
+    said
 }
 
 /// Answers each call among `effects` that `serve` knows, and returns everything the engine did next.
@@ -62,6 +92,10 @@ fn dev_null(call: &Call) -> Option<Reply> {
             ConversationPage::parse(&fixture("remotes").to_string()).unwrap(),
         )),
         Call::Messages {
+            chat: Chat::Org(_),
+            paging: Paging::Latest,
+        } => Some(org_thread(None)),
+        Call::Messages {
             paging: Paging::Latest,
             ..
         } => Some(thread(None, "open")),
@@ -76,6 +110,17 @@ fn open_grace(engine: &mut Engine, at: Instant) {
     let effects = press(engine, "gm", at);
     answer(engine, &effects, at, dev_null);
     press(engine, "j", at);
+    let mut effects = tap(engine, KeyCode::Enter, at);
+    while !runs(&effects).is_empty() {
+        effects = answer(engine, &effects, at, dev_null);
+    }
+}
+
+/// gm, then enter on #unix-room, the unread group under grace, and every answer on the way.
+fn open_unix_room(engine: &mut Engine, at: Instant) {
+    let effects = press(engine, "gm", at);
+    answer(engine, &effects, at, dev_null);
+    press(engine, "jj", at);
     let mut effects = tap(engine, KeyCode::Enter, at);
     while !runs(&effects).is_empty() {
         effects = answer(engine, &effects, at, dev_null);
@@ -121,9 +166,15 @@ fn gm_lists_conversations_pinned_then_unread_one_line_each() {
     assert!(!contains(&rows, "off-by-one"), "only the first line shows");
     assert!(image.contains("[image]"), "{image:?}");
     assert!(voice.contains("[voice note]"), "{voice:?}");
+    let (room, group) = row(&rows, "#unix-room");
     assert!(
-        !contains(&rows, "unix-room"),
-        "org conversations stay on the web"
+        grace < room && room < linus,
+        "a group sits among the people, unread before read: {rows:#?}"
+    );
+    assert!(
+        group.contains("● #unix-room 4 members (2)  grace: pushed the fix for the cursor race")
+            && group.trim_end().ends_with("30m"),
+        "{group:?}"
     );
 }
 
@@ -137,7 +188,7 @@ fn enter_opens_the_conversation_oldest_first_and_marks_it_read() {
     let effects = tap(&mut engine, KeyCode::Enter, at);
     assert!(
         runs(&effects).contains(&&Call::Messages {
-            handle: "grace".to_owned(),
+            chat: grace(),
             paging: Paging::Latest,
         }),
         "{effects:#?}"
@@ -145,7 +196,7 @@ fn enter_opens_the_conversation_oldest_first_and_marks_it_read() {
     let effects = answer(&mut engine, &effects, at, dev_null);
     assert!(
         runs(&effects).contains(&&Call::MarkRead {
-            handle: "grace".to_owned(),
+            chat: grace(),
             through: MessageId(105),
         }),
         "opening marks it read through the newest message: {effects:#?}"
@@ -209,11 +260,11 @@ fn enter_sends_what_was_typed_and_it_shows_once_dev_null_has_it() {
     let client_id = match runs(&effects).as_slice() {
         [
             Call::SendMessage {
-                handle,
+                chat,
                 body,
                 client_id,
             },
-        ] if handle == "grace" && body == typed => client_id.clone(),
+        ] if *chat == grace() && body == typed => client_id.clone(),
         other => panic!("enter sends the message: {other:#?}"),
     };
     let rows = screen(&mut engine, 100, 30, at);
@@ -265,7 +316,7 @@ fn an_open_conversation_brings_in_new_messages_as_they_arrive() {
 
     let effects = engine.pump(at + secs(3));
     let poll = Call::Messages {
-        handle: "grace".to_owned(),
+        chat: grace(),
         paging: Paging::After(MessageId(105)),
     };
     assert!(runs(&effects).contains(&&poll), "{effects:#?}");
@@ -281,7 +332,7 @@ fn an_open_conversation_brings_in_new_messages_as_they_arrive() {
     });
     assert!(
         runs(&effects).contains(&&Call::MarkRead {
-            handle: "grace".to_owned(),
+            chat: grace(),
             through: MessageId(107),
         }),
         "what arrives while it is open is read: {effects:#?}"
@@ -363,7 +414,7 @@ fn reaching_the_oldest_loaded_message_loads_the_page_before_it() {
 
     let effects = engine.pump(at);
     let older = Call::Messages {
-        handle: "grace".to_owned(),
+        chat: grace(),
         paging: Paging::Before(MessageId(101)),
     };
     assert!(runs(&effects).contains(&&older), "{effects:#?}");
@@ -418,7 +469,7 @@ fn a_message_that_comes_while_the_last_mark_flies_is_marked_read_after_it() {
     let effects = answer(&mut engine, &flying, at + secs(3), dev_null);
     assert!(
         runs(&effects).contains(&&Call::MarkRead {
-            handle: "grace".to_owned(),
+            chat: grace(),
             through: MessageId(107),
         }),
         "{effects:#?}"
@@ -454,7 +505,7 @@ fn capital_m_on_a_commit_opens_the_conversation_with_its_author() {
     let effects = press(&mut engine, "2jjjjM", at);
     assert!(
         runs(&effects).contains(&&Call::Messages {
-            handle: "margaret".to_owned(),
+            chat: Chat::Direct("margaret".to_owned()),
             paging: Paging::Latest,
         }),
         "{effects:#?}"
@@ -497,7 +548,7 @@ fn a_message_grace_sent_just_before_yours_still_comes_in() {
 
     let effects = engine.pump(at + secs(3));
     let poll = Call::Messages {
-        handle: "grace".to_owned(),
+        chat: grace(),
         paging: Paging::After(MessageId(105)),
     };
     assert!(
@@ -516,7 +567,7 @@ fn a_message_grace_sent_just_before_yours_still_comes_in() {
     });
     assert!(
         runs(&effects).contains(&&Call::MarkRead {
-            handle: "grace".to_owned(),
+            chat: grace(),
             through: MessageId(107),
         }),
         "{effects:#?}"
@@ -561,7 +612,7 @@ fn a_poll_answered_after_the_conversation_reopened_leaves_it_loading() {
 
     let effects = engine.pump(at + secs(6));
     let latest = Call::Messages {
-        handle: "grace".to_owned(),
+        chat: grace(),
         paging: Paging::Latest,
     };
     assert!(runs(&effects).contains(&&latest), "{effects:#?}");
@@ -641,4 +692,130 @@ fn a_send_that_fails_after_reopening_comes_back_with_its_id() {
         ] => assert_eq!(again.0, client_id),
         other => panic!("enter sends it again: {other:#?}"),
     }
+}
+
+#[test]
+fn a_group_opens_like_a_channel_with_each_authors_nick_and_marks_it_read() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    let effects = press(&mut engine, "gm", at);
+    answer(&mut engine, &effects, at, dev_null);
+    press(&mut engine, "jj", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        runs(&effects).contains(&&Call::Messages {
+            chat: unix_room(),
+            paging: Paging::Latest,
+        }),
+        "{effects:#?}"
+    );
+    let effects = answer(&mut engine, &effects, at, dev_null);
+    assert!(
+        runs(&effects).contains(&&Call::MarkRead {
+            chat: unix_room(),
+            through: MessageId(210),
+        }),
+        "{effects:#?}"
+    );
+
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[0].contains("#unix-room"), "{rows:#?}");
+    let (start, _) = row(&rows, "── the start of #unix-room ──");
+    let (created, _) = row(&rows, "08:00 -!- margaret created #unix-room");
+    let (added, _) = row(&rows, "08:01 -!- margaret added linus");
+    let (asked, _) = row(&rows, "15:00 <linus> who owns the cursor code now?");
+    let (answered, _) = row(&rows, "15:05   <ada> grace does");
+    let (pushed, _) = row(&rows, "09:30 <grace> pushed the fix");
+    assert!(
+        start < created
+            && created < added
+            && added < asked
+            && asked < answered
+            && answered < pushed,
+        "{rows:#?}"
+    );
+    assert!(rows[28].contains("message #unix-room"), "{rows:#?}");
+
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!row(&rows, "#unix-room").1.contains("(2)"), "{rows:#?}");
+}
+
+#[test]
+fn a_group_sends_polls_and_marks_read_on_its_own_routes() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    let (effects, client_id) = send(&mut engine, "reviewing now", at);
+    assert!(
+        matches!(runs(&effects).as_slice(), [Call::SendMessage { chat, body, .. }] if *chat == unix_room() && body == "reviewing now"),
+        "{effects:#?}"
+    );
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "reviewing now").1.contains("--:--   <ada> "),
+        "{rows:#?}"
+    );
+
+    let mine = message(
+        211,
+        ADA,
+        "reviewing now",
+        &client_id,
+        "2026-10-21T09:58:00Z",
+    );
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::SendMessage { .. })
+            .then(|| Reply::Message(Box::new(serde_json::from_value(mine.clone()).unwrap())))
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "reviewing now").1.contains("09:58   <ada> "),
+        "what dev-null.sh sends back is yours, though it doesn't say who wrote it: {rows:#?}"
+    );
+
+    let effects = engine.pump(at + secs(3));
+    let poll = Call::Messages {
+        chat: unix_room(),
+        paging: Paging::After(MessageId(210)),
+    };
+    assert!(runs(&effects).contains(&&poll), "{effects:#?}");
+    let arrived = said(212, "linus", "lgtm, merging", "2026-10-21T09:59:00Z");
+    let effects = answer(&mut engine, &effects, at + secs(3), |call| {
+        (*call == poll).then(|| org_thread(Some(vec![arrived.clone()])))
+    });
+    assert!(
+        runs(&effects).contains(&&Call::MarkRead {
+            chat: unix_room(),
+            through: MessageId(212),
+        }),
+        "{effects:#?}"
+    );
+    let rows = screen(&mut engine, 100, 30, at + secs(3));
+    assert_eq!(
+        row(&rows, "<linus> lgtm, merging").0,
+        27,
+        "the view follows the newest message: {rows:#?}"
+    );
+}
+
+#[test]
+fn a_group_keeps_a_failed_send_and_resends_it_with_the_same_id() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_unix_room(&mut engine, at);
+    let (effects, first) = send(&mut engine, "on it", at);
+    fail(&mut engine, &effects, || Error::Unexpected(502), at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, &effects, at, dev_null);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[0].contains("#unix-room"), "{rows:#?}");
+    assert!(rows[28].contains("› on it"), "{rows:#?}");
+
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        matches!(runs(&effects).as_slice(), [Call::SendMessage { chat, client_id, .. }] if *chat == unix_room() && client_id.0 == first),
+        "{effects:#?}"
+    );
 }

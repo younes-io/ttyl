@@ -18,7 +18,8 @@ use crate::fatal;
 use crate::feed;
 use crate::keys::{self, Act, Action};
 use crate::model::{
-    Access, ClientId, Conversation, ConversationPage, Message, MessageId, MessagePage, User,
+    Access, Chat, ClientId, Conversation, ConversationPage, Message, MessageId, MessagePage, Party,
+    User,
 };
 use crate::text::Buffer;
 use crate::theme;
@@ -48,8 +49,8 @@ pub fn refusal(body: &str) -> Option<String> {
     }
 }
 
-/// The one-to-one conversations: pinned first, then unread, then the rest, each in dev-null.sh's
-/// order of newest first. One line each, like a mail index.
+/// The conversations with people and orgs: pinned first, then unread, then the rest, each in
+/// dev-null.sh's order of newest first. One line each, like a mail index.
 pub struct Conversations {
     loaded: Option<Loaded>,
     failure: Option<Failure>,
@@ -139,7 +140,7 @@ impl Conversations {
     pub fn land(&mut self, before: Option<&str>, page: ConversationPage) {
         let kept = self
             .selected()
-            .map(|conversation| conversation.partner.handle.clone());
+            .map(|conversation| conversation.party.chat());
         self.failure = None;
         match (before, &mut self.loaded) {
             (None, _) => {
@@ -150,8 +151,8 @@ impl Conversations {
             }
             (Some(before), Some(loaded)) if loaded.next.as_deref() == Some(before) => {
                 for conversation in page.conversations {
-                    let handle = &conversation.partner.handle;
-                    if !loaded.rows.iter().any(|row| row.partner.handle == *handle) {
+                    let chat = conversation.party.chat();
+                    if !loaded.rows.iter().any(|row| row.party.is(&chat)) {
                         loaded.rows.push(conversation);
                     }
                 }
@@ -164,7 +165,7 @@ impl Conversations {
         };
         order(&mut loaded.rows);
         self.selected = kept
-            .and_then(|handle| (loaded.rows.iter()).position(|row| row.partner.handle == handle))
+            .and_then(|chat| (loaded.rows.iter()).position(|row| row.party.is(&chat)))
             .unwrap_or(0);
     }
 
@@ -172,11 +173,11 @@ impl Conversations {
         self.failure = Some(failure);
     }
 
-    /// The conversation with `handle` was just read, so its count goes.
-    pub fn read(&mut self, handle: &str) {
+    /// The conversation `chat` was just read, so its count goes.
+    pub fn read(&mut self, chat: &Chat) {
         if let Some(loaded) = &mut self.loaded {
             for row in &mut loaded.rows {
-                if row.partner.handle == handle {
+                if row.party.is(chat) {
                     row.unread = 0;
                 }
             }
@@ -187,6 +188,7 @@ impl Conversations {
         &mut self,
         frame: &mut Frame,
         area: Rect,
+        me: &str,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
@@ -227,32 +229,47 @@ impl Conversations {
         let lines: Vec<Line> = (loaded.rows.iter().enumerate())
             .skip(self.offset)
             .take(height)
-            .map(|(at, conversation)| row(conversation, at == self.selected, width, wall))
+            .map(|(at, conversation)| row(conversation, at == self.selected, width, me, wall))
             .collect();
         frame.render_widget(Paragraph::new(lines), area);
     }
 }
 
-/// `● Grace Hopper @grace (2)  did you see the patch?          3m`, filling `width`.
+/// `● Grace Hopper @grace (2)  did you see the patch?          3m`, or for an org
+/// `● #unix-room 5 members (4)  grace: pushed v2          3m`, filling `width`.
 fn row<Tz: TimeZone>(
     conversation: &Conversation,
     selected: bool,
     width: usize,
+    me: &str,
     wall: &DateTime<Tz>,
 ) -> Line<'static> {
-    let partner = &conversation.partner;
     let unread = conversation.unread > 0;
-    let lane = Style::new().fg(theme::lane(partner.lane));
-    let name = if unread {
-        lane.add_modifier(Modifier::BOLD)
-    } else {
-        lane
+    let bold = |style: Style| match unread {
+        true => style.add_modifier(Modifier::BOLD),
+        false => style,
     };
-    let mut spans = vec![
-        Span::styled(if unread { "● " } else { "○ " }, name),
-        Span::styled(partner.name.clone(), name),
-        Span::styled(format!(" @{}", partner.handle), theme::muted()),
-    ];
+    let dot = if unread { "● " } else { "○ " };
+    let mut spans = match &conversation.party {
+        Party::Person(partner) => {
+            let name = bold(Style::new().fg(theme::lane(partner.lane)));
+            vec![
+                Span::styled(dot, name),
+                Span::styled(partner.name.clone(), name),
+                Span::styled(format!(" @{}", partner.handle), theme::muted()),
+            ]
+        }
+        Party::Org(org) => {
+            let name = bold(Style::new().fg(theme::FOREGROUND));
+            let count = org.members.len();
+            let noun = if count == 1 { "member" } else { "members" };
+            vec![
+                Span::styled(dot, name),
+                Span::styled(conversation.party.title(), name),
+                Span::styled(format!(" {count} {noun}"), theme::muted()),
+            ]
+        }
+    };
     if unread {
         spans.push(Span::styled(
             format!(" ({})", conversation.unread),
@@ -261,14 +278,20 @@ fn row<Tz: TimeZone>(
     }
     if let Some(last) = &conversation.last {
         spans.push(Span::raw("  "));
-        if last.user_id != partner.id {
-            spans.push(Span::styled("you: ", theme::muted()));
+        let by = match other(&conversation.party, me, last) {
+            _ if last.notice.is_some() => None,
+            None => Some("you"),
+            Some(_) if matches!(conversation.party, Party::Person(_)) => None,
+            Some(author) => Some(author.handle.as_str()),
+        };
+        if let Some(by) = by {
+            spans.push(Span::styled(format!("{by}: "), theme::muted()));
         }
-        let text = match last.body.is_empty() {
+        let text = match last.body.is_empty() || last.notice.is_some() {
             true => theme::muted(),
             false => Style::new().fg(theme::FOREGROUND),
         };
-        spans.push(Span::styled(last.preview().to_owned(), text));
+        spans.push(Span::styled(last.preview().into_owned(), text));
     }
     let mut age = conversation
         .last_at
@@ -291,10 +314,29 @@ fn row<Tz: TimeZone>(
     }
 }
 
-/// A conversation as an IRC client shows a query window: oldest at the top, newest at the bottom
-/// where the view stays, and the line being typed under it.
+/// Who wrote `message` when it wasn't the user. An org's thread names each author; a message the
+/// user just sent there doesn't, so the members name it.
+fn other<'a>(party: &'a Party, me: &str, message: &'a Message) -> Option<&'a User> {
+    match party {
+        Party::Person(partner) => (message.user_id == partner.id).then_some(partner),
+        Party::Org(org) => (message.author.as_ref())
+            .or_else(|| (org.members.iter()).find(|member| member.id == message.user_id))
+            .filter(|author| author.handle != me),
+    }
+}
+
+/// Whether `message` is one the others said, which dev-null.sh counts as unread until marked. An
+/// org's notices don't count.
+fn heard(party: &Party, me: &str, message: &Message) -> bool {
+    message.notice.is_none() && other(party, me, message).is_some()
+}
+
+/// A conversation as an IRC client shows a query window, or for an org a channel: oldest at the
+/// top, newest at the bottom where the view stays, and the line being typed under it.
 pub struct ConversationScreen {
-    partner: User,
+    party: Party,
+    /// The user's handle, the nick their own messages show under.
+    me: String,
     title: String,
     thread: Option<Thread>,
     failure: Option<Failure>,
@@ -381,10 +423,11 @@ enum View {
 
 impl ConversationScreen {
     /// `unsent` is what was typed here before the conversation was last left.
-    pub fn new(partner: User, unsent: Unsent, now: Instant) -> Self {
+    pub fn new(party: Party, me: String, unsent: Unsent, now: Instant) -> Self {
         ConversationScreen {
-            title: format!("@{}", partner.handle),
-            partner,
+            title: party.title(),
+            party,
+            me,
             thread: None,
             failure: None,
             asked_at: now,
@@ -398,17 +441,22 @@ impl ConversationScreen {
         }
     }
 
-    /// The handle, and what was typed and not sent, to keep for when the conversation opens again.
-    pub fn leave(self) -> (String, Unsent) {
+    /// Which conversation this is, and what was typed and not sent, to keep for when it opens
+    /// again.
+    pub fn leave(self) -> (Chat, Unsent) {
         let unsent = Unsent {
             text: self.input.text().to_owned(),
             retry: self.retry,
         };
-        (self.partner.handle, unsent)
+        (self.party.chat(), unsent)
     }
 
-    pub fn handle(&self) -> &str {
-        &self.partner.handle
+    pub fn chat(&self) -> Chat {
+        self.party.chat()
+    }
+
+    pub fn is(&self, chat: &Chat) -> bool {
+        self.party.is(chat)
     }
 
     pub fn title(&self) -> &str {
@@ -419,7 +467,7 @@ impl ConversationScreen {
     pub fn poll(&self) -> Call {
         let polled = self.thread.as_ref().and_then(|thread| thread.polled);
         Call::Messages {
-            handle: self.partner.handle.clone(),
+            chat: self.chat(),
             paging: polled.map_or(Paging::Latest, Paging::After),
         }
     }
@@ -434,7 +482,7 @@ impl ConversationScreen {
         let thread = self.thread.as_ref()?;
         let oldest = thread.messages.first()?;
         (thread.has_older && self.at_top && !self.older_failed).then(|| Call::Messages {
-            handle: self.partner.handle.clone(),
+            chat: self.chat(),
             paging: Paging::Before(oldest.id),
         })
     }
@@ -509,8 +557,9 @@ impl ConversationScreen {
             .collect();
         self.outbox
             .retain(|outgoing| !landed.contains(&&outgoing.client_id));
-        self.partner = page.partner;
-        let partner = &self.partner.id;
+        self.party = page.party;
+        self.title = self.party.title();
+        let (party, me) = (&self.party, self.me.as_str());
         let newest = page.messages.last().map(|message| message.id);
         let thread = match (&mut self.thread, paging) {
             (Some(thread), Paging::Before(_)) => {
@@ -524,7 +573,7 @@ impl ConversationScreen {
             (Some(thread), Paging::Latest | Paging::After(_)) => {
                 let mut arrived = 0;
                 for message in page.messages {
-                    let theirs = message.user_id == *partner;
+                    let theirs = heard(party, me, &message);
                     if thread.place(message) && theirs {
                         arrived += 1;
                     }
@@ -546,7 +595,7 @@ impl ConversationScreen {
             }),
         };
         let unread = (thread.messages.iter())
-            .any(|message| message.user_id == *partner && message.id > thread.read_through);
+            .any(|message| heard(party, me, message) && message.id > thread.read_through);
         let newest = thread.messages.last()?.id;
         unread.then(|| {
             thread.read_through = newest;
@@ -605,7 +654,7 @@ impl ConversationScreen {
             body: body.clone(),
         });
         Some(Ok(Call::SendMessage {
-            handle: self.partner.handle.clone(),
+            chat: self.chat(),
             body,
             client_id,
         }))
@@ -638,7 +687,6 @@ impl ConversationScreen {
         &mut self,
         frame: &mut Frame,
         area: Rect,
-        me: &str,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
@@ -667,7 +715,7 @@ impl ConversationScreen {
             frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), history);
             return;
         };
-        let (lines, ends) = self.lines(thread, me, usize::from(area.width), wall);
+        let (lines, ends) = self.lines(thread, usize::from(area.width), wall);
         let total = lines.len();
         let page = usize::from(history.height);
         self.page = page;
@@ -722,30 +770,38 @@ impl ConversationScreen {
     fn lines<Tz: TimeZone>(
         &self,
         thread: &Thread,
-        me: &str,
         width: usize,
         wall: &DateTime<Tz>,
     ) -> (Vec<Line<'static>>, Vec<(MessageId, usize)>) {
-        let handle = &self.partner.handle;
+        let me = self.me.as_str();
+        let title = &self.title;
         let mut out: Vec<Line<'static>> = Vec::new();
         let faint = Style::new().fg(theme::FAINT);
-        out.push(match thread.has_older {
-            true => Line::styled("── older messages above ──", faint),
-            false if thread.messages.is_empty() => Line::styled(
-                format!("No messages with @{handle} yet. Say hello."),
+        out.push(match (thread.has_older, &self.party) {
+            (true, _) => Line::styled("── older messages above ──", faint),
+            (false, Party::Person(_)) if thread.messages.is_empty() => Line::styled(
+                format!("No messages with {title} yet. Say hello."),
                 theme::muted(),
             ),
-            false => Line::styled(
-                format!("── the start of your conversation with @{handle} ──"),
+            (false, Party::Org(_)) if thread.messages.is_empty() => Line::styled(
+                format!("No messages in {title} yet. Say hello."),
+                theme::muted(),
+            ),
+            (false, Party::Person(_)) => Line::styled(
+                format!("── the start of your conversation with {title} ──"),
                 faint,
             ),
+            (false, Party::Org(_)) => Line::styled(format!("── the start of {title} ──"), faint),
         });
-        let nick = handle.width().max(me.width());
+        let nick = (thread.messages.iter())
+            .filter(|message| message.notice.is_none())
+            .filter_map(|message| other(&self.party, me, message))
+            .map(|author| author.handle.width())
+            .fold(me.width(), usize::max);
         let indent = "00:00 ".len() + nick + "<> ".len();
         let room = width.saturating_sub(indent).max(1);
-        let theirs = Style::new()
-            .fg(theme::lane(self.partner.lane))
-            .add_modifier(Modifier::BOLD);
+        let notice_indent = "00:00 -!- ".len();
+        let notice_room = width.saturating_sub(notice_indent).max(1);
         let mine = Style::new()
             .fg(theme::FOREGROUND)
             .add_modifier(Modifier::BOLD);
@@ -761,12 +817,33 @@ impl ConversationScreen {
                     faint,
                 ));
             }
-            let (who, style) = match message.user_id == self.partner.id {
-                true => (handle.as_str(), theirs),
-                false => (me, mine),
+            let time = Span::styled(local.time().format("%H:%M ").to_string(), theme::muted());
+            if let Some(told) = message.told() {
+                let prefix = vec![time, Span::styled("-!- ", faint)];
+                let muted = theme::muted();
+                said(
+                    &mut out,
+                    prefix,
+                    &told,
+                    None,
+                    muted,
+                    notice_room,
+                    notice_indent,
+                );
+                ends.push((message.id, out.len()));
+                continue;
+            }
+            let (who, style) = match other(&self.party, me, message) {
+                Some(author) => (
+                    author.handle.as_str(),
+                    Style::new()
+                        .fg(theme::lane(author.lane))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                None => (me, mine),
             };
             let prefix = vec![
-                Span::styled(local.time().format("%H:%M ").to_string(), theme::muted()),
+                time,
                 Span::raw(" ".repeat(nick - who.width())),
                 Span::styled(format!("<{who}> "), style),
             ];
@@ -788,9 +865,11 @@ impl ConversationScreen {
     /// `› typed text`, with the cursor as a block, or why nothing can be sent.
     fn input_line(&self, width: usize) -> Line<'static> {
         let mark = Span::styled("› ", Style::new().fg(theme::PRIMARY));
-        if let Some(why) =
-            (self.thread.as_ref()).and_then(|thread| thread.access.refusal(&self.partner.handle))
-        {
+        let refusal = match (&self.party, &self.thread) {
+            (Party::Person(partner), Some(thread)) => thread.access.refusal(&partner.handle),
+            _ => None,
+        };
+        if let Some(why) = refusal {
             return Line::from(vec![mark, Span::styled(why, theme::muted())]);
         }
         let room = width.saturating_sub(3).max(1);
@@ -814,7 +893,7 @@ impl ConversationScreen {
         ];
         if text.is_empty() {
             spans.push(Span::styled(
-                format!("message @{}", self.partner.handle),
+                format!("message {}", self.title),
                 Style::new().fg(theme::FAINT),
             ));
         } else {

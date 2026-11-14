@@ -20,8 +20,8 @@ use ttyl::attach;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::keys::{self, Scope};
 use ttyl::model::{
-    ConversationPage, Filter, GroupPage, Log, LogPage, MessagePage, NotificationPage, Profile, Row,
-    RowPage, Segment,
+    Chat, ConversationPage, Filter, GroupPage, Log, LogPage, MessagePage, NotificationPage,
+    Profile, Row, RowPage, Segment,
 };
 use ttyl::theme;
 use unicode_width::UnicodeWidthStr;
@@ -166,7 +166,7 @@ const SHOTS: &[Shot] = &[
         name: "messages",
         start: Start::SignedIn,
         steps: &[Step::Keys("gm")],
-        alt: "Your conversations, one per line: pinned first, then unread, each with its last message.",
+        alt: "Your conversations and groups, one per line: pinned first, then unread, each with its last message.",
         shows: "@grace",
     },
     Shot {
@@ -179,6 +179,13 @@ const SHOTS: &[Shot] = &[
         ],
         alt: "A conversation with Grace, oldest message at the top, with a reply typed on the line under it.",
         shows: "merging",
+    },
+    Shot {
+        name: "group",
+        start: Start::SignedIn,
+        steps: &[Step::Keys("gmjj"), Step::Tap(KeyCode::Enter)],
+        alt: "The unix-room group, each message under its author's nick, with who joined between them.",
+        shows: "<linus>",
     },
 ];
 
@@ -274,6 +281,11 @@ fn serve(call: &Call) -> Result<Reply, Error> {
         Call::Conversations { .. } => {
             Reply::Conversations(ConversationPage::parse(&fixture("remotes")).unwrap())
         }
+        Call::Messages {
+            chat: Chat::Org(_), ..
+        } => Reply::Messages(Box::new(
+            MessagePage::parse(&fixture("remote-org-thread")).unwrap(),
+        )),
         Call::Messages { .. } => Reply::Messages(Box::new(
             MessagePage::parse(&fixture("remote-thread")).unwrap(),
         )),

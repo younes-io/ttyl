@@ -16,10 +16,10 @@ use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
-    Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus, GroupPage, Headline,
-    HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId, MessagePage, NotificationId,
-    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Scheduled, ScheduledId,
-    Segment, Settings, Translation,
+    Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus, GroupPage,
+    Headline, HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId, MessagePage,
+    NotificationId, NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Scheduled,
+    ScheduledId, Segment, Settings, Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -170,23 +170,24 @@ pub enum Call {
         filter: Filter,
         cursor: Option<String>,
     },
-    /// The user's one-to-one conversations, pinned first then newest, continuing before a conversation.
+    /// The user's conversations with people and orgs, pinned first then newest, continuing before
+    /// a conversation.
     Conversations {
         before: Option<String>,
     },
-    /// A page of the conversation with `handle`.
+    /// A page of a conversation.
     Messages {
-        handle: String,
+        chat: Chat,
         paging: Paging,
     },
-    /// Marks the conversation with `handle` read up to `through`.
+    /// Marks a conversation read up to `through`.
     MarkRead {
-        handle: String,
+        chat: Chat,
         through: MessageId,
     },
-    /// Sends a message to `handle`, starting the conversation if it is the first.
+    /// Sends a message, starting the conversation with a person if it is the first.
     SendMessage {
-        handle: String,
+        chat: Chat,
         body: String,
         client_id: ClientId,
     },
@@ -538,8 +539,8 @@ impl Client {
             Call::Conversations { before } => self
                 .conversations(before.as_deref())
                 .map(Reply::Conversations),
-            Call::Messages { handle, paging } => {
-                let mut path = format!("/api/v1/remotes/@{}/messages", escape(handle));
+            Call::Messages { chat, paging } => {
+                let mut path = format!("{}/messages", remote(chat));
                 match paging {
                     Paging::Latest => {}
                     Paging::Before(id) => path.push_str(&format!("?before={}", id.0)),
@@ -550,17 +551,17 @@ impl Client {
                     .map(|page| Reply::Messages(Box::new(page)))
                     .map_err(|error| unreadable(status, error))
             }
-            Call::MarkRead { handle, through } => {
-                let path = format!("/api/v1/remotes/@{}/read", escape(handle));
+            Call::MarkRead { chat, through } => {
+                let path = format!("{}/read", remote(chat));
                 let body = serde_json::json!({ "through": through.0 }).to_string();
                 self.send("PUT", &path, body).map(|_| Reply::Done)
             }
             Call::SendMessage {
-                handle,
+                chat,
                 body,
                 client_id,
             } => self
-                .send_message(handle, body, client_id)
+                .send_message(chat, body, client_id)
                 .map(|message| Reply::Message(Box::new(message))),
         }
     }
@@ -576,7 +577,7 @@ impl Client {
 
     pub fn send_message(
         &self,
-        handle: &str,
+        chat: &Chat,
         body: &str,
         client_id: &ClientId,
     ) -> Result<Message, Error> {
@@ -585,7 +586,7 @@ impl Client {
             data: Message,
         }
 
-        let path = format!("/api/v1/remotes/@{}/messages", escape(handle));
+        let path = format!("{}/messages", remote(chat));
         let body = serde_json::json!({ "body": body, "client_id": client_id.0 }).to_string();
         let (status, text) = self.send("POST", &path, body)?;
         parse::<Wire>(status, &text).map(|wire| wire.data)
@@ -990,6 +991,14 @@ fn escape(value: &str) -> String {
             _ => format!("%{byte:02X}"),
         })
         .collect()
+}
+
+/// Where a conversation's messages and read mark live.
+fn remote(chat: &Chat) -> String {
+    match chat {
+        Chat::Direct(handle) => format!("/api/v1/remotes/@{}", escape(handle)),
+        Chat::Org(org) => format!("/api/v1/remotes/orgs/{}", escape(&org.0)),
+    }
 }
 
 fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {

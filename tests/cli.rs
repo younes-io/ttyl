@@ -76,32 +76,50 @@ fn running_outside_a_terminal_says_so_instead_of_panicking() {
 
 /// Answers one request with a canned response and hands back the body the client sent.
 fn serve(status: &str, body: &str) -> (String, JoinHandle<String>) {
+    let (base, server) = serve_in_turn(&[(status, body)]);
+    (
+        base,
+        thread::spawn(move || server.join().unwrap().remove(0)),
+    )
+}
+
+/// Answers one request after another with each canned response, and hands back the bodies the
+/// client sent.
+fn serve_in_turn(responses: &[(&str, &str)]) -> (String, JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let responses: Vec<String> = (responses.iter())
+        .map(|(status, body)| {
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        })
+        .collect();
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut length = 0;
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            if let Some((name, value)) = line.split_once(':')
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                length = value.trim().parse().unwrap();
-            }
-        }
-        let mut sent = vec![0; length];
-        reader.read_exact(&mut sent).unwrap();
-        stream.write_all(response.as_bytes()).unwrap();
-        String::from_utf8(sent).unwrap()
+        (responses.iter())
+            .map(|response| {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut sent = vec![0; length];
+                reader.read_exact(&mut sent).unwrap();
+                stream.write_all(response.as_bytes()).unwrap();
+                String::from_utf8(sent).unwrap()
+            })
+            .collect()
     });
     (base, server)
 }
@@ -366,7 +384,7 @@ fn fixture(name: &str) -> String {
 }
 
 #[test]
-fn msg_alone_prints_conversations_with_their_unread_counts() {
+fn msg_alone_prints_conversations_and_groups_with_their_unread_counts() {
     let (base, _server) = serve("200 OK", &fixture("remotes"));
     let output = against("cli-msg-list", &base, &["msg"], None);
     assert_eq!(output.status.code(), Some(0));
@@ -374,8 +392,46 @@ fn msg_alone_prints_conversations_with_their_unread_counts() {
         String::from_utf8(output.stdout).unwrap(),
         "@margaret\t0\tthe lock order is in the commit message now\n\
          @grace\t2\tdid you see the cursor patch?\n\
+         #unix-room\t2\tpushed the fix for the cursor race, can someone review?\n\
          @linus\t0\t[image]\n\
          @ken\t0\t[voice note]\n"
+    );
+}
+
+#[test]
+fn msg_to_a_group_by_name_sends_to_the_org_it_lists() {
+    let remotes = fixture("remotes");
+    let back = sent_back("reviewing now");
+    let (base, server) = serve_in_turn(&[("200 OK", &remotes), ("201 Created", &back)]);
+    let output = against(
+        "cli-msg-group",
+        &base,
+        &["msg", "#Unix-Room", "-m", "reviewing now"],
+        None,
+    );
+    let sent = server.join().unwrap();
+    let posted: serde_json::Value = serde_json::from_str(&sent[1]).unwrap();
+    assert_eq!(posted["body"], "reviewing now");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[msg #unix-room] reviewing now\n"
+    );
+}
+
+#[test]
+fn msg_to_a_group_you_are_not_in_says_so_and_sends_nothing() {
+    let (base, _server) = serve("200 OK", &fixture("remotes"));
+    let output = against(
+        "cli-msg-no-group",
+        &base,
+        &["msg", "#plan9", "-m", "hi"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: you're in no group named #plan9; ttyl msg lists your conversations\n"
     );
 }
 

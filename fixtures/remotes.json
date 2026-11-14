@@ -109,6 +109,48 @@
       "is_archived": false
     },
     {
+      "id": "c1000000-0000-4000-8000-0000000000f0",
+      "kind": "org",
+      "name": "unix-room",
+      "partner": null,
+      "members": [
+        {
+          "user": {"id": "0d000000-0000-4000-8000-00000000000d", "handle": "margaret", "name": "Margaret", "avatar_url": null, "bio": null, "company": null, "location": null, "website": null, "github_url": "https://github.com/margaret", "html_url": "https://dev-null.sh/@margaret", "feed_url": "https://dev-null.sh/@margaret/feed.atom", "created_at": "2026-09-01T10:00:00Z", "lane": 5},
+          "role": "maintainer"
+        },
+        {
+          "user": {"id": "0a000000-0000-4000-8000-00000000000a", "handle": "ada", "name": "Ada", "avatar_url": null, "bio": null, "company": null, "location": null, "website": null, "github_url": "https://github.com/ada", "html_url": "https://dev-null.sh/@ada", "feed_url": "https://dev-null.sh/@ada/feed.atom", "created_at": "2026-09-01T09:00:00Z", "lane": 0},
+          "role": "contributor"
+        },
+        {
+          "user": {"id": "0b000000-0000-4000-8000-00000000000b", "handle": "grace", "name": "Grace", "avatar_url": null, "bio": null, "company": null, "location": null, "website": null, "github_url": "https://github.com/grace", "html_url": "https://dev-null.sh/@grace", "feed_url": "https://dev-null.sh/@grace/feed.atom", "created_at": "2026-09-02T10:00:00Z", "lane": "#7048e8"},
+          "role": "contributor"
+        },
+        {
+          "user": {"id": "0c000000-0000-4000-8000-00000000000c", "handle": "linus", "name": "Linus", "avatar_url": null, "bio": null, "company": null, "location": null, "website": null, "github_url": "https://github.com/linus", "html_url": "https://dev-null.sh/@linus", "feed_url": "https://dev-null.sh/@linus/feed.atom", "created_at": "2026-09-03T10:00:00Z", "lane": 3},
+          "role": "contributor"
+        }
+      ],
+      "last_message": {
+        "id": 210,
+        "user_id": "0b000000-0000-4000-8000-00000000000b",
+        "client_id": "9a8b7c6d-0b1d-4c55-8e41-1f9e2b3c4d5e",
+        "body": "pushed the fix for the cursor race, can someone review?",
+        "voice": null,
+        "event": null,
+        "subject_id": null,
+        "user": {"id": "0b000000-0000-4000-8000-00000000000b", "handle": "grace", "name": "Grace", "avatar_url": null, "bio": null, "company": null, "location": null, "website": null, "github_url": "https://github.com/grace", "html_url": "https://dev-null.sh/@grace", "feed_url": "https://dev-null.sh/@grace/feed.atom", "created_at": "2026-09-02T10:00:00Z", "lane": "#7048e8"},
+        "subject": null,
+        "created_at": "2026-10-21T09:30:00Z"
+      },
+      "last_message_at": "2026-10-21T09:30:00Z",
+      "ahead": 2,
+      "last_incoming_message_id": 210,
+      "pinned_at": null,
+      "muted_until_at": null,
+      "is_archived": false
+    },
+    {
       "id": "c1000000-0000-4000-8000-00000000000e",
       "kind": "direct",
       "name": "Ken",
@@ -143,20 +185,6 @@
       "last_message_at": "2026-10-14T21:03:00Z",
       "ahead": 0,
       "last_incoming_message_id": 61,
-      "pinned_at": null,
-      "muted_until_at": null,
-      "is_archived": false
-    },
-    {
-      "id": "c1000000-0000-4000-8000-0000000000f0",
-      "kind": "org",
-      "name": "unix-room",
-      "partner": null,
-      "members": [],
-      "last_message": null,
-      "last_message_at": "2026-10-20T12:00:00Z",
-      "ahead": 4,
-      "last_incoming_message_id": null,
       "pinned_at": null,
       "muted_until_at": null,
       "is_archived": false
