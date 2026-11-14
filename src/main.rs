@@ -366,15 +366,21 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Every conversation, page after page, in the order `gm` lists them.
+/// Every conversation, page after page, in the order `gm` lists them. A conversation that moved
+/// while paging shows on two pages, and counts once.
 fn conversations(client: &Client) -> Result<Vec<Conversation>, String> {
-    let mut conversations = Vec::new();
+    let mut conversations: Vec<Conversation> = Vec::new();
     let mut before: Option<String> = None;
     loop {
         let page = client
             .conversations(before.as_deref())
             .map_err(|error| refused(&error))?;
-        conversations.extend(page.conversations);
+        for conversation in page.conversations {
+            let chat = conversation.party.chat();
+            if !conversations.iter().any(|seen| seen.party.is(&chat)) {
+                conversations.push(conversation);
+            }
+        }
         match page.next {
             Some(next) if before.as_ref() != Some(&next) => before = Some(next),
             _ => break,

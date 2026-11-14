@@ -419,6 +419,44 @@ fn msg_to_a_group_by_name_sends_to_the_org_it_lists() {
     );
 }
 
+/// The remotes fixture as two pages, with the group on both, as when it moves while ttyl pages.
+fn remotes_in_two_pages() -> (String, String) {
+    let remotes: serde_json::Value = serde_json::from_str(&fixture("remotes")).unwrap();
+    let rows = remotes["data"].as_array().unwrap();
+    let page = |rows: &[serde_json::Value], has_more: bool| {
+        serde_json::json!({ "data": rows, "has_more": has_more }).to_string()
+    };
+    (page(&rows[..4], true), page(&rows[3..], false))
+}
+
+#[test]
+fn a_group_on_two_pages_lists_once_and_still_takes_messages() {
+    let (first, second) = remotes_in_two_pages();
+    let (base, _server) = serve_in_turn(&[("200 OK", &first), ("200 OK", &second)]);
+    let output = against("cli-msg-list-twice", &base, &["msg"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.matches("#unix-room").count(), 1, "{stdout}");
+    assert!(stdout.ends_with("@ken\t0\t[voice note]\n"), "{stdout}");
+
+    let back = sent_back("reviewing now");
+    let (base, server) = serve_in_turn(&[
+        ("200 OK", &first),
+        ("200 OK", &second),
+        ("201 Created", &back),
+    ]);
+    let output = against(
+        "cli-msg-group-twice",
+        &base,
+        &["msg", "#unix-room", "-m", "reviewing now"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let sent = server.join().unwrap();
+    let posted: serde_json::Value = serde_json::from_str(&sent[2]).unwrap();
+    assert_eq!(posted["body"], "reviewing now");
+}
+
 #[test]
 fn msg_to_a_group_you_are_not_in_says_so_and_sends_nothing() {
     let (base, _server) = serve("200 OK", &fixture("remotes"));
