@@ -5,9 +5,10 @@ use std::time::Instant;
 use common::{account, contains, page, press, screen, sign_in, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
+use ttyl::code;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::locale;
-use ttyl::model::{CommitId, Translation};
+use ttyl::model::{self, CommitId, Segment, Settings, Translation};
 use ttyl::sched::Ticket;
 
 const GRACE: &str = "2c3d4e5f-0000-4000-8000-000000000201";
@@ -47,8 +48,14 @@ fn reply(
 }
 
 fn settings(language: Option<&str>) -> Reply {
-    let json = serde_json::json!({ "data": { "translation_language": language } });
-    Reply::Settings(serde_json::from_value(json["data"].clone()).unwrap())
+    let languages: Vec<_> = ["de", "en", "fr", "pt"]
+        .map(|code| serde_json::json!({ "code": code, "name": code, "native_name": code }))
+        .into();
+    let json = serde_json::json!({ "data": {
+        "translation_language": language,
+        "translation_languages": languages,
+    }});
+    Reply::Settings(Settings::parse(&json.to_string()).unwrap())
 }
 
 fn translation(json: serde_json::Value) -> Reply {
@@ -235,7 +242,7 @@ fn the_language_picked_on_dev_null_wins_over_the_device() {
 }
 
 #[test]
-fn the_device_language_follows_when_none_is_picked_or_settings_fail() {
+fn the_device_language_follows_when_none_is_picked_or_settings_are_refused() {
     assert_eq!(
         language_asked(Some("de"), Ok(settings(None))),
         translate("de")
@@ -243,6 +250,111 @@ fn the_device_language_follows_when_none_is_picked_or_settings_fail() {
     assert_eq!(
         language_asked(Some("de"), Err(common::not_found())),
         translate("de")
+    );
+}
+
+#[test]
+fn a_device_language_dev_null_cannot_translate_into_falls_back_to_english() {
+    assert_eq!(
+        language_asked(Some("tl"), Ok(settings(None))),
+        translate("en")
+    );
+}
+
+#[test]
+fn settings_lost_on_the_network_are_asked_for_again_on_the_next_t() {
+    let at = Instant::now();
+    let mut engine = on_grace(at, Some("de"));
+    let (ticket, call) = one_run(&press(&mut engine, "t", at));
+    assert_eq!(call, Call::Settings);
+    let lost = Error::Http(ureq::Error::ConnectionFailed);
+    assert!(
+        reply(&mut engine, ticket, Err(lost), at).is_empty(),
+        "nothing loops on the failure"
+    );
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(!contains(&rows, "translating…"), "{rows:#?}");
+
+    assert!(
+        press(&mut engine, "t", at).is_empty(),
+        "nothing goes out while offline"
+    );
+    let later = at + common::secs(30);
+    let poll = engine.pump(later);
+    let me = poll
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Run(ticket, Call::Me) => Some(*ticket),
+            _ => None,
+        })
+        .expect("the poll checks the connection");
+    let back = reply(&mut engine, me, Ok(Reply::Account(account(3))), later);
+    let (ticket, call) = one_run(&back);
+    assert_eq!(call, Call::Settings, "asked again once back online");
+    let effects = reply(&mut engine, ticket, Ok(settings(Some("fr"))), later);
+    assert_eq!(
+        one_run(&effects).1,
+        translate("fr"),
+        "the picked language wins"
+    );
+
+    let at = Instant::now();
+    let mut engine = on_grace(at, Some("de"));
+    let (ticket, _) = one_run(&press(&mut engine, "t", at));
+    reply(&mut engine, ticket, Err(Error::Unexpected(502)), at);
+    let (_, call) = one_run(&press(&mut engine, "t", at));
+    assert_eq!(call, Call::Settings, "a 502 is asked again right away");
+}
+
+#[test]
+fn space_expands_a_translated_reply_that_shows_more() {
+    let at = Instant::now();
+    let mut engine = on_grace(at, Some("en"));
+    press(&mut engine, "kk", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    common::answer(&mut engine, effects, at);
+    press(&mut engine, "j", at);
+    let (ticket, _) = ask(&mut engine, at);
+    let long = translation(serde_json::json!({ "translation": {
+        "language": "en",
+        "source_language": "fr",
+        "source_name": "French",
+        "available": true,
+        "translated": {
+            "body_segments": [{ "type": "text", "text": "the whole reply, every last word" }],
+            "preview_segments": [{ "type": "text", "text": "the start of the reply" }],
+        },
+    }}));
+    reply(&mut engine, ticket, Ok(long), at);
+    let rows = screen(&mut engine, 80, 40, at);
+    assert!(contains(&rows, "show more"), "{rows:#?}");
+
+    tap(&mut engine, KeyCode::Char(' '), at);
+    let rows = screen(&mut engine, 80, 40, at);
+    assert!(contains(&rows, "every last word"), "{rows:#?}");
+    assert!(!contains(&rows, "show more"), "{rows:#?}");
+}
+
+#[test]
+fn a_code_block_fence_outruns_the_backticks_inside_it() {
+    let line = |text: &str| {
+        vec![code::Span {
+            text: text.to_owned(),
+            hl: None,
+        }]
+    };
+    let block = Segment::Block {
+        language: Some("md".to_owned()),
+        lines: vec![line("```rust"), line("  ````"), line("x")],
+    };
+    assert_eq!(
+        model::markdown(&[
+            Segment::Text {
+                text: "see:\n".to_owned()
+            },
+            block
+        ]),
+        "see:\n\n`````md\n```rust\n  ````\nx\n`````"
     );
 }
 

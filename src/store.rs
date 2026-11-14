@@ -7,7 +7,7 @@ use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
 use crate::locale;
 use crate::model::{
-    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Showing, Shown,
+    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Settings, Showing, Shown,
     Suggestion, Tombstone, Translated, Translation, Untranslated,
 };
 use crate::sched::CallKey;
@@ -265,9 +265,31 @@ impl Store {
         None
     }
 
-    fn settle_language(&mut self, setting: Option<&str>) {
+    /// Settles the language once dev-null.sh has answered: the one the user picked, else the device's if
+    /// dev-null.sh translates into it.
+    fn settle_language(&mut self, settings: &Settings) {
         if let Language::Unsettled { device } = &self.language {
-            self.language = Language::Settled(locale::target(setting, device.as_deref()));
+            let device = device
+                .as_deref()
+                .filter(|device| (settings.languages.iter()).any(|language| language == device));
+            let language = locale::target(settings.translation_language.as_deref(), device);
+            self.language = Language::Settled(language);
+        }
+    }
+
+    /// A settings request that failed. A refusal is final, so the device's language stands. Anything
+    /// else may pass, so the translations waiting on it drop and the next `t` asks again.
+    pub fn settings_failed(&mut self, refused: bool) {
+        match &self.language {
+            Language::Unsettled { device } if refused => {
+                self.language = Language::Settled(locale::target(None, device.as_deref()));
+            }
+            Language::Unsettled { .. } => {
+                (self.translations)
+                    .retain(|_, translating| !matches!(translating, Translating::Asking { .. }));
+                self.generation += 1;
+            }
+            Language::Settled(_) => {}
         }
     }
 
@@ -387,14 +409,11 @@ impl Store {
                 self.unsent_pastels.remove(id);
                 return;
             }
-            Call::Settings => {
-                self.settle_language(None);
-                return;
-            }
             Call::Translate { id, .. } => {
                 self.translations.remove(id);
             }
             Call::Me
+            | Call::Settings
             | Call::Redeem { .. }
             | Call::Page(_)
             | Call::Older { .. }
@@ -496,7 +515,7 @@ impl Store {
                 }
             }
             (Call::Settings, Reply::Settings(settings)) => {
-                self.settle_language(settings.translation_language.as_deref());
+                self.settle_language(&settings);
             }
             (Call::Translate { id, .. }, Reply::Translation(translation)) => {
                 if let Some(Translating::Asking { show }) = self.translations.get(id) {

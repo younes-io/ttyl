@@ -2180,7 +2180,18 @@ impl Engine {
                         offline
                     }
                     Call::Settings => {
-                        session.store.refused(&call);
+                        let refused = matches!(
+                            error,
+                            Error::Api {
+                                status: 400..=499,
+                                ..
+                            }
+                        );
+                        session.store.settings_failed(refused);
+                        if !refused {
+                            self.toast = Some(format!("can't translate yet: {error}"));
+                            self.timers.set(Timer::Toast, now + TOAST);
+                        }
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,

@@ -973,7 +973,7 @@ fn settings_are_read_for_the_translation_language() {
     }});
     let (reply, seen) = exchange(&Call::Settings, &settings);
     assert!(
-        matches!(&reply, Reply::Settings(settings) if settings.translation_language.as_deref() == Some("fr")),
+        matches!(&reply, Reply::Settings(settings) if settings.translation_language.as_deref() == Some("fr") && settings.languages == ["fr"]),
         "{reply:?}"
     );
     assert_eq!(request_line(&seen), "GET /api/v1/me/settings HTTP/1.1");
