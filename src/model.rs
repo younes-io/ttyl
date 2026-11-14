@@ -763,6 +763,20 @@ impl RowPage {
             next_cursor: wire.meta.next_cursor,
         })
     }
+
+    /// The commits `search/commits` finds, closest first, all on one page.
+    pub fn parse_search(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Row>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(RowPage {
+            rows: wire.data,
+            next_cursor: None,
+        })
+    }
 }
 
 /// The people on either side of someone's follows.
@@ -799,6 +813,20 @@ impl PeoplePage {
         Ok(PeoplePage {
             people: wire.data,
             next_cursor: wire.meta.next_cursor,
+        })
+    }
+
+    /// The people `search/profiles` finds. Organizations, which ttyl has no page for, are left out.
+    pub fn parse_search(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            users: Vec<Person>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(PeoplePage {
+            people: wire.users,
+            next_cursor: None,
         })
     }
 }

@@ -248,6 +248,7 @@ impl ThreadScreen {
             | Action::Link(_)
             | Action::Inbox
             | Action::Starred
+            | Action::Search
             | Action::NextFilter
             | Action::PreviousFilter => false,
         }

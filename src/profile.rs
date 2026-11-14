@@ -158,8 +158,12 @@ impl Paged {
         }
     }
 
+    pub fn selected(&self) -> Option<&Item> {
+        self.items().get(self.selected)
+    }
+
     pub fn commit(&self) -> Option<&CommitId> {
-        match self.items().get(self.selected)? {
+        match self.selected()? {
             Item::Commit(id) => Some(id),
             Item::Person(_) => None,
         }

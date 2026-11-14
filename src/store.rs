@@ -330,7 +330,9 @@ impl Store {
             | Call::Group { .. }
             | Call::Commits { .. }
             | Call::People { .. }
-            | Call::Starred { .. } => return,
+            | Call::Starred { .. }
+            | Call::SearchCommits(_)
+            | Call::SearchPeople(_) => return,
         }
         self.generation += 1;
     }

@@ -17,6 +17,8 @@ pub enum Action {
     NextLog,
     Inbox,
     Starred,
+    /// Asks what to search for.
+    Search,
     Profile,
     NextFilter,
     PreviousFilter,
@@ -126,6 +128,7 @@ impl Action {
             | Action::NextLog
             | Action::Inbox
             | Action::Starred
+            | Action::Search
             | Action::Refresh
             | Action::Help
             | Action::Close
@@ -164,7 +167,7 @@ pub enum Scope {
     Group,
     Profile,
     Person,
-    Starred,
+    Listed,
     List,
     Commit,
     People,
@@ -179,6 +182,7 @@ pub enum Scope {
     Secret,
     Rules,
     Pipe,
+    Search,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -194,6 +198,7 @@ pub const PREVIEW_SCOPES: &[Scope] = &[Scope::Preview];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
 pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
 pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
+pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -243,10 +248,17 @@ pub const PROFILE_PEOPLE_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
-pub const STARRED_SCOPES: &[Scope] = &[
+pub const LIST_SCOPES: &[Scope] = &[
     Scope::List,
-    Scope::Starred,
+    Scope::Listed,
     Scope::Commit,
+    Scope::Global,
+    Scope::Always,
+];
+pub const LIST_PEOPLE_SCOPES: &[Scope] = &[
+    Scope::List,
+    Scope::Listed,
+    Scope::Person,
     Scope::Global,
     Scope::Always,
 ];
@@ -264,6 +276,7 @@ pub const UNIONS: &[&[Scope]] = &[
     SECRET_SCOPES,
     RULES_SCOPES,
     PIPE_SCOPES,
+    SEARCH_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
     INBOX_SCOPES,
@@ -271,7 +284,8 @@ pub const UNIONS: &[&[Scope]] = &[
     PEOPLE_SCOPES,
     PROFILE_SCOPES,
     PROFILE_PEOPLE_SCOPES,
-    STARRED_SCOPES,
+    LIST_SCOPES,
+    LIST_PEOPLE_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,21 +577,21 @@ pub const TABLE: &[Binding] = &[
         help: "open their dev-null page",
     },
     Binding {
-        scope: Scope::Starred,
+        scope: Scope::Listed,
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
         hint: Some("enter open"),
-        help: "open this commit's thread",
+        help: "open the thread, or the profile",
     },
     Binding {
-        scope: Scope::Starred,
+        scope: Scope::Listed,
         chords: &[&[Key::ch(' ')]],
         action: Action::Expand,
         hint: None,
         help: "expand the selected commit",
     },
     Binding {
-        scope: Scope::Starred,
+        scope: Scope::Listed,
         chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
         action: Action::Back,
         hint: Some("esc back"),
@@ -690,6 +704,27 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Pipe,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Search,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter search"),
+        help: "search",
+    },
+    Binding {
+        scope: Scope::Search,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
+    },
+    Binding {
+        scope: Scope::Search,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,
@@ -1049,6 +1084,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Starred,
         hint: None,
         help: "starred commits",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('/')]],
+        action: Action::Search,
+        hint: None,
+        help: "search commits, or @people",
     },
     Binding {
         scope: Scope::Global,
