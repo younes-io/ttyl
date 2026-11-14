@@ -42,7 +42,10 @@ pub fn resolve<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Result<DateTime<
     let words: Vec<&str> = lower.split_whitespace().collect();
     let at = match words.as_slice() {
         ["in", span @ ..] if !span.is_empty() => {
-            now.clone() + duration(&span.concat()).ok_or_else(unreadable)?
+            let span = duration(&span.concat()).ok_or_else(unreadable)?;
+            now.clone()
+                .checked_add_signed(span)
+                .ok_or(Refusal::TooFar)?
         }
         [time] if let Some(time) = clock(time) => day_at(now, Day::Next, time)?,
         [day, time] => {
@@ -112,7 +115,11 @@ fn duration(span: &str) -> Option<Duration> {
     let mut rest = span;
     while !rest.is_empty() {
         let digits = rest.find(|ch: char| !ch.is_ascii_digit())?;
-        let count: i64 = rest[..digits].parse().ok()?;
+        if digits == 0 {
+            return None;
+        }
+        // Only digits are left, so a count fails to parse only when it's too big to hold.
+        let count: i64 = rest[..digits].parse().unwrap_or(i64::MAX);
         rest = &rest[digits..];
         let unit = rest
             .find(|ch: char| ch.is_ascii_digit())
@@ -123,7 +130,11 @@ fn duration(span: &str) -> Option<Duration> {
             "d" | "day" | "days" => 60 * 24,
             _ => return None,
         };
-        total += Duration::try_minutes(count.checked_mul(minutes)?)?;
+        // A span too long to count is as good as the longest, which is too far ahead anyway.
+        let term = (count.checked_mul(minutes))
+            .and_then(Duration::try_minutes)
+            .unwrap_or(Duration::MAX);
+        total = total.checked_add(&term).unwrap_or(Duration::MAX);
         rest = &rest[unit..];
     }
     Some(total)
@@ -150,8 +161,10 @@ fn day_at<Tz: TimeZone>(
         _ => days,
     };
     let date = today + Days::new(days);
+    // When the clocks fall back, the hour runs twice: the first pass while it's ahead, else the second.
     match now.timezone().from_local_datetime(&date.and_time(time)) {
-        LocalResult::Single(at) | LocalResult::Ambiguous(at, _) => Ok(at),
+        LocalResult::Single(at) => Ok(at),
+        LocalResult::Ambiguous(early, late) => Ok(if early > *now { early } else { late }),
         LocalResult::None => Err(Refusal::Skipped),
     }
 }
@@ -251,6 +264,11 @@ mod tests {
         assert_eq!(at("2020-01-01T00:00:00Z"), "Past");
         assert_eq!(at("in 31d"), "TooFar");
         assert_eq!(at("in 30d"), "2026-11-20T10:00:00+02:00");
+        assert_eq!(at("in 99999999d"), "TooFar");
+        assert_eq!(at("in 100000000000000m100000000000000m"), "TooFar");
+        assert_eq!(at(&format!("in {}m", i64::MAX)), "TooFar");
+        assert_eq!(at("in 99999999999999999d"), "TooFar");
+        assert_eq!(at("in 99999999999999999999999d"), "TooFar");
     }
 
     #[test]
@@ -267,7 +285,6 @@ mod tests {
             "in",
             "in 2y",
             "in h",
-            "in 99999999999999999d",
             "noon 12:00",
         ] {
             assert_eq!(
@@ -365,5 +382,28 @@ mod tests {
         );
         let saturday = Paris.with_ymd_and_hms(2026, 3, 28, 10, 0, 0).unwrap();
         assert_eq!(resolve("sun 2:30", &saturday), Err(Refusal::Skipped));
+    }
+
+    #[test]
+    fn the_hour_the_clocks_fall_back_through_lands_on_the_pass_still_ahead() {
+        let utc = |hour, minute| {
+            Paris.from_utc_datetime(
+                &NaiveDate::from_ymd_opt(2026, 10, 25)
+                    .unwrap()
+                    .and_hms_opt(hour, minute, 0)
+                    .unwrap(),
+            )
+        };
+        let (first, second) = (utc(0, 15), utc(1, 15));
+        assert_eq!(wire(&first), "2026-10-25T02:15:00+02:00");
+        assert_eq!(wire(&second), "2026-10-25T02:15:00+01:00");
+        assert_eq!(
+            wire(&resolve("2:30", &first).unwrap()),
+            "2026-10-25T02:30:00+02:00"
+        );
+        assert_eq!(
+            wire(&resolve("2:30", &second).unwrap()),
+            "2026-10-25T02:30:00+01:00"
+        );
     }
 }

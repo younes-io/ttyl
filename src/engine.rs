@@ -1465,11 +1465,10 @@ impl Engine {
             return false;
         };
         session.composer.as_ref().is_some_and(|composer| {
-            let key = match composer.when() {
-                Some(_) => CallKey::Schedule,
-                None => CallKey::Post(composer.target().clone()),
-            };
-            self.sched.pending(&key)
+            let target = composer.target();
+            // A new commit still being scheduled is in flight, even from a composer reopened since.
+            self.sched.pending(&CallKey::Post(target.clone()))
+                || (*target == Target::New && self.sched.pending(&CallKey::Schedule))
         })
     }
 

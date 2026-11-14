@@ -223,6 +223,50 @@ fn a_paste_lands_in_send_at_and_leaves_the_draft_alone() {
 }
 
 #[test]
+fn a_span_too_long_to_count_is_too_far_not_a_crash() {
+    let at = Instant::now();
+    for typed in ["in 99999999d", "in 100000000000000m100000000000000m"] {
+        let mut engine = writing_later("shipped it", at);
+        press(&mut engine, typed, at);
+        let rows = screen(&mut engine, WIDTH, HEIGHT, at);
+        assert_eq!(
+            bottom(&rows),
+            format!(" send at: {typed}█  dev-null.sh schedules up to 30 days ahead")
+        );
+        assert!(tap(&mut engine, KeyCode::Enter, at).is_empty(), "{typed}");
+    }
+}
+
+#[test]
+fn a_draft_being_scheduled_cant_go_out_again_from_a_reopened_composer() {
+    let at = Instant::now();
+    let mut engine = writing_later("shipped it", at);
+    press(&mut engine, "in 2h", at);
+    let (ticket, _) = one_run(&tap(&mut engine, KeyCode::Enter, at));
+    tap(&mut engine, KeyCode::Esc, at);
+    press(&mut engine, "c", at);
+    let rows = screen(&mut engine, WIDTH, HEIGHT, at);
+    assert!(contains(&rows, " shipped it"), "{rows:#?}");
+    assert!(ctrl(&mut engine, 's', at).is_empty());
+    assert!(ctrl(&mut engine, 't', at).is_empty());
+    let rows = screen(&mut engine, WIDTH, HEIGHT, at);
+    assert!(!contains(&rows, "send at:"), "{rows:#?}");
+
+    let scheduled = waiting("one", "2026-10-21T12:00:00+00:00", "shipped it");
+    reply(
+        &mut engine,
+        ticket,
+        Ok(Reply::Scheduled(Box::new(scheduled))),
+        at,
+    );
+    let rows = screen(&mut engine, WIDTH, HEIGHT, at);
+    assert_eq!(
+        bottom(&rows),
+        " scheduled for Wed 21 Oct 12:00 · gl lists it"
+    );
+}
+
+#[test]
 fn a_refused_schedule_keeps_the_draft_and_says_why() {
     let at = Instant::now();
     let mut engine = writing_later("shipped it", at);
