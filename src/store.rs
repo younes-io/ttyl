@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
 use crate::model::{
-    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, ReplyPreview, Row, Shown,
-    Suggestion, Tombstone,
+    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Shown, Suggestion,
+    Tombstone,
 };
 use crate::sched::CallKey;
 
@@ -538,7 +538,7 @@ impl Store {
                     let old = store.rows.remove(&id);
                     let (quoted_commit, reply_preview) = old
                         .map(|old| (old.quoted_commit, old.reply_preview))
-                        .unwrap_or_else(|| (None, no_preview()));
+                        .unwrap_or_default();
                     store.rows.insert(
                         id.clone(),
                         Row {
@@ -634,7 +634,7 @@ impl Store {
         // A card has no reply preview, so the one a log row brought stays.
         let (old_count, reply_preview) = old
             .map(|old| (Some(old.replies_count), old.reply_preview))
-            .unwrap_or_else(|| (None, no_preview()));
+            .unwrap_or_default();
         self.rows.insert(
             id.clone(),
             Row {
@@ -854,12 +854,5 @@ impl Store {
             new_commits_count: None,
             suggestions: listing.suggestions.clone(),
         })
-    }
-}
-
-fn no_preview() -> ReplyPreview {
-    ReplyPreview {
-        data: Vec::new(),
-        next_cursor: None,
     }
 }

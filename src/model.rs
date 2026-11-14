@@ -260,6 +260,8 @@ pub struct Row {
     pub starred: bool,
     pub replies_count: u32,
     pub quoted_commit: Option<Shown<Quote>>,
+    /// Missing where the server didn't load it, as `search/commits` on dev-null.sh does.
+    #[serde(default)]
     pub reply_preview: ReplyPreview,
     #[serde(skip)]
     pub deletion: Option<Deletion>,
@@ -350,7 +352,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Shown<T> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReplyPreview {
     pub data: Vec<Shown<Reply>>,
     pub next_cursor: Option<String>,
