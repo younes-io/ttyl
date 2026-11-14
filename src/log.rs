@@ -202,7 +202,10 @@ impl LogScreen {
             | Action::Schedule
             | Action::Later
             | Action::Unschedule
-            | Action::SendNow => false,
+            | Action::SendNow
+            | Action::Messages
+            | Action::PageUp
+            | Action::PageDown => false,
         }
     }
 

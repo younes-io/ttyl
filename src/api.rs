@@ -16,9 +16,10 @@ use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
-    Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Headline, HeadlineId, HeadlinePage,
-    Log, LogPage, NotificationId, NotificationPage, PeoplePage, Profile, Reason, RepliesPage,
-    RowPage, Scheduled, ScheduledId, Segment, Settings, Translation,
+    Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus, GroupPage, Headline,
+    HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId, MessagePage, NotificationId,
+    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Scheduled, ScheduledId,
+    Segment, Settings, Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -164,6 +165,36 @@ pub enum Call {
         filter: Filter,
         cursor: Option<String>,
     },
+    /// The user's one-to-one conversations, pinned first then newest, continuing before a conversation.
+    Conversations {
+        before: Option<String>,
+    },
+    /// A page of the conversation with `handle`.
+    Messages {
+        handle: String,
+        paging: Paging,
+    },
+    /// Marks the conversation with `handle` read up to `through`.
+    MarkRead {
+        handle: String,
+        through: MessageId,
+    },
+    /// Sends a message to `handle`, starting the conversation if it is the first.
+    SendMessage {
+        handle: String,
+        body: String,
+        client_id: ClientId,
+    },
+}
+
+/// Which messages of a conversation a page holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paging {
+    Latest,
+    /// The page before a message, scrolling back.
+    Before(MessageId),
+    /// Everything after a message, polling for new ones.
+    After(MessageId),
 }
 
 #[derive(Debug)]
@@ -193,6 +224,9 @@ pub enum Reply {
     Submitted {
         pending: bool,
     },
+    Conversations(ConversationPage),
+    Messages(Box<MessagePage>),
+    Message(Box<Message>),
     Done,
 }
 
@@ -491,7 +525,60 @@ impl Client {
             Call::Group { id, filter, cursor } => {
                 self.group(id, *filter, cursor.as_deref()).map(Reply::Group)
             }
+            Call::Conversations { before } => self
+                .conversations(before.as_deref())
+                .map(Reply::Conversations),
+            Call::Messages { handle, paging } => {
+                let mut path = format!("/api/v1/remotes/@{}/messages", escape(handle));
+                match paging {
+                    Paging::Latest => {}
+                    Paging::Before(id) => path.push_str(&format!("?before={}", id.0)),
+                    Paging::After(id) => path.push_str(&format!("?after={}", id.0)),
+                }
+                let (status, text) = self.send("GET", &path, String::new())?;
+                MessagePage::parse(&text)
+                    .map(|page| Reply::Messages(Box::new(page)))
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::MarkRead { handle, through } => {
+                let path = format!("/api/v1/remotes/@{}/read", escape(handle));
+                let body = serde_json::json!({ "through": through.0 }).to_string();
+                self.send("PUT", &path, body).map(|_| Reply::Done)
+            }
+            Call::SendMessage {
+                handle,
+                body,
+                client_id,
+            } => self
+                .send_message(handle, body, client_id)
+                .map(|message| Reply::Message(Box::new(message))),
         }
+    }
+
+    pub fn conversations(&self, before: Option<&str>) -> Result<ConversationPage, Error> {
+        let mut path = String::from("/api/v1/remotes");
+        if let Some(before) = before {
+            path.push_str(&format!("?before={}", escape(before)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        ConversationPage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn send_message(
+        &self,
+        handle: &str,
+        body: &str,
+        client_id: &ClientId,
+    ) -> Result<Message, Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Message,
+        }
+
+        let path = format!("/api/v1/remotes/@{}/messages", escape(handle));
+        let body = serde_json::json!({ "body": body, "client_id": client_id.0 }).to_string();
+        let (status, text) = self.send("POST", &path, body)?;
+        parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
     fn post(&self, target: &Target, body: &str, attachment: &Attachment) -> Result<Focus, Error> {

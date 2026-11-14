@@ -16,6 +16,8 @@ pub enum Action {
     Show(Log),
     NextLog,
     Inbox,
+    /// Opens the list of conversations.
+    Messages,
     Starred,
     /// Lists what dev-null.sh is talking about right now.
     Headlines,
@@ -40,6 +42,9 @@ pub enum Action {
     Send,
     Editor,
     Poll,
+    /// Scrolls a conversation back a page, or forward.
+    PageUp,
+    PageDown,
     Attach,
     Preview,
     Site,
@@ -91,6 +96,8 @@ pub enum Act {
     Related,
     /// Asks before blocking the author, or unblocks them.
     Block,
+    /// Opens the conversation with the author or the person, starting it if there is none.
+    Message,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -126,6 +133,8 @@ impl Action {
             | Action::Previous
             | Action::NextFilter
             | Action::PreviousFilter
+            | Action::PageUp
+            | Action::PageDown
             | Action::Choose(_) => Group::Move,
             Action::Open
             | Action::Expand
@@ -142,10 +151,11 @@ impl Action {
             | Action::Poll
             | Action::Attach
             | Action::Schedule
-            | Action::Commit(Act::Reply | Act::Quote) => Group::Write,
+            | Action::Commit(Act::Reply | Act::Quote | Act::Message) => Group::Write,
             Action::Show(_)
             | Action::NextLog
             | Action::Inbox
+            | Action::Messages
             | Action::Starred
             | Action::Headlines
             | Action::Later
@@ -208,6 +218,8 @@ pub enum Scope {
     Search,
     At,
     Queue,
+    Messages,
+    Conversation,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -225,6 +237,7 @@ pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
 pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
 pub const AT_SCOPES: &[Scope] = &[Scope::At];
+pub const CONVERSATION_SCOPES: &[Scope] = &[Scope::Conversation];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -289,6 +302,7 @@ pub const LIST_PEOPLE_SCOPES: &[Scope] = &[
     Scope::Always,
 ];
 pub const QUEUE_SCOPES: &[Scope] = &[Scope::List, Scope::Queue, Scope::Global, Scope::Always];
+pub const MESSAGES_SCOPES: &[Scope] = &[Scope::List, Scope::Messages, Scope::Global, Scope::Always];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -315,6 +329,8 @@ pub const UNIONS: &[&[Scope]] = &[
     LIST_PEOPLE_SCOPES,
     AT_SCOPES,
     QUEUE_SCOPES,
+    MESSAGES_SCOPES,
+    CONVERSATION_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,6 +375,8 @@ impl Key {
             KeyCode::Up => "↑".to_owned(),
             KeyCode::Down => "↓".to_owned(),
             KeyCode::Home => "home".to_owned(),
+            KeyCode::PageUp => "pgup".to_owned(),
+            KeyCode::PageDown => "pgdn".to_owned(),
             KeyCode::End => "end".to_owned(),
             other => format!("{other:?}").to_lowercase(),
         };
@@ -663,6 +681,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Person,
+        chords: &[&[Key::ch('M')]],
+        action: Action::Commit(Act::Message),
+        hint: None,
+        help: "message them",
+    },
+    Binding {
+        scope: Scope::Person,
         chords: &[&[Key::ch('p')]],
         action: Action::Profile,
         hint: None,
@@ -695,6 +720,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Block),
         hint: None,
         help: "block or unblock",
+    },
+    Binding {
+        scope: Scope::People,
+        chords: &[&[Key::ch('M')]],
+        action: Action::Commit(Act::Message),
+        hint: None,
+        help: "message them",
     },
     Binding {
         scope: Scope::Commit,
@@ -737,6 +769,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Block),
         hint: None,
         help: "block or unblock the author",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('M')]],
+        action: Action::Commit(Act::Message),
+        hint: None,
+        help: "message the author",
     },
     Binding {
         scope: Scope::Commit,
@@ -1150,6 +1189,62 @@ pub const TABLE: &[Binding] = &[
         help: "quit",
     },
     Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
+        action: Action::Open,
+        hint: Some("enter open"),
+        help: "open the conversation",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Send,
+        hint: Some("enter send"),
+        help: "send",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::PageUp)]],
+        action: Action::PageUp,
+        hint: Some("pgup/pgdn scroll"),
+        help: "scroll back a page, loading older messages at the top",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::PageDown)]],
+        action: Action::PageDown,
+        hint: None,
+        help: "scroll forward a page",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::ctrl('e')]],
+        action: Action::Editor,
+        hint: Some("ctrl-e editor"),
+        help: "write it in $VISUAL or $EDITOR",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back, keeping what you typed",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
         scope: Scope::Secret,
         chords: &[&[Key::ch('y')]],
         action: Action::Confirm,
@@ -1211,6 +1306,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Later,
         hint: None,
         help: "scheduled commits",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch('m')]],
+        action: Action::Messages,
+        hint: None,
+        help: "messages",
     },
     Binding {
         scope: Scope::Global,

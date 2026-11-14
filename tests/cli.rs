@@ -54,6 +54,8 @@ fn unknown_arguments_are_a_usage_error() {
         &["commit", "--bogus"],
         &["headlines", "--bogus"],
         &["blocked", "--bogus"],
+        &["msg", "--bogus"],
+        &["msg", "@grace", "--bogus"],
     ] {
         let output = ttyl(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -352,6 +354,112 @@ fn log_refuses_a_log_it_does_not_know() {
         String::from_utf8(output.stderr)
             .unwrap()
             .contains("unknown argument 'popular'")
+    );
+}
+
+fn fixture(name: &str) -> String {
+    std::fs::read_to_string(format!(
+        "{}/fixtures/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+#[test]
+fn msg_alone_prints_conversations_with_their_unread_counts() {
+    let (base, _server) = serve("200 OK", &fixture("remotes"));
+    let output = against("cli-msg-list", &base, &["msg"], None);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "@margaret\t0\tthe lock order is in the commit message now\n\
+         @grace\t2\tdid you see the cursor patch?\n\
+         @linus\t0\t[image]\n\
+         @ken\t0\t[voice note]\n"
+    );
+}
+
+fn sent_back(body: &str) -> String {
+    serde_json::json!({ "data": {
+        "id": 106, "user_id": "0a000000-0000-4000-8000-00000000000a",
+        "client_id": "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e11", "body": body,
+        "images": [], "voice": null, "event": null, "created_at": "2026-10-21T09:58:00Z",
+    }})
+    .to_string()
+}
+
+#[test]
+fn msg_sends_the_text_to_the_handle_and_prints_it() {
+    let (base, server) = serve("201 Created", &sent_back("merging it now"));
+    let output = against(
+        "cli-msg",
+        &base,
+        &["msg", "@grace", "-m", "merging it now"],
+        None,
+    );
+    let sent: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+    assert_eq!(sent["body"], "merging it now");
+    assert_eq!(
+        sent["client_id"].as_str().map(str::len),
+        Some(36),
+        "each message carries a uuid so a retry can't send it twice: {sent}"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[msg @grace] merging it now\n"
+    );
+}
+
+#[test]
+fn msg_reads_its_text_from_stdin_without_m() {
+    let (base, server) = serve("201 Created", &sent_back("piped in\nsecond line"));
+    let output = against(
+        "cli-msg-stdin",
+        &base,
+        &["msg", "grace"],
+        Some("piped in\nsecond line\n"),
+    );
+    let sent: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+    assert_eq!(sent["body"], "piped in\nsecond line");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[msg @grace] piped in\n"
+    );
+}
+
+#[test]
+fn an_empty_message_is_refused_before_anything_is_sent() {
+    let output = against(
+        "cli-msg-empty",
+        "http://127.0.0.1:9",
+        &["msg", "@grace"],
+        Some("  \n"),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: nothing to send. the message is empty.\n"
+    );
+}
+
+#[test]
+fn msg_to_someone_dev_null_refuses_says_why() {
+    let (base, _server) = serve(
+        "403 Forbidden",
+        r#"{"message":"@grace hasn't merged your request yet."}"#,
+    );
+    let output = against(
+        "cli-msg-refused",
+        &base,
+        &["msg", "@grace", "-m", "hi"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: @grace hasn't merged your request yet.\n"
     );
 }
 

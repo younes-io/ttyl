@@ -1,9 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::api::Call;
+use crate::api::{Call, Paging};
 use crate::draft::Target;
-use crate::model::{Circle, CommitId, Filter, HeadlineId, Log, NotificationId, ScheduledId};
+use crate::model::{
+    Circle, ClientId, CommitId, Filter, HeadlineId, Log, NotificationId, ScheduledId,
+};
 
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
@@ -66,6 +68,16 @@ pub enum CallKey {
     Notifications(Filter),
     OlderNotifications(Filter),
     Group(NotificationId),
+    Conversations {
+        older: bool,
+    },
+    /// A conversation's latest page or a poll for new messages, which one call covers at a time.
+    Messages {
+        handle: String,
+        older: bool,
+    },
+    MarkRead(String),
+    SendMessage(ClientId),
 }
 
 impl Call {
@@ -128,6 +140,15 @@ impl Call {
             } => CallKey::Notifications(*filter),
             Call::Notifications { filter, .. } => CallKey::OlderNotifications(*filter),
             Call::Group { id, .. } => CallKey::Group(id.clone()),
+            Call::Conversations { before } => CallKey::Conversations {
+                older: before.is_some(),
+            },
+            Call::Messages { handle, paging } => CallKey::Messages {
+                handle: handle.clone(),
+                older: matches!(paging, Paging::Before(_)),
+            },
+            Call::MarkRead { handle, .. } => CallKey::MarkRead(handle.clone()),
+            Call::SendMessage { client_id, .. } => CallKey::SendMessage(client_id.clone()),
         }
     }
 }

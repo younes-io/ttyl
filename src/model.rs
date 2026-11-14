@@ -1069,6 +1069,225 @@ impl HeadlinePage {
     }
 }
 
+/// A message's place in its conversation. Later messages have higher ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct MessageId(pub u64);
+
+/// The id a sender gives a message, so that sending it again lands it once.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct ClientId(pub String);
+
+/// What a message carries besides its text, shown as a mark since a terminal can't play or show it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extra {
+    Images,
+    Voice,
+    Ping,
+    Call,
+}
+
+impl Extra {
+    pub fn mark(self) -> &'static str {
+        match self {
+            Extra::Images => "[image]",
+            Extra::Voice => "[voice note]",
+            Extra::Ping => "[ping]",
+            Extra::Call => "[call]",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub id: MessageId,
+    pub user_id: UserId,
+    pub client_id: Option<ClientId>,
+    /// Empty when the message is only an image, a voice note or an event.
+    pub body: String,
+    pub extra: Option<Extra>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            id: MessageId,
+            user_id: UserId,
+            client_id: Option<ClientId>,
+            body: Option<String>,
+            #[serde(default)]
+            images: Option<Vec<serde::de::IgnoredAny>>,
+            #[serde(default)]
+            voice: Option<serde::de::IgnoredAny>,
+            event: Option<String>,
+            created_at: DateTime<Utc>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let body = wire.body.unwrap_or_default();
+        let extra = match wire.event.as_deref() {
+            Some("ping") => Some(Extra::Ping),
+            Some(event) if event.starts_with("call_") => Some(Extra::Call),
+            _ if wire.voice.is_some() => Some(Extra::Voice),
+            _ if wire.images.is_some_and(|images| !images.is_empty()) => Some(Extra::Images),
+            // The inbox leaves a last message's images out, and only images let a message go without text.
+            _ if body.is_empty() => Some(Extra::Images),
+            _ => None,
+        };
+        Ok(Message {
+            id: wire.id,
+            user_id: wire.user_id,
+            client_id: wire.client_id,
+            body,
+            extra,
+            created_at: wire.created_at,
+        })
+    }
+}
+
+impl Message {
+    /// The first line of the text, or the mark of what it carries instead.
+    pub fn preview(&self) -> &str {
+        match (
+            self.body.lines().find(|line| !line.trim().is_empty()),
+            self.extra,
+        ) {
+            (Some(line), _) => line.trim(),
+            (None, Some(extra)) => extra.mark(),
+            (None, None) => "",
+        }
+    }
+}
+
+/// One-to-one conversations. dev-null.sh's org conversations are left out.
+#[derive(Debug, Clone)]
+pub struct Conversation {
+    pub partner: User,
+    pub last: Option<Message>,
+    pub last_at: Option<DateTime<Utc>>,
+    /// Messages from the partner the user hasn't read.
+    pub unread: u32,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationPage {
+    pub conversations: Vec<Conversation>,
+    /// The conversation the next page continues before.
+    pub next: Option<String>,
+}
+
+impl ConversationPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Row>,
+            has_more: bool,
+        }
+
+        #[derive(Deserialize)]
+        struct Row {
+            id: String,
+            partner: Option<User>,
+            last_message: Option<Message>,
+            last_message_at: Option<DateTime<Utc>>,
+            ahead: u32,
+            pinned_at: Option<String>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        let next = (wire.has_more)
+            .then(|| wire.data.last().map(|row| row.id.clone()))
+            .flatten();
+        let conversations = (wire.data.into_iter())
+            .filter_map(|row| {
+                Some(Conversation {
+                    partner: row.partner?,
+                    last: row.last_message,
+                    last_at: row.last_message_at,
+                    unread: row.ahead,
+                    pinned: row.pinned_at.is_some(),
+                })
+            })
+            .collect();
+        Ok(ConversationPage {
+            conversations,
+            next,
+        })
+    }
+}
+
+/// Whether the user can push to the partner, and if not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Access {
+    Open,
+    /// The partner's request waits here to be merged.
+    Request,
+    /// The user's request waits on the partner.
+    Waiting,
+    Restricted,
+    Closed,
+}
+
+impl Access {
+    /// Why the user can't push to `handle`, in dev-null.sh's words.
+    pub fn refusal(self, handle: &str) -> Option<String> {
+        match self {
+            Access::Open => None,
+            Access::Request => Some(format!(
+                "merge @{handle}'s request on dev-null.sh before replying."
+            )),
+            Access::Waiting => Some(format!("@{handle} hasn't merged your request yet.")),
+            Access::Restricted => Some(format!(
+                "@{handle} doesn't follow you, so you can't push to them yet."
+            )),
+            Access::Closed => Some(format!("@{handle} isn't taking remotes.")),
+        }
+    }
+}
+
+/// A page of a conversation, oldest first.
+#[derive(Debug, Clone)]
+pub struct MessagePage {
+    pub partner: User,
+    pub messages: Vec<Message>,
+    pub has_older: bool,
+    pub read_through: MessageId,
+    pub access: Access,
+}
+
+impl MessagePage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Data,
+        }
+
+        #[derive(Deserialize)]
+        struct Data {
+            partner: User,
+            messages: Vec<Message>,
+            has_older: bool,
+            /// Null until the user has read anything here.
+            read_through_id: Option<MessageId>,
+            access: Access,
+        }
+
+        let data = serde_json::from_str::<Wire>(json)?.data;
+        Ok(MessagePage {
+            partner: data.partner,
+            messages: data.messages,
+            has_older: data.has_older,
+            read_through: data.read_through_id.unwrap_or(MessageId(0)),
+            access: data.access,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct ScheduledId(pub String);

@@ -472,7 +472,11 @@ impl Store {
             | Call::SearchPeople(_)
             | Call::Related(_)
             | Call::Headlines
-            | Call::Headline(_) => return,
+            | Call::Headline(_)
+            | Call::Conversations { .. }
+            | Call::Messages { .. }
+            | Call::MarkRead { .. }
+            | Call::SendMessage { .. } => return,
         }
         self.generation += 1;
     }
@@ -619,7 +623,10 @@ impl Store {
                 | Reply::Done
                 | Reply::Scheduled(_)
                 | Reply::Queue(_)
-                | Reply::Submitted { .. },
+                | Reply::Submitted { .. }
+                | Reply::Conversations(_)
+                | Reply::Messages(_)
+                | Reply::Message(_),
             ) => {}
         }
     }

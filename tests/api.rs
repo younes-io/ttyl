@@ -8,14 +8,14 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use common::{openssh_accepts, scratch};
-use ttyl::api::{Call, Client, Error, Reply};
+use ttyl::api::{Call, Client, Error, Paging, Reply};
 use ttyl::attach::{self, Attachment, Image, Poll};
 use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Circle, CommitId, Filter, HeadlineId, Log, NotificationId, Reason, ScheduledId, Translation,
-    Untranslated,
+    Circle, ClientId, CommitId, Filter, HeadlineId, Log, MessageId, NotificationId, Reason,
+    ScheduledId, Translation, Untranslated,
 };
 
 struct Seen {
@@ -1105,6 +1105,103 @@ fn a_failed_translation_says_what_dev_null_said() {
         error.to_string(),
         "Could not translate this commit. Try again."
     );
+}
+
+#[test]
+fn conversations_are_read_from_remotes_and_paged_by_conversation() {
+    let call = Call::Conversations { before: None };
+    let (reply, seen) = exchange(&call, &fixture("remotes"));
+    assert_eq!(request_line(&seen), "GET /api/v1/remotes HTTP/1.1");
+    let Reply::Conversations(page) = reply else {
+        panic!("{reply:?}")
+    };
+    let handles: Vec<&str> = (page.conversations.iter())
+        .map(|conversation| conversation.partner.handle.as_str())
+        .collect();
+    assert_eq!(
+        handles,
+        ["margaret", "linus", "grace", "ken"],
+        "orgs stay out"
+    );
+    assert_eq!(page.next, None);
+
+    let call = Call::Conversations {
+        before: Some("c1000000-0000-4000-8000-00000000000e".to_owned()),
+    };
+    let (_, seen) = exchange(&call, &fixture("remotes"));
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/remotes?before=c1000000-0000-4000-8000-00000000000e HTTP/1.1"
+    );
+}
+
+#[test]
+fn a_conversation_is_read_newest_page_first_then_before_or_after_a_message() {
+    let thread = fixture("remote-thread");
+    for (paging, path) in [
+        (Paging::Latest, "/api/v1/remotes/@grace/messages"),
+        (
+            Paging::Before(MessageId(101)),
+            "/api/v1/remotes/@grace/messages?before=101",
+        ),
+        (
+            Paging::After(MessageId(105)),
+            "/api/v1/remotes/@grace/messages?after=105",
+        ),
+    ] {
+        let call = Call::Messages {
+            handle: "grace".to_owned(),
+            paging,
+        };
+        let (reply, seen) = exchange(&call, &thread);
+        assert_eq!(request_line(&seen), format!("GET {path} HTTP/1.1"));
+        let Reply::Messages(page) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(page.messages.len(), 4);
+        assert_eq!(page.read_through, MessageId(102));
+    }
+}
+
+#[test]
+fn marking_read_puts_how_far_and_sending_posts_the_text_with_its_client_id() {
+    let call = Call::MarkRead {
+        handle: "grace".to_owned(),
+        through: MessageId(105),
+    };
+    let (base, server) = serve("204 No Content", "");
+    let reply = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&call)
+        .unwrap();
+    let seen = server.join().unwrap();
+    assert!(matches!(reply, Reply::Done));
+    assert_eq!(
+        request_line(&seen),
+        "PUT /api/v1/remotes/@grace/read HTTP/1.1"
+    );
+    assert_eq!(sent(&seen), serde_json::json!({ "through": 105 }));
+
+    let client_id = "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e11";
+    let call = Call::SendMessage {
+        handle: "grace".to_owned(),
+        body: "merging it now".to_owned(),
+        client_id: ClientId(client_id.to_owned()),
+    };
+    let message = serde_json::json!({ "data": {
+        "id": 106, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": client_id,
+        "body": "merging it now", "images": [], "voice": null, "event": null,
+        "created_at": "2026-10-21T09:58:00Z",
+    }});
+    let (reply, seen) = exchange(&call, &message);
+    assert_eq!(
+        request_line(&seen),
+        "POST /api/v1/remotes/@grace/messages HTTP/1.1"
+    );
+    assert_eq!(
+        sent(&seen),
+        serde_json::json!({ "body": "merging it now", "client_id": client_id })
+    );
+    assert!(matches!(reply, Reply::Message(message) if message.id == MessageId(106)));
 }
 
 #[test]
