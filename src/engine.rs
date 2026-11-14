@@ -2580,17 +2580,16 @@ impl Engine {
                 query,
                 before,
             } => {
-                if let Reply::Conversations(page) = reply {
-                    let filings: Vec<(Chat, Filed)> = (session.store.filings())
-                        .map(|(chat, filed)| (chat.clone(), filed))
-                        .collect();
+                if let Reply::Conversations(mut page) = reply {
+                    // A change dev-null.sh hasn't confirmed yet still shows as made.
+                    for row in &mut page.conversations {
+                        if let Some(filed) = session.store.filed(&row.party.chat()) {
+                            row.filed = filed;
+                        }
+                    }
                     for messages in session.messages_mut() {
                         if messages.shows(*folder, query) {
                             messages.land(before.as_deref(), page.clone());
-                            // A change dev-null.sh hasn't confirmed yet still shows as made.
-                            for (chat, filed) in &filings {
-                                messages.refile(chat, *filed);
-                            }
                         }
                     }
                 }

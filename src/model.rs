@@ -1333,6 +1333,15 @@ impl Folder {
             Folder::Stashed => "stashed",
         }
     }
+
+    /// Whether a conversation kept as `filed` is listed here.
+    pub fn holds(self, filed: Filed) -> bool {
+        match self {
+            Folder::Open => !filed.stashed,
+            Folder::Requests => true,
+            Folder::Stashed => filed.stashed,
+        }
+    }
 }
 
 /// How the user keeps a conversation: pinned to the top, stashed out of the open ones, muted.

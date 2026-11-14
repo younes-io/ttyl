@@ -36,8 +36,10 @@ These keys act on the selected conversation at once and say what they did on
 the bottom line. Press one again to undo it.
 
 - Press <kbd>^</kbd> to pin it to the top, or to unpin it.
-- Press <kbd>s</kbd> to stash it. A stashed conversation comes back to open
-  as soon as anyone writes in it. In stashed, <kbd>s</kbd> puts it back.
+- Press <kbd>s</kbd> to stash it. It stays in the list, marked stashed, until
+  the folder is listed again, so <kbd>s</kbd> once more keeps it in open. A
+  stashed conversation comes back to open as soon as anyone writes in it. In
+  stashed, <kbd>s</kbd> puts it back the same way.
 - Press <kbd>m</kbd> to mute it. The bottom line asks how long, and one key
   answers: <kbd>h</kbd> for an hour, <kbd>t</kbd> till tomorrow,
   <kbd>w</kbd> for a week or <kbd>f</kbd> forever. <kbd>esc</kbd> leaves it
