@@ -410,29 +410,48 @@ impl ProfileScreen {
     pub fn set_profile(&mut self, profile: Profile) {
         self.failure = None;
         self.profile = Some(profile);
-        self.pin();
     }
 
-    /// Puts their pinned commit first in their commits, once both have come, so every commit key works on it.
-    fn pin(&mut self) {
-        let pinned = self
-            .profile
-            .as_ref()
-            .and_then(|profile| profile.pinned.as_ref());
-        let pinned = pinned.map(|row| row.commit.id.clone());
+    /// Puts their pinned commit first in their commits, as the store shows it now, so every
+    /// commit key works on it and a pin made anywhere moves it at once.
+    fn pin(&mut self, store: &Store) {
+        let header = (self.profile.as_ref())
+            .and_then(|profile| profile.pinned.as_ref())
+            .map(|row| &row.commit.id);
         let list = &mut self.lists[Tab::Commits.index()];
-        let Some((items, _)) = &mut list.loaded else {
+        let Some((items, next)) = &mut list.loaded else {
             return;
         };
+        let listed = items.iter().filter_map(|item| match item {
+            Item::Commit(id) => Some(id),
+            Item::Person(_) | Item::Headline(_) => None,
+        });
+        let pinned = (header.into_iter().chain(listed))
+            .find(|id| store.pinned(id))
+            .cloned();
         if list.pinned == pinned {
             return;
         }
+        // The selection follows the commit it is on, unless it sat on top of a list a pin just
+        // came to, where it stays on top.
         let kept = items
             .get(list.selected)
-            .filter(|_| list.selected > 0)
+            .filter(|_| list.selected > 0 || list.pinned.is_some())
             .cloned();
-        if list.pinned.take().is_some() {
+        if let Some(old) = list.pinned.take() {
             items.remove(0);
+            // dev-null.sh leaves the pinned commit out of the list, so an unpinned one goes back
+            // where its date puts it, or comes with a later page.
+            let created = |id: &CommitId| store.row(id).map(|row| row.commit.created_at);
+            let at = items.iter().position(|item| match item {
+                Item::Commit(id) => created(id) < created(&old),
+                Item::Person(_) | Item::Headline(_) => false,
+            });
+            match at {
+                Some(at) => items.insert(at, Item::Commit(old)),
+                None if next.is_none() => items.push(Item::Commit(old)),
+                None => {}
+            }
         }
         if let Some(id) = pinned {
             items.retain(|item| !matches!(item, Item::Commit(each) if *each == id));
@@ -450,9 +469,6 @@ impl ProfileScreen {
 
     pub fn land(&mut self, tab: Tab, cursor: Option<&str>, items: Vec<Item>, next: Option<String>) {
         self.lists[tab.index()].land(cursor, items, next);
-        if tab == Tab::Commits {
-            self.pin();
-        }
     }
 
     pub fn fail_tab(&mut self, tab: Tab, failure: Failure) {
@@ -555,6 +571,7 @@ impl ProfileScreen {
         wall: &DateTime<Tz>,
     ) {
         self.card = None;
+        self.pin(store);
         let Some(profile) = &self.profile else {
             if let Some(failure) = &self.failure {
                 frame.render_widget(
