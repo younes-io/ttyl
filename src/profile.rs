@@ -731,7 +731,7 @@ fn header(
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    if profile.follows_you {
+    if store.follows_you(&user.handle, profile.follows_you) {
         if !chips.is_empty() {
             chips.push(Span::raw(" "));
         }
@@ -1064,7 +1064,7 @@ fn person_node(out: &mut Writer, person: &Person, store: &Store) -> Lane {
         Span::styled(user.name.clone(), lane.add_modifier(Modifier::BOLD)),
         Span::styled(format!(" @{}", user.handle), theme::muted()),
     ];
-    if person.follows_you == Some(true) {
+    if store.follows_you(&user.handle, person.follows_you == Some(true)) {
         spans.push(Span::styled(" · follows you", theme::muted()));
     }
     if store

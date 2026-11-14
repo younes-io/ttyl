@@ -115,6 +115,7 @@ fn laid_out(page: &ttyl::model::NotificationPage, more: bool, width: u16) -> Vec
         &page.groups,
         page.read_at,
         more,
+        &ttyl::store::Store::new(account(0)),
         width,
         &common::now(),
     );

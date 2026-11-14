@@ -423,6 +423,9 @@ impl Session {
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
+            Some(Selected::Note(commit)) if self.store.blocking(&commit.author.handle) => {
+                act == Act::Block
+            }
             Some(Selected::Note(commit)) => match act {
                 Act::Follow | Act::Mute | Act::Block => commit.author.handle != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe | Act::Related => {
@@ -483,9 +486,10 @@ impl Session {
     }
 
     /// Asks before blocking `handle`, or unblocks them at once and says what the toast reads.
+    /// Every row about someone blocked shows the fold, so the unblock never comes unannounced.
     fn block(&mut self, handle: String) -> Option<String> {
         if self.store.blocking(&handle) {
-            self.store.block(&handle);
+            self.store.block(&handle, false);
             return Some(blocked(&handle, false));
         }
         self.overlay = Some(Overlay::Block(handle));
@@ -1630,7 +1634,7 @@ impl Engine {
                 if matches!(session.overlay, Some(Overlay::Block(_))) =>
             {
                 if let Some(Overlay::Block(handle)) = session.overlay.take() {
-                    session.store.block(&handle);
+                    session.store.block(&handle, true);
                     self.toast(blocked(&handle, true), now);
                 }
             }
@@ -2885,11 +2889,13 @@ impl Engine {
                         } else {
                             inset(body)
                         };
-                        session.inbox.draw(frame, area, retry, now, wall);
+                        session
+                            .inbox
+                            .draw(frame, area, retry, &session.store, now, wall);
                     }
                     Some(Screen::Group(group)) => {
                         let area = framed_as(frame, body, framed, "");
-                        group.draw(frame, area, now, wall)
+                        group.draw(frame, area, &session.store, now, wall)
                     }
                     Some(Screen::Profile(profile)) => profile.draw(
                         frame,

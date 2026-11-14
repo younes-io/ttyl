@@ -14,7 +14,7 @@ use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::Action;
 use crate::log::{self, Retry};
 use crate::model::{
-    CommitId, Event, Filter, Group, GroupPage, Kind, NotificationId, NotificationPage, Shown,
+    CommitId, Event, Filter, Fold, Group, GroupPage, Kind, NotificationId, NotificationPage, Shown,
 };
 use crate::profile;
 use crate::store::Store;
@@ -143,11 +143,13 @@ impl Inbox {
         frame: &mut Frame,
         area: Rect,
         retry: Retry,
+        store: &Store,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
         let filter = self.filter;
-        self.list_mut().draw(frame, area, filter, retry, now, wall);
+        self.list_mut()
+            .draw(frame, area, filter, retry, store, now, wall);
     }
 
     /// Draws a box with the filters as tabs along its top, as the feed's box has its logs, and
@@ -292,12 +294,14 @@ impl List {
         loaded.next_cursor = next_cursor.filter(|_| loaded.groups.len() > before);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw<Tz: TimeZone>(
         &mut self,
         frame: &mut Frame,
         area: Rect,
         filter: Filter,
         retry: Retry,
+        store: &Store,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
@@ -319,6 +323,7 @@ impl List {
             &loaded.groups,
             loaded.read_at,
             more,
+            store,
             area.width,
             wall,
         );
@@ -437,6 +442,7 @@ impl GroupList {
         &mut self,
         frame: &mut Frame,
         area: Rect,
+        store: &Store,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
@@ -444,7 +450,8 @@ impl GroupList {
             page: None,
             older: None,
         };
-        self.list.draw(frame, area, self.filter, retry, now, wall);
+        self.list
+            .draw(frame, area, self.filter, retry, store, now, wall);
     }
 
     /// The group's own sentence under the top line, where the inbox shows its filters.
@@ -475,12 +482,14 @@ fn empty_copy(filter: Filter) -> &'static str {
     }
 }
 
-/// Lays groups out newest first, one node each, the way the log lays out commits.
+/// Lays groups out newest first, one node each, the way the log lays out commits. A row about
+/// someone the user blocks folds to one line, as their commits do.
 pub fn layout<Tz: TimeZone>(
     filter: Filter,
     groups: &[Group],
     read_at: DateTime<Utc>,
     more: bool,
+    store: &Store,
     width: u16,
     now: &DateTime<Tz>,
 ) -> Feed {
@@ -508,6 +517,26 @@ pub fn layout<Tz: TimeZone>(
         }
         let header = out.lines.len();
         let event = &group.event;
+        let blocked = event
+            .subject(group.actors_count == 1)
+            .filter(|handle| store.blocking(handle));
+        if let Some(handle) = blocked {
+            out.node(
+                Span::styled("○ ", Style::new().fg(theme::RAIL)),
+                feed::rail(),
+                vec![Span::styled(
+                    feed::folded(Fold::Blocked, handle),
+                    theme::muted(),
+                )],
+            );
+            entries.push(Entry {
+                lines: header..out.lines.len(),
+                header,
+                lane: event.actor.lane,
+                indent: 0,
+            });
+            continue;
+        }
         let unread = event.read_at.is_none_or(|at| at >= read_at);
         let time = feed::relative_time(event.created_at, now);
         let room = out.content().saturating_sub(time.len() + 1);

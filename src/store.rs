@@ -28,6 +28,8 @@ pub struct Store {
     blocks: HashMap<String, Switch>,
     language: Language,
     translations: HashMap<CommitId, Translating>,
+    /// Everyone whose follow of the user a block ended. Unblocking leaves it ended.
+    unfollowed_by: HashSet<String>,
     deleting: HashSet<CommitId>,
     unsent_pastels: HashMap<CommitId, u32>,
     picking: Option<(CommitId, usize)>,
@@ -192,6 +194,7 @@ impl Store {
             language: Language::Unsettled { device: None },
             translations: HashMap::new(),
             blocks: HashMap::new(),
+            unfollowed_by: HashSet::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
             picking: None,
@@ -295,17 +298,20 @@ impl Store {
         }
     }
 
-    /// Flips whether the user blocks `handle` and returns whether they now do. Anyone the logs
-    /// show starts unblocked, since nothing crosses a block on dev-null.sh.
-    pub fn block(&mut self, handle: &str) -> bool {
-        let block = self.blocks.entry(handle.to_owned()).or_default();
-        block.want = !block.want;
+    /// Sets whether the user blocks `handle`. Anyone the logs show starts unblocked, since
+    /// nothing crosses a block on dev-null.sh.
+    pub fn block(&mut self, handle: &str, on: bool) {
+        self.blocks.entry(handle.to_owned()).or_default().want = on;
         self.generation += 1;
-        block.want
     }
 
     pub fn blocking(&self, handle: &str) -> bool {
         self.blocks.get(handle).is_some_and(|block| block.want)
+    }
+
+    /// Whether `handle` follows the user, given what dev-null.sh `said`, short of a block since.
+    pub fn follows_you(&self, handle: &str, said: bool) -> bool {
+        said && !self.unfollowed_by.contains(handle)
     }
 
     pub fn give_pastel(&mut self, id: &CommitId) {
@@ -582,6 +588,7 @@ impl Store {
                             want: false,
                         },
                     );
+                    self.unfollowed_by.insert(handle.clone());
                     self.generation += 1;
                 }
             }

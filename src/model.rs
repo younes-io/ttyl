@@ -718,6 +718,16 @@ impl Event {
             Shown::Deleted(tombstone) => Some(&tombstone.id),
         }
     }
+
+    /// Whom the person keys act on in a row about this event: whoever followed, when they
+    /// followed alone, or the commit's author.
+    pub fn subject(&self, alone: bool) -> Option<&str> {
+        match (&self.kind, &self.commit) {
+            (Kind::Followed, _) => alone.then_some(self.actor.handle.as_str()),
+            (_, Some(Shown::Live(commit))) => Some(&commit.author.handle),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
