@@ -124,7 +124,7 @@ fn help_groups_its_keys_in_two_columns_when_they_fit() {
     let at = Instant::now();
     let mut engine = boot_serving(at, page);
     press(&mut engine, "?", at);
-    let rows = screen(&mut engine, 120, 36, at);
+    let rows = screen(&mut engine, 120, 37, at);
     let row_of = |text: &str| rows.iter().position(|row| row.contains(text));
     let titles = ["move", "read", "act", "while writing"].map(|title| {
         row_of(&format!("  {title}  ")).unwrap_or_else(|| panic!("{title}: {rows:#?}"))

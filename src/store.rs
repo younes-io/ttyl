@@ -23,6 +23,7 @@ pub struct Store {
     reply_refills: HashMap<CommitId, Refill<Replies>>,
     star_wants: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
+    mutes: HashMap<String, Mute>,
     deleting: HashSet<CommitId>,
     unsent_pastels: HashMap<CommitId, u32>,
     picking: Option<(CommitId, usize)>,
@@ -34,6 +35,13 @@ pub struct Store {
 pub enum Follow {
     Asking { odd_presses: bool },
     Known { server: bool, want: bool },
+}
+
+/// Whether the user mutes someone, as dev-null.sh last said and as they want it now.
+#[derive(Debug, Clone, Copy, Default)]
+struct Mute {
+    server: bool,
+    want: bool,
 }
 
 pub enum Node<'a> {
@@ -155,6 +163,7 @@ impl Store {
             reply_refills: HashMap::new(),
             star_wants: HashMap::new(),
             follows: HashMap::new(),
+            mutes: HashMap::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
             picking: None,
@@ -196,6 +205,15 @@ impl Store {
             Follow::Asking { .. } => None,
             Follow::Known { want, .. } => Some(*want),
         }
+    }
+
+    /// Flips whether the user mutes `handle` and returns whether they now do. Anyone the logs show
+    /// starts unmuted, since dev-null.sh leaves the people the user mutes out of them.
+    pub fn mute(&mut self, handle: &str) -> bool {
+        let mute = self.mutes.entry(handle.to_owned()).or_default();
+        mute.want = !mute.want;
+        self.generation += 1;
+        mute.want
     }
 
     pub fn give_pastel(&mut self, id: &CommitId) {
@@ -251,6 +269,14 @@ impl Store {
                 Follow::Asking { .. } | Follow::Known { .. } => {}
             }
         }
+        for (handle, mute) in &self.mutes {
+            if mute.server != mute.want && !pending(&CallKey::Mute(handle.clone())) {
+                calls.push(Call::Mute {
+                    handle: handle.clone(),
+                    on: mute.want,
+                });
+            }
+        }
         self.unsent_pastels.retain(|id, left| {
             if !pending(&CallKey::Pastel(id.clone())) {
                 calls.push(Call::Pastel(id.clone()));
@@ -269,6 +295,11 @@ impl Store {
             Call::Follow { handle, .. } => {
                 if let Some(Follow::Known { server, want }) = self.follows.get_mut(handle) {
                     *want = *server;
+                }
+            }
+            Call::Mute { handle, .. } => {
+                if let Some(mute) = self.mutes.get_mut(handle) {
+                    mute.want = mute.server;
                 }
             }
             Call::User(handle) => {
@@ -377,6 +408,11 @@ impl Store {
                     *server = *on;
                 }
             }
+            (Call::Mute { handle, on }, Reply::Done) => {
+                if let Some(mute) = self.mutes.get_mut(handle) {
+                    mute.server = *on;
+                }
+            }
             (Call::Delete(id), Reply::Done) => {
                 self.deleting.remove(id);
                 let row = self.rows.get(id);
@@ -449,7 +485,8 @@ impl Store {
         let picking = (self.picking.as_ref())
             .filter(|(on, _)| on == id)
             .map(|(_, at)| *at);
-        if want.is_none() && !deleting && picking.is_none() {
+        let muted = (self.mutes.get(&row.commit.author.handle)).is_some_and(|mute| mute.want);
+        if want.is_none() && !deleting && picking.is_none() && !muted {
             return Cow::Borrowed(row);
         }
         let mut row = row.clone();
@@ -464,6 +501,7 @@ impl Store {
         if deleting {
             row.deletion = Some(Deletion::Running);
         }
+        row.muted = muted;
         if let Some(poll) = row.media.poll.as_mut() {
             poll.picking = picking;
         }
@@ -510,6 +548,7 @@ impl Store {
                             quoted_commit,
                             reply_preview,
                             deletion: None,
+                            muted: false,
                         },
                     );
                     id
@@ -605,6 +644,7 @@ impl Store {
                 quoted_commit: card.quoted_commit,
                 reply_preview,
                 deletion: None,
+                muted: false,
             },
         );
         self.gone.remove(&id);

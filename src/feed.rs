@@ -521,6 +521,15 @@ fn row_lines<Tz: TimeZone>(
         );
         return false;
     }
+    if row.muted {
+        let note = format!("muted @{} · m to unmute", commit.author.handle);
+        out.node(
+            Span::styled("○ ", Style::new().fg(theme::RAIL)),
+            rail(),
+            vec![Span::styled(note, theme::muted())],
+        );
+        return false;
+    }
     let lane = Style::new().fg(theme::lane(commit.author.lane));
     let rail = rail();
     let header = header_with(commit, out.content(), now, counts(row));

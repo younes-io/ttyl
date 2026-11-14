@@ -44,6 +44,13 @@ person's profile, and <kbd>f</kbd> to follow them.
 Press <kbd>f</kbd> on a commit to follow or unfollow its author without
 opening the profile. Their commits then show in your following log.
 
+## Mute someone
+
+Press <kbd>m</kbd> on a commit to mute its author. Every commit of theirs on
+screen folds into a `muted @name` line at once, and dev-null.sh leaves them
+out of your logs from then on. They are not told. Press <kbd>m</kbd> on a
+folded line to unmute them.
+
 ## See your starred commits {#starred}
 
 Press <kbd>gs</kbd> from anywhere to list the commits you starred, newest

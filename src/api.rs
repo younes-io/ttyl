@@ -78,6 +78,11 @@ pub enum Call {
         handle: String,
         on: bool,
     },
+    /// Mutes someone, silently as the web does, or unmutes them.
+    Mute {
+        handle: String,
+        on: bool,
+    },
     User(String),
     /// Someone's commits, or with `replies` their replies, as their profile lists them.
     Commits {
@@ -294,6 +299,11 @@ impl Client {
                 .map(|focus| Reply::Commit(Box::new(focus))),
             Call::Follow { handle, on } => {
                 let path = format!("/api/v1/users/{}/follow", escape(handle));
+                self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
+                    .map(|_| Reply::Done)
+            }
+            Call::Mute { handle, on } => {
+                let path = format!("/api/v1/users/{}/mute", escape(handle));
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }

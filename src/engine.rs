@@ -329,7 +329,7 @@ impl Session {
                 let own = row.commit.author.handle == *me;
                 row.deletion.is_none()
                     && match act {
-                        Act::Star | Act::Follow => !own,
+                        Act::Star | Act::Follow | Act::Mute => !own,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe => true,
                         Act::Delete => own,
@@ -345,7 +345,7 @@ impl Session {
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
-                Act::Follow => commit.author.handle != *me,
+                Act::Follow | Act::Mute => commit.author.handle != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe => true,
                 Act::Star
                 | Act::Pastel
@@ -755,6 +755,13 @@ fn opened(session: &mut Session, composer: Composer) -> Vec<Effect> {
 fn followed(handle: &str, on: bool) -> String {
     let done = if on { "following" } else { "unfollowed" };
     format!("{done} @{handle} · f to undo")
+}
+
+fn muted(handle: &str, on: bool) -> String {
+    match on {
+        true => format!("muted @{handle} · m to undo"),
+        false => format!("unmuted @{handle}"),
+    }
 }
 
 /// Counts what came in without naming it, since reading the notifications would mark them read.
@@ -1620,6 +1627,10 @@ impl Engine {
                     .map(|on| followed(&author, on)),
                 Vec::new(),
             ),
+            Act::Mute => {
+                let on = session.store.mute(&author);
+                (Some(muted(&author, on)), Vec::new())
+            }
             Act::Copy => (Some(format!("copied {url}")), vec![Effect::Copy(url)]),
             Act::Browse => (
                 Some("opened in the browser".to_owned()),
@@ -2037,13 +2048,14 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Star { .. } | Call::Follow { .. } | Call::User(_)
+                    Call::Star { .. } | Call::Follow { .. } | Call::Mute { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
                         true
                     }
                     Call::Star { .. }
                     | Call::Follow { .. }
+                    | Call::Mute { .. }
                     | Call::User(_)
                     | Call::Delete(_)
                     | Call::Restore(_)

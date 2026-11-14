@@ -71,6 +71,8 @@ pub enum Act {
     OpenQuote,
     /// Sends the commit's text to a shell command.
     Pipe,
+    /// Mutes the author, or unmutes them.
+    Mute,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -643,6 +645,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Follow),
         hint: None,
         help: "follow or unfollow the author",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('m')]],
+        action: Action::Commit(Act::Mute),
+        hint: None,
+        help: "mute or unmute the author",
     },
     Binding {
         scope: Scope::Commit,
