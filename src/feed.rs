@@ -1096,6 +1096,9 @@ pub(crate) fn header<Tz: TimeZone>(
         )),
         Status::Approved => {}
     }
+    if commit.is_pinned {
+        spans.push(Span::styled("  pinned", theme::muted()));
+    }
 
     let used: usize = spans.iter().map(Span::width).sum();
     let hash = commit.short_hash.width();

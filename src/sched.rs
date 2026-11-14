@@ -57,6 +57,8 @@ pub enum CallKey {
     Delete(CommitId),
     Restore(CommitId),
     Pastel(CommitId),
+    /// One pin at a time, since each one replaces the last.
+    Pin,
     Vote(CommitId),
     Report(CommitId),
     Post(Target),
@@ -126,6 +128,7 @@ impl Call {
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Restore(id) => CallKey::Restore(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
+            Call::Pin { .. } => CallKey::Pin,
             Call::Vote { id, .. } => CallKey::Vote(id.clone()),
             Call::Report { id, .. } => CallKey::Report(id.clone()),
             Call::Post { target, .. } => CallKey::Post(target.clone()),

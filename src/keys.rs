@@ -98,6 +98,8 @@ pub enum Act {
     Block,
     /// Opens the conversation with the author or the person, starting it if there is none.
     Message,
+    /// Pins the user's commit to their profile, or unpins it.
+    Pin,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -776,6 +778,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Message),
         hint: None,
         help: "message the author",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('^')]],
+        action: Action::Commit(Act::Pin),
+        hint: None,
+        help: "pin to your profile, or unpin",
     },
     Binding {
         scope: Scope::Commit,

@@ -23,6 +23,7 @@ pub struct Store {
     refills: HashMap<Log, Refill<Listing>>,
     reply_refills: HashMap<CommitId, Refill<Replies>>,
     star_wants: HashMap<CommitId, bool>,
+    pin_want: Option<Pin>,
     follows: HashMap<String, Follow>,
     mutes: HashMap<String, Switch>,
     blocks: HashMap<String, Switch>,
@@ -69,6 +70,13 @@ enum Translating {
         show: bool,
     },
     Skipped(Untranslated),
+}
+
+/// The user's commit they last asked to pin or unpin, until dev-null.sh says it is so.
+#[derive(Debug, Clone)]
+struct Pin {
+    id: CommitId,
+    on: bool,
 }
 
 pub enum Node<'a> {
@@ -189,6 +197,7 @@ impl Store {
             refills: HashMap::new(),
             reply_refills: HashMap::new(),
             star_wants: HashMap::new(),
+            pin_want: None,
             follows: HashMap::new(),
             mutes: HashMap::new(),
             language: Language::Unsettled { device: None },
@@ -218,6 +227,35 @@ impl Store {
         self.star_wants.insert(id.clone(), want);
         self.generation += 1;
         Some(want)
+    }
+
+    /// Flips whether the user's commit is pinned to their profile and returns whether it now is.
+    pub fn pin(&mut self, id: &CommitId) -> Option<bool> {
+        let on = !self.is_pinned(self.rows.get(id)?);
+        self.pin_want = Some(Pin { id: id.clone(), on });
+        self.generation += 1;
+        Some(on)
+    }
+
+    pub fn pinned(&self, id: &CommitId) -> bool {
+        self.rows.get(id).is_some_and(|row| self.is_pinned(row))
+    }
+
+    /// The commit `handle` has pinned, among the ones loaded.
+    pub fn pinned_by(&self, handle: &str) -> Option<&CommitId> {
+        self.rows
+            .values()
+            .find(|row| row.commit.author.handle == handle && self.is_pinned(row))
+            .map(|row| &row.commit.id)
+    }
+
+    /// Whether `row` is pinned as the user sees it. Pinning one commit unpins the user's others.
+    fn is_pinned(&self, row: &Row) -> bool {
+        match &self.pin_want {
+            Some(pin) if pin.id == row.commit.id => pin.on,
+            Some(Pin { on: true, .. }) if row.commit.author.handle == self.me.handle => false,
+            Some(_) | None => row.commit.is_pinned,
+        }
     }
 
     /// Flips the follow the user sees and returns it, or `None` while the client still asks the server.
@@ -351,6 +389,17 @@ impl Store {
                 Some(_) | None => false,
             }
         });
+        if let Some(pin) = &self.pin_want
+            && !pending(&CallKey::Pin)
+        {
+            match rows.get(&pin.id) {
+                Some(row) if row.commit.is_pinned != pin.on => calls.push(Call::Pin {
+                    id: pin.id.clone(),
+                    on: pin.on,
+                }),
+                Some(_) | None => self.pin_want = None,
+            }
+        }
         for (handle, follow) in &self.follows {
             match *follow {
                 Follow::Asking { .. } if !pending(&CallKey::User(handle.clone())) => {
@@ -415,6 +464,9 @@ impl Store {
         match call {
             Call::Star { id, .. } => {
                 self.star_wants.remove(id);
+            }
+            Call::Pin { .. } => {
+                self.pin_want = None;
             }
             Call::Follow { handle, .. } => {
                 if let Some(Follow::Known { server, want }) = self.follows.get_mut(handle) {
@@ -504,6 +556,19 @@ impl Store {
                 self.keep_counted(focus.card, Some(focus.replies_count));
                 self.generation += 1;
             }
+            (Call::Pin { id, on }, Reply::Commit(focus)) => {
+                self.keep_counted(focus.card, Some(focus.replies_count));
+                // dev-null.sh keeps one pin per user, so a new one unpins the rest.
+                if *on {
+                    let me = &self.me.handle;
+                    for row in self.rows.values_mut() {
+                        if row.commit.author.handle == *me && row.commit.id != *id {
+                            row.commit.is_pinned = false;
+                        }
+                    }
+                }
+                self.generation += 1;
+            }
             (Call::Post { target, .. }, Reply::Commit(focus)) => {
                 let id = self.keep_counted(focus.card, Some(focus.replies_count));
                 self.place(target, id);
@@ -516,7 +581,8 @@ impl Store {
             }
             (Call::User(handle), Reply::User(profile)) => {
                 let is_following = profile.is_following;
-                if let Some(pinned) = profile.pinned {
+                if let Some(mut pinned) = profile.pinned {
+                    pinned.commit.is_pinned = true;
                     self.land_row(pinned);
                     self.generation += 1;
                 }
@@ -693,12 +759,14 @@ impl Store {
             }) => Some(translated),
             _ => None,
         };
+        let pinned = self.is_pinned(row);
         if want.is_none()
             && !deleting
             && picking.is_none()
             && fold.is_none()
             && !asking
             && translated.is_none()
+            && pinned == row.commit.is_pinned
         {
             return Cow::Borrowed(row);
         }
@@ -728,6 +796,7 @@ impl Store {
                 from: translated.from.clone(),
             };
         }
+        row.commit.is_pinned = pinned;
         if let Some(poll) = row.media.poll.as_mut() {
             poll.picking = picking;
         }

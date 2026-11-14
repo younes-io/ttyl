@@ -128,6 +128,11 @@ pub enum Call {
     /// Undoes deleting the user's commit, within the server's 30-second window.
     Restore(CommitId),
     Pastel(CommitId),
+    /// Pins the user's commit to the top of their profile in place of the one pinned before, or unpins it.
+    Pin {
+        id: CommitId,
+        on: bool,
+    },
     Vote {
         id: CommitId,
         option: String,
@@ -472,6 +477,11 @@ impl Client {
                     .map(|focus| Reply::Commit(Box::new(focus)))
             }
             Call::Pastel(id) => self.pastel(id),
+            Call::Pin { id, on } => {
+                let path = format!("/api/v1/commits/{}/pin", escape(&id.0));
+                self.focus(if *on { "PUT" } else { "DELETE" }, &path, String::new())
+                    .map(|focus| Reply::Commit(Box::new(focus)))
+            }
             Call::Vote { id, option } => self
                 .vote(id, option)
                 .map(|focus| Reply::Commit(Box::new(focus))),

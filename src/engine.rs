@@ -473,6 +473,7 @@ impl Session {
                         Act::Pastel => !own && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
+                        Act::Pin => own && row.commit.parent_id.is_none(),
                         Act::Report => !own,
                         Act::Reply | Act::Quote => true,
                         Act::Vote => {
@@ -508,7 +509,8 @@ impl Session {
                     | Act::Vote
                     | Act::Images
                     | Act::OpenQuote
-                    | Act::Translate => false,
+                    | Act::Translate
+                    | Act::Pin => false,
                 }
             }
             Some(Selected::Person(user)) => {
@@ -1076,6 +1078,15 @@ fn blocked(handle: &str, on: bool) -> String {
     match on {
         true => format!("blocked @{handle} · B to undo"),
         false => format!("unblocked @{handle} · the follows it ended don't come back"),
+    }
+}
+
+/// What `^` says, naming the pin it replaced when one of the loaded commits held it.
+fn pinned(on: bool, replaced: Option<&str>) -> String {
+    match (on, replaced) {
+        (true, Some(old)) => format!("pinned to your profile in place of {old} · ^ to unpin"),
+        (true, None) => "pinned to your profile · ^ to unpin".to_owned(),
+        (false, _) => "unpinned from your profile".to_owned(),
     }
 }
 
@@ -2157,6 +2168,15 @@ impl Engine {
                 Vec::new(),
             ),
             Act::Block => (session.block(author), Vec::new()),
+            Act::Pin => {
+                let store = &session.store;
+                let replaced = (store.pinned_by(&store.me.handle))
+                    .filter(|old| **old != id)
+                    .and_then(|old| store.row(old))
+                    .map(|row| row.commit.short_hash.clone());
+                let toast = (session.store.pin(&id)).map(|on| pinned(on, replaced.as_deref()));
+                (toast, Vec::new())
+            }
             Act::Copy => (Some(format!("copied {url}")), vec![Effect::Copy(url)]),
             Act::Browse => (
                 Some("opened in the browser".to_owned()),
@@ -2751,12 +2771,14 @@ impl Engine {
                     | Call::Follow { .. }
                     | Call::Mute { .. }
                     | Call::Block { .. }
+                    | Call::Pin { .. }
                     | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
                         true
                     }
                     Call::Star { .. }
+                    | Call::Pin { .. }
                     | Call::Follow { .. }
                     | Call::Mute { .. }
                     | Call::Block { .. }

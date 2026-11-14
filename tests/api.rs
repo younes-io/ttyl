@@ -700,6 +700,23 @@ fn blocking_posts_to_block_and_deletes_to_unblock() {
 }
 
 #[test]
+fn pinning_puts_and_unpinning_deletes_and_both_answer_with_the_commit() {
+    let id = CommitId("7a000000-0000-4000-8000-00000000000a".to_owned());
+    for (on, method) in [(true, "PUT"), (false, "DELETE")] {
+        let mut answer = focus();
+        answer["data"]["is_pinned"] = serde_json::json!(on);
+        let (reply, seen) = exchange(&Call::Pin { id: id.clone(), on }, &answer);
+        assert!(
+            matches!(reply, Reply::Commit(focus) if focus.card.commit.id == id && focus.card.commit.is_pinned == on)
+        );
+        assert_eq!(
+            request_line(&seen),
+            format!("{method} /api/v1/commits/{}/pin HTTP/1.1", id.0)
+        );
+    }
+}
+
+#[test]
 fn the_people_you_block_are_read_a_page_at_a_time() {
     let page = serde_json::json!({
         "data": [person()],

@@ -120,3 +120,14 @@ confirm first.
 
 Changed your mind? Press <kbd>u</kbd> within 30 seconds to bring the commit
 back where it was, replies and stars included.
+
+## Pin a commit to your profile
+
+Select one of your own commits, not a reply, and press <kbd>^</kbd> to pin it
+to the top of your profile. Its card shows `pinned` wherever it appears, and
+your profile lists it first under a `pinned` label.
+
+You can pin one commit at a time. Pinning another one replaces it, and the
+note at the bottom names the one it replaced, such as
+`pinned to your profile in place of e4f5a61`. Press <kbd>^</kbd> on the pinned
+commit to unpin it. It goes back among your commits by date.

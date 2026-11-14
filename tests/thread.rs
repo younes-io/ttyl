@@ -63,7 +63,7 @@ fn help_on_a_thread_lists_the_thread_keys() {
     let mut engine = on_latest(at);
     tap(&mut engine, KeyCode::Enter, at);
     press(&mut engine, "?", at);
-    let rows = screen(&mut engine, 100, 42, at);
+    let rows = screen(&mut engine, 100, 43, at);
     for shown in [
         "move down",
         "esc/backspace  back",
