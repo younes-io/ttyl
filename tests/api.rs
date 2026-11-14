@@ -1039,21 +1039,164 @@ fn search_reads_commits_and_people_from_their_routes() {
 }
 
 #[test]
-fn settings_are_read_for_the_translation_language() {
+fn settings_are_read_from_their_route() {
     let settings = serde_json::json!({ "data": {
         "timezone": "Europe/Paris",
+        "show_local_time": true,
         "translation_language": "fr",
-        "automatic_translation": true,
+        "automatic_translation": false,
         "translation_languages": [{ "code": "fr", "name": "French", "native_name": "français" }],
         "is_admin": false,
         "push": {},
     }});
     let (reply, seen) = exchange(&Call::Settings, &settings);
+    let Reply::Settings(settings) = reply else {
+        panic!("{reply:?}");
+    };
+    let zone = settings.timezone.expect("a timezone");
+    assert_eq!(
+        (zone.name.as_str(), zone.local_time),
+        ("Europe/Paris", true)
+    );
+    assert_eq!(settings.translation_language.as_deref(), Some("fr"));
+    assert!(!settings.automatic_translation);
+    let languages: Vec<_> = (settings.languages.iter())
+        .map(|language| (language.code.as_str(), language.native_name.as_str()))
+        .collect();
+    assert_eq!(languages, [("fr", "français")]);
+    assert_eq!(request_line(&seen), "GET /api/v1/me/settings HTTP/1.1");
+}
+
+fn me_answer() -> serde_json::Value {
+    serde_json::json!({
+        "data": { "handle": "ada", "name": "Ada", "pasteis_mode": true, "preferred_lane": "#ff8800",
+            "automatic_lane": 2, "remotes": { "from": "everyone", "pull_receipts": false, "everyone": true } },
+        "unread_notifications_count": 1,
+    })
+}
+
+#[test]
+fn each_setting_is_put_on_its_route_and_answered_as_me() {
+    use ttyl::config::{Audience, Change};
+    use ttyl::model::{Lane, Zone};
+    let cases = [
+        (
+            Change::Pasteis(false),
+            "/api/v1/me/pasteis-mode",
+            serde_json::json!({ "enabled": false }),
+        ),
+        (
+            Change::Color(None),
+            "/api/v1/me/lane",
+            serde_json::json!({ "lane": null }),
+        ),
+        (
+            Change::Color(Some(Lane::Palette(4))),
+            "/api/v1/me/lane",
+            serde_json::json!({ "lane": 4 }),
+        ),
+        (
+            Change::Color(Some(Lane::Custom {
+                r: 255,
+                g: 136,
+                b: 0,
+            })),
+            "/api/v1/me/lane",
+            serde_json::json!({ "lane": null, "color": "#ff8800" }),
+        ),
+        (
+            Change::Timezone(Some(Zone {
+                name: "Asia/Tokyo".to_owned(),
+                local_time: true,
+            })),
+            "/api/v1/me/timezone",
+            serde_json::json!({ "timezone": "Asia/Tokyo", "show_local_time": true }),
+        ),
+        (
+            Change::Timezone(None),
+            "/api/v1/me/timezone",
+            serde_json::json!({ "timezone": null, "show_local_time": false }),
+        ),
+        (
+            Change::Language(Some("de".to_owned())),
+            "/api/v1/me/translation-language",
+            serde_json::json!({ "translation_language": "de" }),
+        ),
+        (
+            Change::AutoTranslate(false),
+            "/api/v1/me/automatic-translation",
+            serde_json::json!({ "enabled": false }),
+        ),
+        (
+            Change::Remotes(true),
+            "/api/v1/me/remotes",
+            serde_json::json!({ "enabled": true }),
+        ),
+        (
+            Change::Prefs {
+                from: Audience::Everyone,
+                pull_receipts: false,
+            },
+            "/api/v1/me/remote-preferences",
+            serde_json::json!({ "from": "everyone", "pull_receipts": false }),
+        ),
+    ];
+    for (change, path, body) in cases {
+        let (reply, seen) = exchange(&Call::Configure(change), &me_answer());
+        assert_eq!(request_line(&seen), format!("PUT {path} HTTP/1.1"));
+        assert_eq!(sent(&seen), body);
+        let Reply::Account(account) = reply else {
+            panic!("{reply:?}");
+        };
+        assert_eq!(
+            account.me.preferred_lane,
+            Some(Lane::Custom {
+                r: 255,
+                g: 136,
+                b: 0
+            })
+        );
+        assert_eq!(account.me.automatic_lane, 2);
+        assert!(account.me.remotes.is_some_and(|remotes| remotes.everyone));
+    }
+}
+
+#[test]
+fn muted_and_blocked_people_are_read_from_their_routes() {
+    let page = serde_json::json!({ "data": [], "meta": { "next_cursor": null } });
+    let (_, seen) = exchange(
+        &Call::Muted {
+            cursor: Some("c2".to_owned()),
+        },
+        &page,
+    );
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/me/muted?cursor=c2 HTTP/1.1"
+    );
+    let (_, seen) = exchange(&Call::Blocked { cursor: None }, &page);
+    assert_eq!(request_line(&seen), "GET /api/v1/me/blocked HTTP/1.1");
+}
+
+#[test]
+fn devices_are_listed_and_revoked_by_id() {
+    let devices = serde_json::json!({ "data": [{
+        "id": "0f0e", "name": "laptop", "app_name": null, "fingerprint": "SHA256:x",
+        "approved_at": "2026-10-20T10:00:00Z", "last_used_at": null,
+    }]});
+    let (reply, seen) = exchange(&Call::Devices, &devices);
+    assert_eq!(request_line(&seen), "GET /api/v1/me/devices HTTP/1.1");
     assert!(
-        matches!(&reply, Reply::Settings(settings) if settings.translation_language.as_deref() == Some("fr") && settings.languages == ["fr"]),
+        matches!(&reply, Reply::Devices(list) if list.len() == 1 && list[0].last_used_at.is_none()),
         "{reply:?}"
     );
-    assert_eq!(request_line(&seen), "GET /api/v1/me/settings HTTP/1.1");
+    let id = ttyl::model::DeviceId("0f0e".to_owned());
+    let (reply, seen) = exchange(&Call::Revoke(id), &serde_json::json!({}));
+    assert_eq!(
+        request_line(&seen),
+        "DELETE /api/v1/me/devices/0f0e HTTP/1.1"
+    );
+    assert!(matches!(reply, Reply::Done), "{reply:?}");
 }
 
 fn translate() -> Call {

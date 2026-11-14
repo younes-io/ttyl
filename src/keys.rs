@@ -69,6 +69,12 @@ pub enum Action {
     Keep(Keep),
     /// Mutes the conversation asked about for this long.
     Hush(Hush),
+    /// Opens the account's settings.
+    Settings,
+    /// Flips the selected setting to its next value, or starts typing a new one.
+    Edit,
+    /// Asks before revoking the selected device.
+    Revoke,
 }
 
 /// What a key does to the selected conversation, as mutt's keys flag and save a message.
@@ -184,6 +190,7 @@ impl Action {
             | Action::Starred
             | Action::Headlines
             | Action::Later
+            | Action::Settings
             | Action::Search
             | Action::Find
             | Action::Refresh
@@ -202,6 +209,8 @@ impl Action {
             | Action::SendNow
             | Action::Keep(_)
             | Action::Hush(_)
+            | Action::Edit
+            | Action::Revoke
             | Action::Undo => Group::Act,
         }
     }
@@ -250,6 +259,9 @@ pub enum Scope {
     Conversation,
     /// Asking how long to mute a conversation for.
     Mute,
+    Settings,
+    /// Typing a setting's new value on the bottom row.
+    Edit,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -334,6 +346,8 @@ pub const LIST_PEOPLE_SCOPES: &[Scope] = &[
 ];
 pub const QUEUE_SCOPES: &[Scope] = &[Scope::List, Scope::Queue, Scope::Global, Scope::Always];
 pub const MESSAGES_SCOPES: &[Scope] = &[Scope::List, Scope::Messages, Scope::Global, Scope::Always];
+pub const SETTINGS_SCOPES: &[Scope] = &[Scope::List, Scope::Settings, Scope::Global, Scope::Always];
+pub const EDIT_SCOPES: &[Scope] = &[Scope::Edit];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -363,6 +377,8 @@ pub const UNIONS: &[&[Scope]] = &[
     MESSAGES_SCOPES,
     CONVERSATION_SCOPES,
     MUTE_SCOPES,
+    SETTINGS_SCOPES,
+    EDIT_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -698,6 +714,48 @@ pub const TABLE: &[Binding] = &[
         help: "back",
     },
     Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Edit,
+        hint: Some("enter change"),
+        help: "flip it, or type a new value",
+    },
+    Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::ch('m')]],
+        action: Action::Commit(Act::Mute),
+        hint: Some("m unmute"),
+        help: "unmute, or mute again",
+    },
+    Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::ch('B')]],
+        action: Action::Commit(Act::Block),
+        hint: Some("B unblock"),
+        help: "unblock, or block again",
+    },
+    Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::ch('p')]],
+        action: Action::Profile,
+        hint: None,
+        help: "open their profile",
+    },
+    Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::ch('D')]],
+        action: Action::Revoke,
+        hint: Some("D revoke"),
+        help: "revoke the device",
+    },
+    Binding {
+        scope: Scope::Settings,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
         scope: Scope::Person,
         chords: &[&[Key::ch('f')]],
         action: Action::Commit(Act::Follow),
@@ -895,6 +953,41 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::At,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Edit,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter save"),
+        help: "save it",
+    },
+    Binding {
+        scope: Scope::Edit,
+        chords: &[&[Key::code(KeyCode::Tab)], &[Key::code(KeyCode::Down)]],
+        action: Action::Next,
+        hint: Some("tab next"),
+        help: "next match",
+    },
+    Binding {
+        scope: Scope::Edit,
+        chords: &[&[Key::code(KeyCode::BackTab)], &[Key::code(KeyCode::Up)]],
+        action: Action::Previous,
+        hint: None,
+        help: "previous match",
+    },
+    Binding {
+        scope: Scope::Edit,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
+    },
+    Binding {
+        scope: Scope::Edit,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,
@@ -1450,6 +1543,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Messages,
         hint: None,
         help: "messages",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch(',')]],
+        action: Action::Settings,
+        hint: None,
+        help: "settings",
     },
     Binding {
         scope: Scope::Global,

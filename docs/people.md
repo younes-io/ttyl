@@ -91,7 +91,9 @@ following you.
 <kbd>B</kbd> also works on a person in the followers and following tabs of a
 profile, in people search results, and in a group of people who followed you.
 
-Run `ttyl blocked` to print the handles you block, one per line.
+Run `ttyl blocked` to print the handles you block, one per line, and
+`ttyl muted` for the ones you mute. [Settings](settings.html#account) lists
+both, where <kbd>m</kbd> unmutes and <kbd>B</kbd> unblocks.
 
 ## See your starred commits {#starred}
 
