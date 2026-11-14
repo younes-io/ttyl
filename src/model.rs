@@ -268,6 +268,142 @@ pub struct Row {
     /// Whether the user just muted the author, so the log folds the commit away.
     #[serde(skip)]
     pub muted: bool,
+    /// Whether the body shows a translation, or one is on its way.
+    #[serde(skip)]
+    pub showing: Showing,
+}
+
+/// What the body of a commit reads as: the words its author wrote, or the reader's language.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Showing {
+    #[default]
+    Original,
+    /// The original, while its translation is on its way.
+    Translating,
+    /// The translation, from the language named.
+    Translation { from: String },
+}
+
+/// What dev-null.sh made of translating a commit into the reader's language.
+#[derive(Debug, Clone)]
+pub enum Translation {
+    Done(Translated),
+    Skipped(Untranslated),
+}
+
+#[derive(Debug, Clone)]
+pub struct Translated {
+    /// The language it was written in, named in English, such as `French`.
+    pub from: String,
+    pub body_segments: Vec<Segment>,
+    pub preview_segments: Option<Vec<Segment>>,
+    /// The translation as Markdown, for what a pipe reads.
+    pub body: String,
+}
+
+/// Why a commit has no translation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Untranslated {
+    /// It is already in the reader's language, named in English.
+    Already(String),
+    /// It is in no language, such as emoji or a link alone.
+    NoLanguage,
+}
+
+impl Translation {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            translation: Option<Display>,
+        }
+
+        #[derive(Deserialize)]
+        struct Display {
+            language: String,
+            source_language: Option<String>,
+            source_name: Option<String>,
+            available: bool,
+            translated: Option<Body>,
+        }
+
+        #[derive(Deserialize)]
+        struct Body {
+            body_segments: Vec<Segment>,
+            preview_segments: Option<Vec<Segment>>,
+        }
+
+        let Some(display) = serde_json::from_str::<Wire>(json)?.translation else {
+            return Ok(Translation::Skipped(Untranslated::NoLanguage));
+        };
+        Ok(
+            match (display.available, display.translated, display.source_name) {
+                (true, Some(body), Some(from)) => Translation::Done(Translated {
+                    from,
+                    body: markdown(&body.body_segments),
+                    body_segments: body.body_segments,
+                    preview_segments: body.preview_segments,
+                }),
+                (_, _, Some(name))
+                    if display.source_language.as_ref() == Some(&display.language) =>
+                {
+                    Translation::Skipped(Untranslated::Already(name))
+                }
+                _ => Translation::Skipped(Untranslated::NoLanguage),
+            },
+        )
+    }
+}
+
+/// Writes segments back as the Markdown they were split from. dev-null.sh drops the line breaks
+/// around a code block's fences, so they go back in.
+pub fn markdown(segments: &[Segment]) -> String {
+    let mut out = String::new();
+    for segment in segments {
+        match segment {
+            Segment::Text { text } => out.push_str(text),
+            Segment::Code { code } => {
+                out.push('`');
+                out.push_str(code);
+                out.push('`');
+            }
+            Segment::Block { language, lines } => {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str("```");
+                out.push_str(language.as_deref().unwrap_or(""));
+                for line in lines {
+                    out.push('\n');
+                    for span in line {
+                        out.push_str(&span.text);
+                    }
+                }
+                out.push_str("\n```\n");
+            }
+        }
+    }
+    if out.ends_with("```\n") {
+        out.pop();
+    }
+    out
+}
+
+/// What the user set on dev-null.sh that ttyl reads.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Settings {
+    /// The language commits translate into, or `None` to follow the device.
+    pub translation_language: Option<String>,
+}
+
+impl Settings {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Settings,
+        }
+
+        serde_json::from_str::<Wire>(json).map(|wire| wire.data)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

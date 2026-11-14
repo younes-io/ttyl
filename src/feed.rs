@@ -19,8 +19,8 @@ use crate::clock::Spark;
 use crate::code;
 use crate::keys::Action;
 use crate::model::{
-    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment, Shown,
-    Status,
+    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment,
+    Showing, Shown, Status,
 };
 use crate::theme;
 
@@ -532,7 +532,7 @@ fn row_lines<Tz: TimeZone>(
     }
     let lane = Style::new().fg(theme::lane(commit.author.lane));
     let rail = rail();
-    let header = header_with(commit, out.content(), now, counts(row));
+    let header = header(commit, out.content(), now, counts(row));
     out.node(Span::styled("● ", lane), rail.clone(), header);
 
     let mut text = body(&commit.body_segments, out.content());
@@ -603,7 +603,18 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
             Style::new().fg(theme::ACCENT),
         ));
     }
+    spans.extend(showing(row));
     spans
+}
+
+/// The header's note that the body reads as a translation, or soon will.
+pub(crate) fn showing(row: &Row) -> Option<Span<'static>> {
+    let note = match &row.showing {
+        Showing::Original => return None,
+        Showing::Translating => " · translating…".to_owned(),
+        Showing::Translation { from } => format!(" · translated from {from} · t original"),
+    };
+    Some(Span::styled(note, theme::muted()))
 }
 
 fn quote_line(quoted: Option<&Shown<Quote>>, width: usize) -> Vec<Span<'static>> {
@@ -904,7 +915,7 @@ fn quote<Tz: TimeZone>(
     match quoted {
         Some(Shown::Live(quote)) => {
             let commit = &quote.commit;
-            lines.push(header(commit, inner, now, None));
+            lines.push(header(commit, inner, now, Vec::new()));
             let segments = commit
                 .preview_segments
                 .as_ref()
@@ -1049,19 +1060,6 @@ pub(crate) fn one_line(segments: &[Segment], text: Style) -> Vec<Span<'static>> 
 }
 
 pub(crate) fn header<Tz: TimeZone>(
-    commit: &Commit,
-    width: usize,
-    now: &DateTime<Tz>,
-    mark: Option<&str>,
-) -> Vec<Span<'static>> {
-    let tail = mark
-        .map(|mark| Span::styled(format!(" · {mark}"), theme::muted()))
-        .into_iter()
-        .collect();
-    header_with(commit, width, now, tail)
-}
-
-fn header_with<Tz: TimeZone>(
     commit: &Commit,
     width: usize,
     now: &DateTime<Tz>,

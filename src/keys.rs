@@ -75,6 +75,8 @@ pub enum Act {
     Pipe,
     /// Mutes the author, or unmutes them.
     Mute,
+    /// Swaps the body for its translation, or back to the original.
+    Translate,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -117,7 +119,7 @@ impl Action {
             | Action::Profile
             | Action::Preview
             | Action::Link(_)
-            | Action::Commit(Act::Images | Act::OpenQuote) => Group::Read,
+            | Action::Commit(Act::Images | Act::OpenQuote | Act::Translate) => Group::Read,
             Action::Compose
             | Action::Send
             | Action::Editor
@@ -778,6 +780,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Images),
         hint: Some("i view"),
         help: "view the images",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('t')]],
+        action: Action::Commit(Act::Translate),
+        hint: None,
+        help: "translate, or show the original",
     },
     Binding {
         scope: Scope::Commit,

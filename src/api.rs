@@ -16,7 +16,8 @@ use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
     Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId,
-    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Segment,
+    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Segment, Settings,
+    Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -83,6 +84,13 @@ pub enum Call {
         handle: String,
         on: bool,
     },
+    /// What the user set on dev-null.sh, for the language commits translate into.
+    Settings,
+    /// The commit in `language`, translated on dev-null.sh.
+    Translate {
+        id: CommitId,
+        language: String,
+    },
     User(String),
     /// Someone's commits, or with `replies` their replies, as their profile lists them.
     Commits {
@@ -148,6 +156,8 @@ pub enum Reply {
     Notifications(NotificationPage),
     Group(GroupPage),
     Preview(Vec<Segment>),
+    Settings(Settings),
+    Translation(Box<Translation>),
     Done,
 }
 
@@ -310,6 +320,20 @@ impl Client {
                 let path = format!("/api/v1/users/{}/mute", escape(handle));
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
+            }
+            Call::Settings => {
+                let (status, text) = self.send("GET", "/api/v1/me/settings", String::new())?;
+                (Settings::parse(&text))
+                    .map(Reply::Settings)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Translate { id, language } => {
+                let path = format!("/api/v1/commits/{}/translation", escape(&id.0));
+                let body = serde_json::json!({ "language": language }).to_string();
+                let (status, text) = self.send("POST", &path, body)?;
+                (Translation::parse(&text))
+                    .map(|translation| Reply::Translation(Box::new(translation)))
+                    .map_err(|error| unreadable(status, error))
             }
             Call::User(handle) => self
                 .user(handle)

@@ -34,7 +34,8 @@ use crate::keys::{
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
+    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status,
+    Translation, Untranslated, User,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -366,6 +367,7 @@ impl Session {
                         }
                         Act::Images => !row.media.images.is_empty(),
                         Act::OpenQuote => matches!(row.quoted_commit, Some(Shown::Live(_))),
+                        Act::Translate => !row.commit.body.trim().is_empty(),
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
@@ -378,7 +380,8 @@ impl Session {
                 | Act::Report
                 | Act::Vote
                 | Act::Images
-                | Act::OpenQuote => false,
+                | Act::OpenQuote
+                | Act::Translate => false,
             },
             Some(Selected::Person(user)) => act == Act::Follow && user.handle != *me,
             None => false,
@@ -797,6 +800,13 @@ fn muted(handle: &str, on: bool) -> String {
     }
 }
 
+fn untranslated(why: &Untranslated) -> String {
+    match why {
+        Untranslated::Already(language) => format!("already in {language}"),
+        Untranslated::NoLanguage => "nothing to translate".to_owned(),
+    }
+}
+
 /// Counts what came in without naming it, since reading the notifications would mark them read.
 fn notified(new: u32) -> String {
     let what = if new == 1 {
@@ -840,6 +850,8 @@ pub struct Engine {
     reloaded_at: Option<Instant>,
     /// What the last frame had selected, so a new selection can lift into place.
     lifted: Option<String>,
+    /// The language the device reads in, which commits translate into unless the user picked one.
+    device_language: Option<String>,
 }
 
 impl Engine {
@@ -860,6 +872,7 @@ impl Engine {
             gallery: Gallery::new(Picker::halfblocks()),
             reloaded_at: None,
             lifted: None,
+            device_language: None,
         }
     }
 
@@ -873,6 +886,15 @@ impl Engine {
 
     pub fn with_drafts(self, drafts: Drafts) -> Self {
         Engine { drafts, ..self }
+    }
+
+    /// Translates into `device`, as the device's locale names it, unless the user picked a language on
+    /// dev-null.sh.
+    pub fn with_language(self, device: Option<String>) -> Self {
+        Engine {
+            device_language: device,
+            ..self
+        }
     }
 
     /// Opens on what the last run saw while the server is asked again, so the timeline shows at once
@@ -1692,6 +1714,10 @@ impl Engine {
                 let on = session.store.mute(&author);
                 (Some(muted(&author, on)), Vec::new())
             }
+            Act::Translate => (
+                session.store.translate(&id).map(|why| untranslated(&why)),
+                Vec::new(),
+            ),
             Act::Copy => (Some(format!("copied {url}")), vec![Effect::Copy(url)]),
             Act::Browse => (
                 Some("opened in the browser".to_owned()),
@@ -1911,6 +1937,10 @@ impl Engine {
                 (Call::Report { id, .. }, Reply::Done) => {
                     Some(format!("reported {}. thanks.", id.short_hash()))
                 }
+                (Call::Translate { .. }, Reply::Translation(translation)) => match &**translation {
+                    Translation::Skipped(why) => Some(untranslated(why)),
+                    Translation::Done(_) => None,
+                },
                 (Call::Vote { option, .. }, Reply::Commit(focus)) => {
                     let poll = focus.card.media.poll.as_ref();
                     let chosen =
@@ -1968,7 +1998,7 @@ impl Engine {
 
     fn open(&mut self, account: Account, now: Instant) {
         self.phase = Phase::Ready(Box::new(Session {
-            store: Store::new(account),
+            store: Store::new(account).with_device_language(self.device_language.clone()),
             log: LogScreen::default(),
             inbox: Inbox::default(),
             stack: Vec::new(),
@@ -2123,7 +2153,8 @@ impl Engine {
                     | Call::Restore(_)
                     | Call::Pastel(_)
                     | Call::Vote { .. }
-                    | Call::Report { .. } => {
+                    | Call::Report { .. }
+                    | Call::Translate { .. } => {
                         session.store.refused(&call);
                         match &call {
                             Call::Star { id, .. } => {
@@ -2146,6 +2177,10 @@ impl Engine {
                         };
                         self.toast = Some(text);
                         self.timers.set(Timer::Toast, now + TOAST);
+                        offline
+                    }
+                    Call::Settings => {
+                        session.store.refused(&call);
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,

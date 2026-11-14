@@ -11,6 +11,7 @@ uses what your terminal can do.
 | `TTYL_MOTION` | Set to `off` to have the selection and messages appear at once, with no fade. Stars and sparks still show, then settle. |
 | `VISUAL`, `EDITOR` | The editor that <kbd>ctrl-e</kbd> opens in the composer. ttyl tries `$VISUAL`, then `$EDITOR`, then `vi`. |
 | `DEVNULL_URL` | The server ttyl talks to. The default is `https://dev-null.sh`. Set it to use a local copy of dev-null.sh while you develop. |
+| `LC_ALL`, `LC_MESSAGES`, `LANG` | The language <kbd>t</kbd> translates commits into, when you picked none in your dev-null.sh settings. ttyl takes the first that names a language, so `fr_FR.UTF-8` gives French. The default is English. |
 | `XDG_CONFIG_HOME` | Where ttyl keeps the key this terminal signs in with, in `ttyl/device_ed25519`. The default is `~/.config`. |
 | `XDG_STATE_HOME` | Where ttyl keeps your drafts, in `ttyl/drafts`, and the icons you picked, in `ttyl/icons`. The default is `~/.local/state`. |
 

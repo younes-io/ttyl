@@ -25,7 +25,8 @@ developers where a post is called a commit.
 ## everything, without the mouse
 
 - **Read** the following, latest and trending logs. Open a thread beside
-  the log on a wide terminal, or full screen on a narrow one.
+  the log on a wide terminal, or full screen on a narrow one. Translate a
+  commit in place with `t`.
 - **Write** commits, replies and quotes. Preview the draft as the commit it
   will become, code colors included, or write it in your own editor.
 - **Attach** a poll or up to three images to a commit. Vote in a
