@@ -54,12 +54,14 @@ struct Switch {
 }
 
 /// How the user keeps a conversation, as dev-null.sh last said and as they want it now, with how
-/// long the mute they last asked for lasts and the one dev-null.sh last took.
+/// long a mute they picked since lasts and the one dev-null.sh last took.
 #[derive(Debug, Clone, Copy)]
 struct Filing {
     server: Filed,
     want: Filed,
-    hush: Hush,
+    /// The mute length the user picked since, while they want it muted. A muted `want` without
+    /// one is the mute the conversation came with, which dev-null.sh already has.
+    hush: Option<Hush>,
     took: Option<Hush>,
 }
 
@@ -67,13 +69,15 @@ impl Filing {
     /// The change still to send, if any, one at a time.
     fn next(&self) -> Option<Refile> {
         let (server, want) = (self.server, self.want);
-        let rehush = want.muted && self.took.is_some_and(|took| took != self.hush);
+        // A mute set elsewhere leaves `took` empty, so a length picked here goes out even when
+        // the conversation already shows muted.
+        let rehush = self.hush.is_some_and(|hush| self.took != Some(hush));
         if server.pinned != want.pinned {
             Some(Refile::Pin(want.pinned))
         } else if server.stashed != want.stashed {
             Some(Refile::Stash(want.stashed))
         } else if server.muted != want.muted || rehush {
-            Some(Refile::Mute(want.muted.then_some(self.hush)))
+            Some(Refile::Mute(self.hush))
         } else {
             None
         }
@@ -337,7 +341,7 @@ impl Store {
         let filing = self.filings.entry(chat.clone()).or_insert(Filing {
             server: shown,
             want: shown,
-            hush: Hush::Forever,
+            hush: None,
             took: None,
         });
         match change {
@@ -345,15 +349,15 @@ impl Store {
             Refile::Stash(on) => filing.want.stashed = on,
             Refile::Mute(hush) => {
                 filing.want.muted = hush.is_some();
-                filing.hush = hush.unwrap_or(filing.hush);
+                filing.hush = hush;
             }
         }
         filing.want
     }
 
-    /// Each conversation changed in a way dev-null.sh hasn't confirmed yet, as the user wants it.
-    pub fn filings(&self) -> impl Iterator<Item = (&Chat, Filed)> {
-        (self.filings.iter()).map(|(chat, filing)| (chat, filing.want))
+    /// How the user wants `chat` kept, while dev-null.sh hasn't confirmed it yet.
+    pub fn filed(&self, chat: &Chat) -> Option<Filed> {
+        (self.filings.get(chat)).map(|filing| filing.want)
     }
 
     /// Flips the commit between its translation and the original, asking dev-null.sh for the

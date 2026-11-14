@@ -266,20 +266,22 @@ impl Conversations {
     }
 
     /// A first page replaces the list and keeps the selection on its conversation; a later one adds
-    /// the conversations it brings.
+    /// the conversations it brings. Either leaves out what the user moved to another folder.
     pub fn land(&mut self, before: Option<&str>, page: ConversationPage) {
         self.requests = page.requests;
         let kept = self.kept();
         self.failure = None;
+        let folder = self.folder;
+        let conversations = (page.conversations.into_iter()).filter(|row| folder.holds(row.filed));
         match (before, &mut self.loaded) {
             (None, _) => {
                 self.loaded = Some(Loaded {
-                    rows: page.conversations,
+                    rows: conversations.collect(),
                     next: page.next,
                 });
             }
             (Some(before), Some(loaded)) if loaded.next.as_deref() == Some(before) => {
-                for conversation in page.conversations {
+                for conversation in conversations {
                     let chat = conversation.party.chat();
                     if !loaded.rows.iter().any(|row| row.party.is(&chat)) {
                         loaded.rows.push(conversation);
@@ -298,7 +300,9 @@ impl Conversations {
     /// The people `query` matches, if the find on screen is still for it.
     pub fn land_people(&mut self, query: &str, people: Vec<Candidate>) {
         if self.query == query {
+            let kept = self.kept();
             self.people = people;
+            self.reselect(kept);
         }
     }
 
@@ -317,25 +321,17 @@ impl Conversations {
         }
     }
 
-    /// Shows `chat` kept as `filed`, which can move it out of this folder.
+    /// Shows `chat` kept as `filed`. A conversation moved to another folder stays where it is,
+    /// marked, until the folder is listed again, so the same key takes it back.
     pub fn refile(&mut self, chat: &Chat, filed: Filed) {
-        let belongs = match self.folder {
-            Folder::Open => !filed.stashed,
-            Folder::Stashed => filed.stashed,
-            Folder::Requests => true,
-        };
         let kept = self.kept();
         let Some(loaded) = &mut self.loaded else {
             return;
         };
-        if belongs {
-            for row in loaded.rows.iter_mut().filter(|row| row.party.is(chat)) {
-                row.filed = filed;
-            }
-            order(&mut loaded.rows);
-        } else {
-            loaded.rows.retain(|row| !row.party.is(chat));
+        for row in loaded.rows.iter_mut().filter(|row| row.party.is(chat)) {
+            row.filed = filed;
         }
+        order(&mut loaded.rows);
         self.reselect(kept);
     }
 
@@ -351,15 +347,26 @@ impl Conversations {
         self.selected = self.selected.min(self.count().saturating_sub(1));
     }
 
-    /// The selected conversation, to keep the selection on as rows move.
+    /// Who the selection is on, a conversation or a person the find matched, to keep it there as
+    /// rows and people come and go.
     fn kept(&self) -> Option<Chat> {
-        self.selected_conversation()
-            .map(|conversation| conversation.party.chat())
+        Some(match self.selected()? {
+            Picked::Conversation(conversation) => conversation.party.chat(),
+            Picked::Person(candidate) => Chat::Direct(candidate.user.handle.clone()),
+        })
     }
 
-    /// Puts the selection back on `kept`, or where it was when that left the list.
+    /// Puts the selection back on `kept`, as a conversation or else as a person, or where it was
+    /// when that left the list.
     fn reselect(&mut self, kept: Option<Chat>) {
-        let found = kept.and_then(|chat| (self.rows().iter()).position(|row| row.party.is(&chat)));
+        let found = kept.and_then(|chat| {
+            let rows = self.rows();
+            (rows.iter().position(|row| row.party.is(&chat))).or_else(|| {
+                (self.people().iter())
+                    .position(|candidate| matches!(&chat, Chat::Direct(handle) if *handle == candidate.user.handle))
+                    .map(|at| rows.len() + at)
+            })
+        });
         self.selected = found.unwrap_or(self.selected.min(self.count().saturating_sub(1)));
     }
 
@@ -407,7 +414,14 @@ impl Conversations {
         let selected = self.selected;
         for (at, conversation) in loaded.rows.iter().enumerate() {
             at_line.push(lines.len());
-            lines.push(row(conversation, at == selected, width, me, wall));
+            lines.push(row(
+                conversation,
+                at == selected,
+                self.folder,
+                width,
+                me,
+                wall,
+            ));
         }
         if !people.is_empty() {
             lines.push(Line::styled("write to", theme::muted()));
@@ -478,10 +492,12 @@ fn person(candidate: &Candidate, selected: bool, width: usize) -> Line<'static> 
 }
 
 /// `● Grace Hopper @grace (2)  did you see the patch?          3m`, or for an org
-/// `● #unix-room 5 members (4)  grace: pushed v2          3m`, filling `width`.
+/// `● #unix-room 5 members (4)  grace: pushed v2          3m`, filling `width`. A conversation
+/// just moved out of `folder` says where it went.
 fn row<Tz: TimeZone>(
     conversation: &Conversation,
     selected: bool,
+    folder: Folder,
     width: usize,
     me: &str,
     wall: &DateTime<Tz>,
@@ -536,7 +552,15 @@ fn row<Tz: TimeZone>(
         spans.push(Span::styled(last.preview().into_owned(), text));
     }
     let filed = conversation.filed;
-    let marks = [(filed.pinned, "pinned"), (filed.muted, "muted")];
+    let moved = match filed.stashed {
+        true => "stashed",
+        false => "unstashed",
+    };
+    let marks = [
+        (filed.pinned, "pinned"),
+        (filed.muted, "muted"),
+        (!folder.holds(filed), moved),
+    ];
     let age = (marks.iter())
         .filter_map(|(on, mark)| on.then_some(*mark))
         .map(str::to_owned)

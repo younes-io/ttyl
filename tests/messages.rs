@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use common::{boot, contains, press, runs, screen, secs, tap};
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 use ttyl::api::{Call, Error, Paging, Reply};
 use ttyl::engine::{Effect, Engine, Event};
@@ -858,6 +858,29 @@ fn file(change: Refile) -> Call {
     }
 }
 
+/// ctrl-r, which lists the folder again, and what goes out for it.
+fn reload(engine: &mut Engine, at: Instant) -> Vec<Effect> {
+    let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    let mut effects = engine.update(Event::Key(ctrl_r), at);
+    effects.extend(engine.pump(at));
+    effects
+}
+
+/// Answers what goes out with `serve` until nothing more does, and returns every call that went.
+fn settle(
+    engine: &mut Engine,
+    mut effects: Vec<Effect>,
+    at: Instant,
+    serve: impl Fn(&Call) -> Option<Reply>,
+) -> Vec<Call> {
+    let mut ran = Vec::new();
+    while !runs(&effects).is_empty() {
+        ran.extend(runs(&effects).into_iter().cloned());
+        effects = answer(engine, &effects, at, &serve);
+    }
+    ran
+}
+
 /// Someone dev-null.sh offers to start a conversation with, and why they can't be, if they can't.
 fn candidate(handle: &str, reason: Option<&str>) -> Value {
     let mut user = fixture("remotes")["data"][0]["partner"].clone();
@@ -919,15 +942,82 @@ fn caret_pins_to_the_top_at_once_and_a_second_press_waits_for_the_first() {
 }
 
 #[test]
-fn s_stashes_the_conversation_out_of_open() {
+fn s_stashes_in_place_and_a_second_s_takes_it_back() {
     let at = Instant::now();
     let mut engine = boot(at);
     on_grace(&mut engine, at, |_| {});
-    let effects = press(&mut engine, "s", at);
-    assert_eq!(runs(&effects), [&file(Refile::Stash(true))]);
+    let first = press(&mut engine, "s", at);
+    assert_eq!(runs(&first), [&file(Refile::Stash(true))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "Grace @grace").1.contains("stashed"),
+        "{rows:#?}"
+    );
+    assert!(contains(&rows, "stashed @grace"), "{rows:#?}");
+
+    let second = press(&mut engine, "s", at);
+    assert!(runs(&second).is_empty(), "{second:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    let (_, back) = row(&rows, "Grace @grace");
+    assert!(!back.contains("stashed"), "{rows:#?}");
+    assert!(contains(&rows, "unstashed @grace"), "{rows:#?}");
+    let next = answer(&mut engine, &first, at, |_| Some(Reply::Done));
+    assert_eq!(runs(&next), [&file(Refile::Stash(false))]);
+}
+
+#[test]
+fn s_in_stashed_unstashes_in_place_and_a_second_s_stashes_it_again() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let effects = tap(&mut engine, KeyCode::Tab, at);
+    let stashed = remotes(|page| {
+        let rows = page["data"].as_array().unwrap();
+        page["data"] = json!([rows[1], rows[2]]);
+        page["data"][0]["is_archived"] = json!(true);
+        page["data"][1]["is_archived"] = json!(true);
+    });
+    answer(&mut engine, &effects, at, |_| {
+        Some(Reply::Conversations(stashed.clone()))
+    });
+    let first = press(&mut engine, "s", at);
+    assert_eq!(runs(&first), [&file(Refile::Stash(false))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        row(&rows, "Grace @grace").1.contains("unstashed"),
+        "{rows:#?}"
+    );
+
+    let second = press(&mut engine, "s", at);
+    assert!(runs(&second).is_empty(), "{second:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        !row(&rows, "Grace @grace").1.contains("stashed"),
+        "{rows:#?}"
+    );
+    assert!(
+        !row(&rows, "Linus @linus").1.contains("stashed"),
+        "{rows:#?}"
+    );
+    let next = answer(&mut engine, &first, at, |_| Some(Reply::Done));
+    assert_eq!(runs(&next), [&file(Refile::Stash(true))]);
+}
+
+#[test]
+fn listing_open_again_drops_a_conversation_stashed_before_dev_null_had_it() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    press(&mut engine, "s", at);
+    let effects = reload(&mut engine, at);
+    assert!(
+        runs(&effects).contains(&&conversations(Folder::Open, "")),
+        "{effects:#?}"
+    );
+    answer(&mut engine, &effects, at, dev_null);
     let rows = screen(&mut engine, 100, 30, at);
     assert!(!contains(&rows, "Grace @grace"), "{rows:#?}");
-    assert!(contains(&rows, "stashed @grace"), "{rows:#?}");
+    assert!(contains(&rows, "@linus"), "{rows:#?}");
 }
 
 #[test]
@@ -965,6 +1055,62 @@ fn m_asks_how_long_to_mute_and_unmutes_a_muted_one_at_once() {
         &screen(&mut engine, 100, 30, at),
         "unmuted @grace"
     ));
+}
+
+#[test]
+fn m_then_a_mute_length_while_offline_sends_that_length_once_back() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |page| {
+        page["data"][2]["muted_until_at"] = json!("2999-01-01T00:00:00Z");
+    });
+    let mut effects = reload(&mut engine, at);
+    while !runs(&effects).is_empty() {
+        let mut next = Vec::new();
+        for effect in effects {
+            if let Effect::Run(ticket, _) = effect {
+                let lost = Error::Http(ureq::Error::ConnectionFailed);
+                next.extend(engine.update(Event::Reply(ticket, Err(lost)), at));
+            }
+        }
+        next.extend(engine.pump(at));
+        effects = next;
+    }
+    let effects = press(&mut engine, "mmw", at);
+    assert!(
+        !(runs(&effects).iter()).any(|call| matches!(call, Call::File { .. })),
+        "nothing is written while offline: {effects:#?}"
+    );
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "muted @grace for a week"
+    ));
+
+    let online = |muted: bool| {
+        let page = remotes(|page| {
+            if muted {
+                page["data"][2]["muted_until_at"] = json!("2999-01-01T00:00:00Z");
+            }
+        });
+        move |call: &Call| match call {
+            Call::Conversations { .. } => Some(Reply::Conversations(page.clone())),
+            Call::Page(log) => Some(Reply::Page(common::page(*log))),
+            Call::File { .. } => Some(Reply::Done),
+            _ => None,
+        }
+    };
+    let effects = reload(&mut engine, at);
+    let ran = settle(&mut engine, effects, at, online(true));
+    let week = file(Refile::Mute(Some(Hush::Week)));
+    assert!(ran.contains(&week), "back online: {ran:#?}");
+
+    let effects = reload(&mut engine, at);
+    settle(&mut engine, effects, at, online(false));
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        !row(&rows, "@grace").1.contains("muted"),
+        "once sent, dev-null.sh's word stands: {rows:#?}"
+    );
 }
 
 #[test]
@@ -1086,6 +1232,50 @@ fn slash_finds_conversations_and_people_and_typing_it_fires_no_key() {
         runs(&effects),
         [&conversations(Folder::Open, "")],
         "esc drops the find before leaving"
+    );
+}
+
+#[test]
+fn a_found_person_stays_selected_when_older_conversations_land() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    press(&mut engine, "/", at);
+    press(&mut engine, "gra", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let found = remotes(|page| {
+        let rows = page["data"].as_array().unwrap();
+        page["data"] = json!([rows[2]]);
+        page["has_more"] = json!(true);
+    });
+    let candidates = json!({ "candidates": [candidate("graham", None), candidate("grant", None)] });
+    let candidates = Candidate::parse_list(&candidates.to_string()).unwrap();
+    let older = answer(&mut engine, &effects, at, |call| match call {
+        Call::Conversations { before: None, .. } => Some(Reply::Conversations(found.clone())),
+        Call::Candidates(_) => Some(Reply::Candidates(candidates.clone())),
+        _ => None,
+    });
+
+    press(&mut engine, "G", at);
+    let page = remotes(|page| {
+        let rows = page["data"].as_array().unwrap();
+        page["data"] = json!([rows[1], rows[4]]);
+    });
+    answer(&mut engine, &older, at, |call| {
+        matches!(
+            call,
+            Call::Conversations {
+                before: Some(_),
+                ..
+            }
+        )
+        .then(|| Reply::Conversations(page.clone()))
+    });
+    assert!(contains(&screen(&mut engine, 100, 30, at), "@ken"));
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        runs(&effects).iter().any(|call| matches!(call, Call::Messages { chat: Chat::Direct(handle), .. } if handle == "grant")),
+        "{effects:#?}"
     );
 }
 
