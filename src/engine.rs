@@ -789,9 +789,12 @@ impl Session {
                 Overlay::Pipe { command: text, .. }
                 | Overlay::Search { query: text }
                 | Overlay::Find { query: text }
-                | Overlay::At { text }
-                | Overlay::Edit { text, .. },
+                | Overlay::At { text },
             ) => (text, usize::MAX),
+            Some(Overlay::Edit { text, at, .. }) => {
+                *at = None;
+                (text, usize::MAX)
+            }
             None => {
                 if let Some(conversation) = self.conversation_mut() {
                     conversation.paste(pasted);
@@ -904,7 +907,9 @@ impl Session {
                 (None, Some(Call::Delete(id)))
             }
             (Overlay::Unschedule { id, .. }, Action::Confirm) => (None, Some(Call::Unschedule(id))),
-            (Overlay::Revoke { id, .. }, Action::Confirm) => (None, Some(Call::Revoke(id))),
+            (Overlay::Revoke { id, this, .. }, Action::Confirm) => {
+                (None, Some(Call::Revoke { id, this }))
+            }
             (Overlay::Edit { key, text, at }, Action::Next | Action::Previous) => {
                 let count = self.store.config().candidates(key, &text).len();
                 let at = match (at, action) {
@@ -1588,7 +1593,7 @@ impl Engine {
                 match result {
                     Ok(reply) => {
                         self.health = None;
-                        return self.arrived(&call, reply, now);
+                        return self.arrived(ticket, &call, reply, now);
                     }
                     Err(error) => self.failed(call, priority, error, now),
                 }
@@ -2711,7 +2716,7 @@ impl Engine {
         effects
     }
 
-    fn arrived(&mut self, call: &Call, reply: Reply, now: Instant) -> Vec<Effect> {
+    fn arrived(&mut self, ticket: Ticket, call: &Call, reply: Reply, now: Instant) -> Vec<Effect> {
         let Phase::Ready(session) = &mut self.phase else {
             if let Reply::Account(account) = reply {
                 self.open(account, now);
@@ -2747,10 +2752,13 @@ impl Engine {
             && let Reply::People(page) = &reply
         {
             let blocks = matches!(call, Call::Blocked { .. });
+            let mut awaited = None;
             for settings in session.settings_mut() {
-                settings.land_people(page, blocks, cursor.is_none());
+                settings.land_people(page, blocks, cursor.as_deref());
+                awaited = awaited.or_else(|| settings.awaited(blocks).map(str::to_owned));
             }
-            if let Some(next) = page.next_cursor.clone() {
+            // Asked again after a page a reload left behind, which held up the request.
+            if let Some(next) = awaited {
                 let cursor = Some(next);
                 let more = match blocks {
                     true => Call::Blocked { cursor },
@@ -2767,23 +2775,20 @@ impl Engine {
             }
             return Vec::new();
         }
-        if let Call::Revoke(id) = call {
-            let fingerprint = self.fingerprint.as_deref();
-            let mut name = None;
-            let mut this = false;
-            for settings in session.settings_mut() {
-                if let Some(device) = settings.device_by(id) {
-                    this = fingerprint == Some(device.fingerprint.as_str());
-                    name = Some(device.name.clone());
-                }
-                settings.revoked(id);
-            }
-            if this {
+        if let Call::Revoke { id, this } = call {
+            if *this {
                 self.sign_out();
                 self.phase = Phase::SignIn(Step::Ready(Some(
                     "You revoked this device. Sign in to use ttyl here again.".to_owned(),
                 )));
                 return Vec::new();
+            }
+            let mut name = None;
+            for settings in session.settings_mut() {
+                if let Some(device) = settings.device_by(id) {
+                    name = Some(device.name.clone());
+                }
+                settings.revoked(id);
             }
             let name = name.unwrap_or_else(|| "the device".to_owned());
             self.toast(format!("revoked {name}. it's signed out."), now);
@@ -3082,7 +3087,9 @@ impl Engine {
                 _ => None,
             };
             let unread = session.store.unread;
-            session.store.apply(call, reply);
+            session
+                .store
+                .answer(call, reply, ticket, self.sched.upcoming());
             // The results come out with the vote, so its bars fill in now.
             if let Call::Vote { id, .. } = call {
                 session.filled.insert(id.clone());
@@ -3427,7 +3434,7 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Revoke(_) => {
+                    Call::Revoke { .. } => {
                         self.toast = Some(error.to_string());
                         self.timers.set(Timer::Toast, now + TOAST);
                         // It may be gone already, so the list shows what's true.

@@ -142,6 +142,34 @@ impl Field {
             Field::Timezone | Field::Language | Field::AutoTranslate
         )
     }
+
+    /// Puts this setting's value in `from` into `to`, for the settings `me` carries.
+    pub fn carry(self, from: &Me, to: &mut Me) {
+        match self {
+            Field::Pasteis => to.pasteis_mode = from.pasteis_mode,
+            Field::Color => to.preferred_lane = from.preferred_lane,
+            Field::Remotes => to.remotes = from.remotes,
+            Field::Prefs => {
+                if let (Some(from), Some(to)) = (from.remotes, &mut to.remotes) {
+                    to.from = from.from;
+                    to.pull_receipts = from.pull_receipts;
+                }
+            }
+            Field::Timezone | Field::Language | Field::AutoTranslate => {}
+        }
+    }
+
+    /// Puts this setting's value in `from` into `to`, for the settings `me/settings` carries.
+    pub fn carry_regional(self, from: &Settings, to: &mut Settings) {
+        match self {
+            Field::Timezone => to.timezone.clone_from(&from.timezone),
+            Field::Language => to
+                .translation_language
+                .clone_from(&from.translation_language),
+            Field::AutoTranslate => to.automatic_translation = from.automatic_translation,
+            Field::Pasteis | Field::Color | Field::Remotes | Field::Prefs => {}
+        }
+    }
 }
 
 /// Who can push to the user.

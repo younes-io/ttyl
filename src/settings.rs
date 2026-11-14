@@ -37,9 +37,15 @@ impl<T> Load<T> {
     }
 }
 
-fn listed(load: &Load<Vec<User>>) -> &[User] {
+/// The people listed so far, and the cursor of the page that comes after them.
+struct Listed {
+    users: Vec<User>,
+    next: Option<String>,
+}
+
+fn listed(load: &Load<Listed>) -> &[User] {
     match load {
-        Load::Ready(users) => users,
+        Load::Ready(listed) => &listed.users,
         Load::Loading | Load::Failed(_) => &[],
     }
 }
@@ -53,14 +59,47 @@ pub enum Row<'a> {
     Device(&'a Device),
 }
 
+impl Row<'_> {
+    fn spot(self) -> Spot {
+        match self {
+            Row::Key(key) => Spot::Key(key),
+            Row::Muted(user) => Spot::Muted(user.handle.clone()),
+            Row::Blocked(user) => Spot::Blocked(user.handle.clone()),
+            Row::Device(device) => Spot::Device(device.id.clone()),
+        }
+    }
+
+    fn is(self, spot: &Spot) -> bool {
+        match (self, spot) {
+            (Row::Key(key), Spot::Key(other)) => key == *other,
+            (Row::Muted(user), Spot::Muted(handle))
+            | (Row::Blocked(user), Spot::Blocked(handle)) => user.handle == *handle,
+            (Row::Device(device), Spot::Device(id)) => device.id == *id,
+            _ => false,
+        }
+    }
+}
+
+/// The row the cursor is on by what it shows, so it stays on it as rows above come and go.
+#[derive(Debug)]
+enum Spot {
+    Key(Key),
+    Muted(String),
+    Blocked(String),
+    Device(DeviceId),
+}
+
 /// The account's settings as one list under headings, the way `git config -l` lists them, with the
 /// people the user mutes and blocks and the devices that sign in as them below.
 pub struct SettingsScreen {
     /// Why `me/settings` didn't load, which leaves the region rows empty.
     region: Option<Failure>,
-    muted: Load<Vec<User>>,
-    blocked: Load<Vec<User>>,
+    muted: Load<Listed>,
+    blocked: Load<Listed>,
     devices: Load<Vec<Device>>,
+    /// The row the cursor is on.
+    spot: Option<Spot>,
+    /// Where `spot` was last found, where the cursor stays once that row goes.
     selected: usize,
     /// The first line on screen.
     top: usize,
@@ -73,6 +112,7 @@ impl Default for SettingsScreen {
             muted: Load::Loading,
             blocked: Load::Loading,
             devices: Load::Loading,
+            spot: None,
             selected: 0,
             top: 0,
         }
@@ -91,8 +131,16 @@ impl SettingsScreen {
             .collect()
     }
 
+    /// Where the cursor is among `rows`: on its row, or where that row was once it's gone.
+    fn at(&self, rows: &[Row]) -> usize {
+        (self.spot.as_ref())
+            .and_then(|spot| rows.iter().position(|row| row.is(spot)))
+            .unwrap_or_else(|| self.selected.min(rows.len().saturating_sub(1)))
+    }
+
     pub fn selected(&self, config: Config) -> Option<Row<'_>> {
-        self.rows(config).into_iter().nth(self.selected)
+        let rows = self.rows(config);
+        rows.get(self.at(&rows)).copied()
     }
 
     /// The device the cursor is on.
@@ -122,18 +170,36 @@ impl SettingsScreen {
         }
     }
 
-    /// Takes in a page of the people the user mutes, or with `blocks` blocks. The first page
-    /// replaces the list, as a reload starts over.
-    pub fn land_people(&mut self, page: &PeoplePage, blocks: bool, first: bool) {
+    /// Takes in the page at `cursor` of the people the user mutes, or with `blocks` blocks. The
+    /// first page replaces the list, as a reload starts over, and a later one must be the page the
+    /// list waits for, so a page from before the reload doesn't land on the new list.
+    pub fn land_people(&mut self, page: &PeoplePage, blocks: bool, cursor: Option<&str>) {
         let load = if blocks {
             &mut self.blocked
         } else {
             &mut self.muted
         };
         let users = page.people.iter().map(|person| person.user.clone());
-        match load {
-            Load::Ready(listed) if !first => listed.extend(users),
-            _ => *load = Load::Ready(users.collect()),
+        match (load, cursor) {
+            (load, None) => {
+                *load = Load::Ready(Listed {
+                    users: users.collect(),
+                    next: page.next_cursor.clone(),
+                });
+            }
+            (Load::Ready(listed), Some(cursor)) if listed.next.as_deref() == Some(cursor) => {
+                listed.users.extend(users);
+                listed.next.clone_from(&page.next_cursor);
+            }
+            _ => {}
+        }
+    }
+
+    /// The cursor of the page the list of people the user mutes, or with `blocks` blocks, waits for.
+    pub fn awaited(&self, blocks: bool) -> Option<&str> {
+        match if blocks { &self.blocked } else { &self.muted } {
+            Load::Ready(listed) => listed.next.as_deref(),
+            Load::Loading | Load::Failed(_) => None,
         }
     }
 
@@ -169,12 +235,13 @@ impl SettingsScreen {
     }
 
     pub fn can(&self, action: Action, config: Config) -> bool {
-        let rows = self.rows(config).len();
-        let selected = self.selected(config);
+        let rows = self.rows(config);
+        let at = self.at(&rows);
+        let selected = rows.get(at).copied();
         match action {
             Action::Back | Action::Refresh => true,
-            Action::Down | Action::Bottom => self.selected + 1 < rows,
-            Action::Up | Action::Top => self.selected > 0,
+            Action::Down | Action::Bottom => at + 1 < rows.len(),
+            Action::Up | Action::Top => at > 0,
             Action::Edit => matches!(selected, Some(Row::Key(key)) if config.has(key)),
             Action::Commit(Act::Mute) => matches!(selected, Some(Row::Muted(_))),
             Action::Commit(Act::Block) => matches!(selected, Some(Row::Blocked(_))),
@@ -184,15 +251,18 @@ impl SettingsScreen {
     }
 
     pub fn act(&mut self, action: Action, config: Config) {
-        let last = self.rows(config).len().saturating_sub(1);
-        self.selected = match action {
-            Action::Down => (self.selected + 1).min(last),
-            Action::Up => self.selected.saturating_sub(1),
+        let rows = self.rows(config);
+        let last = rows.len().saturating_sub(1);
+        let at = self.at(&rows);
+        let at = match action {
+            Action::Down => (at + 1).min(last),
+            Action::Up => at.saturating_sub(1),
             Action::Top => 0,
             Action::Bottom => last,
-            _ => self.selected,
-        }
-        .min(last);
+            _ => at,
+        };
+        self.spot = rows.get(at).map(|row| row.spot());
+        self.selected = at;
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -205,7 +275,9 @@ impl SettingsScreen {
     ) {
         let config = store.config();
         let rows = self.rows(config);
-        self.selected = self.selected.min(rows.len().saturating_sub(1));
+        let at = self.at(&rows);
+        self.spot = rows.get(at).map(|row| row.spot());
+        self.selected = at;
         let width = usize::from(area.width);
         let mut lines: Vec<Line> = Vec::new();
         let mut shown = 0..0;
@@ -262,11 +334,11 @@ impl SettingsScreen {
                     heading(&mut lines, title.to_owned());
                     note(&mut lines, failed(failure), fatal_style);
                 }
-                Load::Ready(users) if users.is_empty() => {
+                Load::Ready(Listed { users, .. }) if users.is_empty() => {
                     heading(&mut lines, title.to_owned());
                     note(&mut lines, "nobody".to_owned(), theme::muted());
                 }
-                Load::Ready(users) => {
+                Load::Ready(Listed { users, .. }) => {
                     heading(&mut lines, format!("{title} · {}", users.len()));
                     for user in users {
                         let still = match blocks {

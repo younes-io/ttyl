@@ -209,13 +209,8 @@ fn start() -> Result<(), String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err("not a terminal; run ttyl in one".to_owned());
     }
-    let (base, key) = device()?;
-    let cache = Cache::locate(&base, &key);
-    let start = cache.as_ref().and_then(Cache::load);
-    let mut client = Client::new(base, key);
-    if let Some(cache) = cache {
-        client = client.with_cache(cache);
-    }
+    let client = cached_client()?;
+    let start = client.kept();
     let client = Arc::new(client);
     let mut terminal = ratatui::init();
     // Asked before input is read on another thread, which would take the terminal's answer.
@@ -242,6 +237,17 @@ fn device() -> Result<(String, DeviceKey), String> {
 fn client() -> Result<Client, String> {
     let (base, key) = device()?;
     Ok(Client::new(base, key))
+}
+
+/// The client the timeline runs on, which keeps what it shows for the next launch.
+fn cached_client() -> Result<Client, String> {
+    let (base, key) = device()?;
+    let cache = Cache::locate(&base, &key);
+    let client = Client::new(base, key);
+    Ok(match cache {
+        Some(cache) => client.with_cache(cache),
+        None => client,
+    })
 }
 
 fn refused(error: &api::Error) -> String {
@@ -352,12 +358,12 @@ fn print_devices() -> Result<(), String> {
 
 /// Revokes the device with `id`, which only an id names, so a typo can't sign out another one.
 fn revoke(id: &str) -> Result<(), String> {
-    let client = client()?;
+    let client = cached_client()?;
     let id = DeviceId(id.to_owned());
     let this = (client.devices().map_err(|error| refused(&error))?)
         .into_iter()
         .any(|device| device.id == id && device.fingerprint == client.key().fingerprint());
-    client.revoke(&id).map_err(|error| refused(&error))?;
+    client.revoke(&id, this).map_err(|error| refused(&error))?;
     if this {
         eprintln!("revoked this device. run ttyl to sign in again.");
     }

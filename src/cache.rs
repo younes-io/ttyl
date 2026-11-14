@@ -1,7 +1,7 @@
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ssh_key::sha2::{Digest, Sha256};
 
@@ -25,18 +25,23 @@ pub struct Start {
 }
 
 impl Cache {
-    /// `$XDG_CACHE_HOME/ttyl/<id>`, falling back to `~/.cache`, where the id is a hash of the server and
-    /// device, so another account or server never shows this one's timeline.
+    /// `$XDG_CACHE_HOME/ttyl/<id>`, falling back to `~/.cache`.
     pub fn locate(base: &str, key: &DeviceKey) -> Option<Cache> {
         let root = env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+        Some(Cache::under(&root, base, key))
+    }
+
+    /// `<root>/ttyl/<id>`, where the id is a hash of the server and device, so another account or
+    /// server never shows this one's timeline.
+    pub fn under(root: &Path, base: &str, key: &DeviceKey) -> Cache {
         let digest = Sha256::digest(format!("{base}\n{}", key.fingerprint()));
         let id = digest[..16].iter().fold(String::new(), |mut id, byte| {
             let _ = write!(id, "{byte:02x}");
             id
         });
-        Some(Cache::at(root.join("ttyl").join(id)))
+        Cache::at(root.join("ttyl").join(id))
     }
 
     pub fn at(dir: PathBuf) -> Cache {

@@ -12,7 +12,7 @@ use ureq::http::Request;
 
 use crate::at;
 use crate::attach::{self, Attachment, Image};
-use crate::cache::Cache;
+use crate::cache::{Cache, Start};
 use crate::config::{self, Change};
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
@@ -126,8 +126,11 @@ pub enum Call {
     },
     /// The devices that may sign requests as the user, newest approval first.
     Devices,
-    /// Revokes a device. Revoking the one signing signs ttyl out.
-    Revoke(DeviceId),
+    /// Revokes a device. Revoking the one signing, `this`, signs ttyl out.
+    Revoke {
+        id: DeviceId,
+        this: bool,
+    },
     /// Changes one of the user's settings, answered as `me` answers.
     Configure(Change),
     User(String),
@@ -433,6 +436,11 @@ impl Client {
         &self.base
     }
 
+    /// What the last launch kept, for this one to draw before the server answers.
+    pub fn kept(&self) -> Option<Start> {
+        self.cache.as_ref()?.load()
+    }
+
     pub fn key(&self) -> &DeviceKey {
         &self.key
     }
@@ -485,7 +493,7 @@ impl Client {
             Call::Muted { cursor } => self.muted(cursor.as_deref()).map(Reply::People),
             Call::Blocked { cursor } => self.blocked(cursor.as_deref()).map(Reply::People),
             Call::Devices => self.devices().map(Reply::Devices),
-            Call::Revoke(id) => self.revoke(id).map(|()| Reply::Done),
+            Call::Revoke { id, this } => self.revoke(id, *this).map(|()| Reply::Done),
             Call::Configure(change) => self.configure(change).map(Reply::Account),
             Call::User(handle) => self
                 .user(handle)
@@ -930,9 +938,15 @@ impl Client {
         Device::parse_list(&text).map_err(|error| unreadable(status, error))
     }
 
-    pub fn revoke(&self, id: &DeviceId) -> Result<(), Error> {
+    /// Revokes the device with `id`. When it's `this` one, what the last launch kept goes too, as
+    /// this device can't read it again.
+    pub fn revoke(&self, id: &DeviceId, this: bool) -> Result<(), Error> {
         let path = format!("/api/v1/me/devices/{}", escape(&id.0));
-        self.send("DELETE", &path, String::new()).map(|_| ())
+        self.send("DELETE", &path, String::new())?;
+        if this && let Some(cache) = &self.cache {
+            cache.forget();
+        }
+        Ok(())
     }
 
     pub fn configure(&self, change: &Change) -> Result<Account, Error> {

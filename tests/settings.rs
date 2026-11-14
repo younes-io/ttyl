@@ -2,12 +2,13 @@ mod common;
 
 use std::time::Instant;
 
-use common::{contains, page, press, runs, screen, sign_in, tap};
+use common::{contains, marked, page, press, reload, runs, screen, sign_in, tap};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::api::{Account, Call, Error, Reply};
 use ttyl::config::{Audience, Change};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{Device, DeviceId, Lane, PeoplePage, Settings, Zone};
+use ttyl::sched::Ticket;
 
 const THIS: &str = "SHA256:thisterminal";
 
@@ -53,19 +54,7 @@ fn settings() -> Settings {
 }
 
 fn people(handle: &str) -> PeoplePage {
-    let json = serde_json::json!({
-        "data": [{
-            "id": format!("u-{handle}"),
-            "handle": handle,
-            "name": format!("{handle} name"),
-            "avatar_url": null,
-            "html_url": format!("https://dev-null.sh/{handle}"),
-            "lane": 0,
-            "created_at": "2025-01-01T00:00:00Z",
-        }],
-        "meta": { "next_cursor": null },
-    });
-    PeoplePage::parse(&json.to_string()).unwrap()
+    listing(&[handle], None)
 }
 
 fn devices() -> Vec<Device> {
@@ -471,7 +460,10 @@ fn shift_d_asks_before_revoking_another_device() {
     let effects = press(&mut engine, "y", at);
     assert_eq!(
         runs(&effects),
-        [&Call::Revoke(DeviceId("d-phone".to_owned()))]
+        [&Call::Revoke {
+            id: DeviceId("d-phone".to_owned()),
+            this: false,
+        }]
     );
     reply(&mut engine, &effects, |_| Some(Ok(Reply::Done)), at);
     let rows = screen(&mut engine, 120, 40, at);
@@ -493,10 +485,285 @@ fn revoking_this_device_warns_that_it_signs_ttyl_out_and_does() {
     let effects = press(&mut engine, "y", at);
     assert_eq!(
         runs(&effects),
-        [&Call::Revoke(DeviceId("d-laptop".to_owned()))]
+        [&Call::Revoke {
+            id: DeviceId("d-laptop".to_owned()),
+            this: true,
+        }]
     );
     reply(&mut engine, &effects, |_| Some(Ok(Reply::Done)), at);
     assert!(engine.log().is_none(), "signed out");
     let rows = screen(&mut engine, 120, 40, at);
     assert!(contains(&rows, "You revoked this device"), "{rows:#?}");
+}
+
+#[test]
+fn revoking_this_device_signs_out_even_once_settings_closed() {
+    let at = Instant::now();
+    let mut engine = open(false, at);
+    press(&mut engine, "G", at);
+    press(&mut engine, "D", at);
+    let effects = press(&mut engine, "y", at);
+    tap(&mut engine, KeyCode::Esc, at);
+    assert!(
+        !contains(&screen(&mut engine, 120, 40, at), "devices · 2"),
+        "settings closed"
+    );
+
+    reply(&mut engine, &effects, |_| Some(Ok(Reply::Done)), at);
+    assert!(engine.log().is_none(), "signed out");
+    let rows = screen(&mut engine, 120, 40, at);
+    assert!(contains(&rows, "You revoked this device"), "{rows:#?}");
+}
+
+fn listing(handles: &[&str], next: Option<&str>) -> PeoplePage {
+    let people: Vec<serde_json::Value> = (handles.iter())
+        .map(|handle| {
+            serde_json::json!({
+                "id": format!("u-{handle}"),
+                "handle": handle,
+                "name": format!("{handle} name"),
+                "avatar_url": null,
+                "html_url": format!("https://dev-null.sh/{handle}"),
+                "lane": 0,
+                "created_at": "2025-01-01T00:00:00Z",
+            })
+        })
+        .collect();
+    let json = serde_json::json!({ "data": people, "meta": { "next_cursor": next } });
+    PeoplePage::parse(&json.to_string()).unwrap()
+}
+
+/// What dev-null.sh answers for the settings screen and the timeline behind it.
+fn shown(call: &Call) -> Option<Reply> {
+    Some(match call {
+        Call::Me => Reply::Account(me(false, false)),
+        Call::Settings => Reply::Settings(settings()),
+        Call::Muted { cursor: None } => Reply::People(people("grace")),
+        Call::Blocked { cursor: None } => Reply::People(people("bob")),
+        Call::Devices => Reply::Devices(devices()),
+        Call::Page(log) => Reply::Page(page(*log)),
+        other => panic!("only what settings and the timeline show goes out: {other:?}"),
+    })
+}
+
+/// Answers each call with `answer` until nothing more goes out, and hands back the calls it held
+/// back by answering `None`.
+fn drive(
+    engine: &mut Engine,
+    mut effects: Vec<Effect>,
+    answer: impl Fn(&Call) -> Option<Reply>,
+    at: Instant,
+) -> Vec<(Ticket, Call)> {
+    let mut held = Vec::new();
+    while !effects.is_empty() {
+        for effect in std::mem::take(&mut effects) {
+            if let Effect::Run(ticket, call) = effect {
+                match answer(&call) {
+                    Some(reply) => {
+                        effects.extend(engine.update(Event::Reply(ticket, Ok(reply)), at));
+                        effects.extend(engine.pump(at));
+                    }
+                    None => held.push((ticket, call)),
+                }
+            }
+        }
+    }
+    held
+}
+
+fn land(engine: &mut Engine, ticket: Ticket, reply: Reply, at: Instant) -> Vec<Effect> {
+    let mut effects = engine.update(Event::Reply(ticket, Ok(reply)), at);
+    effects.extend(engine.pump(at));
+    effects
+}
+
+/// Signs in as Ada and opens settings, answering everything but the second page of the people she
+/// mutes, which comes back with its ticket.
+fn open_paging(blocked: &[&str], at: Instant) -> (Engine, Ticket) {
+    let engine = Engine::new("ttyl".to_owned(), at).with_fingerprint(THIS.to_owned());
+    let mut engine = sign_in(engine, at, me(false, false), page);
+    let effects = press(&mut engine, "g,", at);
+    let held = drive(
+        &mut engine,
+        effects,
+        |call| match call {
+            Call::Muted { cursor: None } => Some(Reply::People(listing(&["grace"], Some("old-2")))),
+            Call::Muted { .. } => None,
+            Call::Blocked { cursor: None } => Some(Reply::People(listing(blocked, None))),
+            other => shown(other),
+        },
+        at,
+    );
+    let [
+        (
+            ticket,
+            Call::Muted {
+                cursor: Some(cursor),
+            },
+        ),
+    ] = held.as_slice()
+    else {
+        panic!("the second page waits: {held:?}");
+    };
+    assert_eq!(cursor, "old-2");
+    (engine, *ticket)
+}
+
+#[test]
+fn the_cursor_stays_on_its_person_as_a_page_lands_above() {
+    let at = Instant::now();
+    let (mut engine, second) = open_paging(&["bob", "carol"], at);
+    press(&mut engine, "Gkk", at);
+    let rows = screen(&mut engine, 120, 40, at);
+    assert!(row(&rows, "@carol").contains("│ @carol"), "{rows:#?}");
+
+    land(
+        &mut engine,
+        second,
+        Reply::People(listing(&["linus"], None)),
+        at,
+    );
+    let effects = press(&mut engine, "B", at);
+    assert_eq!(
+        runs(&effects),
+        [&Call::Block {
+            handle: "carol".to_owned(),
+            on: false,
+        }]
+    );
+}
+
+#[test]
+fn a_page_from_before_a_reload_does_not_land_on_the_new_list() {
+    let at = Instant::now();
+    let (mut engine, old_second) = open_paging(&["bob"], at);
+    let effects = reload(&mut engine, at);
+    let held = drive(
+        &mut engine,
+        effects,
+        |call| match call {
+            Call::Muted { cursor: None } => Some(Reply::People(listing(&["grace"], Some("new-2")))),
+            Call::Muted { .. } => None,
+            other => shown(other),
+        },
+        at,
+    );
+    assert!(held.is_empty(), "{held:?}");
+
+    let effects = land(
+        &mut engine,
+        old_second,
+        Reply::People(listing(&["linus"], Some("old-3"))),
+        at,
+    );
+    assert_eq!(
+        runs(&effects),
+        [&Call::Muted {
+            cursor: Some("new-2".to_owned()),
+        }],
+        "the new list's second page goes once the old one is out of the way"
+    );
+    let held = drive(
+        &mut engine,
+        effects,
+        |call| match call {
+            Call::Muted { .. } => Some(Reply::People(listing(&["ken"], None))),
+            other => shown(other),
+        },
+        at,
+    );
+    assert!(held.is_empty(), "{held:?}");
+    let rows = screen(&mut engine, 120, 40, at);
+    assert!(contains(&rows, "muted · 2"), "{rows:#?}");
+    assert!(contains(&rows, "@ken"), "{rows:#?}");
+    assert!(!contains(&rows, "@linus"), "{rows:#?}");
+}
+
+#[test]
+fn an_older_me_does_not_undo_a_switch_just_saved() {
+    let at = Instant::now();
+    let mut engine = open(false, at);
+    let mut effects = reload(&mut engine, at);
+    effects.extend(tap(&mut engine, KeyCode::Enter, at));
+    let held = drive(
+        &mut engine,
+        effects,
+        |call| match call {
+            Call::Me => None,
+            Call::Configure(Change::Pasteis(true)) => Some(Reply::Account(me(true, false))),
+            other => shown(other),
+        },
+        at,
+    );
+    let [(older, Call::Me)] = held.as_slice() else {
+        panic!("me is still out: {held:?}");
+    };
+
+    land(&mut engine, *older, Reply::Account(me(false, false)), at);
+    let rows = screen(&mut engine, 120, 40, at);
+    let pasteis = row(&rows, "pasteis");
+    assert!(
+        pasteis.contains("true") && !pasteis.contains("saving"),
+        "{pasteis}"
+    );
+
+    // A `me` asked for after the change says what dev-null.sh holds now.
+    let effects = reload(&mut engine, at);
+    drive(&mut engine, effects, shown, at);
+    let rows = screen(&mut engine, 120, 40, at);
+    assert!(row(&rows, "pasteis").contains("false"), "{rows:#?}");
+}
+
+#[test]
+fn older_settings_do_not_undo_a_timezone_just_saved() {
+    let at = Instant::now();
+    let mut engine = open(false, at);
+    let mut effects = reload(&mut engine, at);
+    press(&mut engine, "jj", at);
+    tap(&mut engine, KeyCode::Enter, at);
+    ctrl(&mut engine, 'u', at);
+    press(&mut engine, "tokyo", at);
+    effects.extend(tap(&mut engine, KeyCode::Enter, at));
+    let held = drive(
+        &mut engine,
+        effects,
+        |call| match call {
+            Call::Settings => None,
+            Call::Configure(Change::Timezone(_)) => Some(Reply::Account(me(false, false))),
+            other => shown(other),
+        },
+        at,
+    );
+    let [(older, Call::Settings)] = held.as_slice() else {
+        panic!("settings are still out: {held:?}");
+    };
+
+    land(&mut engine, *older, Reply::Settings(settings()), at);
+    let rows = screen(&mut engine, 120, 40, at);
+    assert!(row(&rows, "timezone").contains("Asia/Tokyo"), "{rows:#?}");
+}
+
+#[test]
+fn a_paste_after_tab_saves_the_match_the_menu_shows() {
+    let at = Instant::now();
+    let mut engine = open(false, at);
+    press(&mut engine, "jj", at);
+    tap(&mut engine, KeyCode::Enter, at);
+    ctrl(&mut engine, 'u', at);
+    tap(&mut engine, KeyCode::Tab, at);
+    tap(&mut engine, KeyCode::Tab, at);
+    engine.update(Event::Paste("tokyo".to_owned()), at);
+    assert_eq!(
+        marked(&mut engine, 120, 40, at).as_deref(),
+        Some("Asia/Tokyo")
+    );
+
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert_eq!(
+        runs(&effects),
+        [&configure(Change::Timezone(Some(Zone {
+            name: "Asia/Tokyo".to_owned(),
+            local_time: false,
+        })))]
+    );
 }
