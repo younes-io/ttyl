@@ -37,8 +37,8 @@ use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::messages::{self, ConversationScreen, Conversations, Unsent};
 use crate::model::{
-    self, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Reason, Row, ScheduledId,
-    Shown, Status, Translation, Untranslated, User,
+    self, Chat, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Party, Reason, Row,
+    ScheduledId, Shown, Status, Translation, Untranslated, User,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -136,8 +136,8 @@ pub struct Session {
     searched: String,
     /// The commit deleted moments ago, which `u` can still bring back.
     undoable: Option<CommitId>,
-    /// What was typed in a conversation and not sent, by handle, kept for when it opens again.
-    unsent: HashMap<String, Unsent>,
+    /// What was typed in a conversation and not sent, kept for when it opens again.
+    unsent: HashMap<Chat, Unsent>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -336,11 +336,11 @@ impl Session {
         }
     }
 
-    /// The conversation with this person, when it is still open. Nothing opens over a conversation,
-    /// so the stack never holds two.
-    fn conversation_with(&mut self, handle: &str) -> Option<&mut ConversationScreen> {
+    /// The conversation `chat`, when it is still open. Nothing opens over a conversation, so the
+    /// stack never holds two.
+    fn conversation_with(&mut self, chat: &Chat) -> Option<&mut ConversationScreen> {
         self.stack.iter_mut().find_map(|screen| match screen {
-            Screen::Conversation(conversation) if conversation.handle() == handle => {
+            Screen::Conversation(conversation) if conversation.is(chat) => {
                 Some(conversation.as_mut())
             }
             _ => None,
@@ -529,10 +529,10 @@ impl Session {
         match (self.stack.last_mut(), action) {
             (_, Action::Back) => {
                 if let Some(Screen::Conversation(conversation)) = self.stack.pop() {
-                    let (handle, unsent) = conversation.leave();
+                    let (chat, unsent) = conversation.leave();
                     match unsent.is_empty() {
-                        true => self.unsent.remove(&handle),
-                        false => self.unsent.insert(handle, unsent),
+                        true => self.unsent.remove(&chat),
+                        false => self.unsent.insert(chat, unsent),
                     };
                 }
             }
@@ -997,16 +997,17 @@ fn open_profile(sched: &mut Scheduler, session: &mut Session, handle: String, no
     session.stack.push(Screen::Profile(Box::new(profile)));
 }
 
-/// Opens the conversation with `partner`, and starts asking for new messages while it is open.
+/// Opens the conversation with `party`, and starts asking for new messages while it is open.
 fn open_conversation(
     sched: &mut Scheduler,
     timers: &mut Timers,
     session: &mut Session,
-    partner: User,
+    party: Party,
     now: Instant,
 ) {
-    let unsent = session.unsent.remove(&partner.handle).unwrap_or_default();
-    let conversation = ConversationScreen::new(partner, unsent, now);
+    let unsent = session.unsent.remove(&party.chat()).unwrap_or_default();
+    let me = session.store.me.handle.clone();
+    let conversation = ConversationScreen::new(party, me, unsent, now);
     sched.send(conversation.poll(), Priority::Now);
     timers.set(Timer::Converse, now + CONVERSE);
     session
@@ -1913,11 +1914,11 @@ impl Engine {
                 session.stack.push(Screen::Messages(Box::new(messages)));
             }
             (Phase::Ready(session), Action::Open) if session.messages().is_some() => {
-                let partner = (session.messages())
+                let party = (session.messages())
                     .and_then(Conversations::selected)
-                    .map(|conversation| conversation.partner.clone());
-                if let Some(partner) = partner {
-                    open_conversation(&mut self.sched, &mut self.timers, session, partner, now);
+                    .map(|conversation| conversation.party.clone());
+                if let Some(party) = party {
+                    open_conversation(&mut self.sched, &mut self.timers, session, party, now);
                 }
             }
             (Phase::Ready(session), Action::Commit(Act::Message)) => {
@@ -1927,7 +1928,8 @@ impl Engine {
                     Some(Selected::Person(user)) => user.clone(),
                     None => return Vec::new(),
                 };
-                open_conversation(&mut self.sched, &mut self.timers, session, partner, now);
+                let party = Party::Person(partner);
+                open_conversation(&mut self.sched, &mut self.timers, session, party, now);
             }
             (Phase::Ready(session), Action::Search) => {
                 session.overlay = Some(Overlay::Search {
@@ -2376,40 +2378,40 @@ impl Engine {
                 }
                 return Vec::new();
             }
-            Call::Messages { handle, paging } => {
+            Call::Messages { chat, paging } => {
                 let through = match reply {
                     Reply::Messages(page) => session
-                        .conversation_with(handle)
+                        .conversation_with(chat)
                         .and_then(|conversation| conversation.land(*paging, *page)),
                     _ => None,
                 };
                 if let Some(through) = through {
                     for messages in session.messages_mut() {
-                        messages.read(handle);
+                        messages.read(chat);
                     }
-                    let handle = handle.clone();
+                    let chat = chat.clone();
                     self.sched
-                        .send(Call::MarkRead { handle, through }, Priority::Later);
+                        .send(Call::MarkRead { chat, through }, Priority::Later);
                 }
                 return Vec::new();
             }
-            Call::MarkRead { handle, through } => {
+            Call::MarkRead { chat, through } => {
                 // A mark sent while this one flew was dropped, so the newer one goes now.
-                let newer = (session.conversation_with(handle))
+                let newer = (session.conversation_with(chat))
                     .and_then(|conversation| conversation.read_through())
                     .filter(|read| read > through);
                 if let Some(through) = newer {
-                    let handle = handle.clone();
+                    let chat = chat.clone();
                     self.sched
-                        .send(Call::MarkRead { handle, through }, Priority::Later);
+                        .send(Call::MarkRead { chat, through }, Priority::Later);
                 }
                 return Vec::new();
             }
             Call::SendMessage {
-                handle, client_id, ..
+                chat, client_id, ..
             } => {
                 if let Reply::Message(message) = reply
-                    && let Some(conversation) = session.conversation_with(handle)
+                    && let Some(conversation) = session.conversation_with(chat)
                 {
                     conversation.sent(client_id, *message);
                 }
@@ -2741,22 +2743,22 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Messages { handle, paging } => {
-                        if let Some(conversation) = session.conversation_with(&handle) {
+                    Call::Messages { chat, paging } => {
+                        if let Some(conversation) = session.conversation_with(&chat) {
                             conversation.fail(paging, failure.clone());
                         }
                         offline
                     }
                     Call::MarkRead { .. } => offline,
                     Call::SendMessage {
-                        handle,
+                        chat,
                         body,
                         client_id,
                     } => {
-                        match session.conversation_with(&handle) {
+                        match session.conversation_with(&chat) {
                             Some(conversation) => conversation.unsent(client_id, body),
                             None => {
-                                let unsent = session.unsent.entry(handle).or_default();
+                                let unsent = session.unsent.entry(chat).or_default();
                                 unsent.restore(client_id, body);
                             }
                         }
@@ -3197,11 +3199,11 @@ impl Engine {
                     }
                     Some(Screen::Messages(messages)) => {
                         let area = framed_as(frame, body, framed, "");
-                        messages.draw(frame, area, now, wall)
+                        messages.draw(frame, area, &session.store.me.handle, now, wall)
                     }
                     Some(Screen::Conversation(conversation)) => {
                         let area = framed_as(frame, body, framed, "");
-                        conversation.draw(frame, area, &session.store.me.handle, now, wall)
+                        conversation.draw(frame, area, now, wall)
                     }
                     None => {
                         let pane = session.log.draw(

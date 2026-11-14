@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::api::{Call, Paging};
 use crate::draft::Target;
 use crate::model::{
-    Circle, ClientId, CommitId, Filter, HeadlineId, Log, NotificationId, ScheduledId,
+    Chat, Circle, ClientId, CommitId, Filter, HeadlineId, Log, NotificationId, ScheduledId,
 };
 
 /// The server's signed throttle: this many requests in any sliding window.
@@ -75,10 +75,10 @@ pub enum CallKey {
     },
     /// A conversation's latest page or a poll for new messages, which one call covers at a time.
     Messages {
-        handle: String,
+        chat: Chat,
         older: bool,
     },
-    MarkRead(String),
+    MarkRead(Chat),
     SendMessage(ClientId),
 }
 
@@ -146,11 +146,11 @@ impl Call {
             Call::Conversations { before } => CallKey::Conversations {
                 older: before.is_some(),
             },
-            Call::Messages { handle, paging } => CallKey::Messages {
-                handle: handle.clone(),
+            Call::Messages { chat, paging } => CallKey::Messages {
+                chat: chat.clone(),
                 older: matches!(paging, Paging::Before(_)),
             },
-            Call::MarkRead { handle, .. } => CallKey::MarkRead(handle.clone()),
+            Call::MarkRead { chat, .. } => CallKey::MarkRead(chat.clone()),
             Call::SendMessage { client_id, .. } => CallKey::SendMessage(client_id.clone()),
         }
     }

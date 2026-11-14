@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Deserializer};
@@ -1099,15 +1101,52 @@ impl Extra {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub id: MessageId,
     pub user_id: UserId,
+    /// Who wrote it, which dev-null.sh says in an org's thread and in the list of conversations.
+    pub author: Option<User>,
     pub client_id: Option<ClientId>,
     /// Empty when the message is only an image, a voice note or an event.
     pub body: String,
     pub extra: Option<Extra>,
+    pub notice: Option<Notice>,
     pub created_at: DateTime<Utc>,
+}
+
+/// A change to an org that its history records between messages, with the handle of whom it was
+/// about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notice {
+    /// The body holds the name it was created with.
+    Created,
+    Added(String),
+    Removed(String),
+    Left,
+    /// The body holds the new name, empty when the name was taken away.
+    Renamed,
+    Promoted(String),
+    Demoted(String),
+    /// The last maintainer left, and this member took over.
+    Inherited,
+}
+
+impl Notice {
+    fn parse(event: &str, subject: Option<User>) -> Option<Self> {
+        let subject = || subject.map_or_else(|| "someone".to_owned(), |user| user.handle);
+        Some(match event {
+            "created" => Notice::Created,
+            "added" => Notice::Added(subject()),
+            "removed" => Notice::Removed(subject()),
+            "left" => Notice::Left,
+            "renamed" => Notice::Renamed,
+            "promoted" => Notice::Promoted(subject()),
+            "demoted" => Notice::Demoted(subject()),
+            "inherited" => Notice::Inherited,
+            _ => return None,
+        })
+    }
 }
 
 impl<'de> Deserialize<'de> for Message {
@@ -1116,6 +1155,8 @@ impl<'de> Deserialize<'de> for Message {
         struct Wire {
             id: MessageId,
             user_id: UserId,
+            #[serde(default)]
+            user: Option<User>,
             client_id: Option<ClientId>,
             body: Option<String>,
             #[serde(default)]
@@ -1123,12 +1164,16 @@ impl<'de> Deserialize<'de> for Message {
             #[serde(default)]
             voice: Option<serde::de::IgnoredAny>,
             event: Option<String>,
+            #[serde(default)]
+            subject: Option<User>,
             created_at: DateTime<Utc>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
         let body = wire.body.unwrap_or_default();
+        let notice = (wire.event.as_deref()).and_then(|event| Notice::parse(event, wire.subject));
         let extra = match wire.event.as_deref() {
+            _ if notice.is_some() => None,
             Some("ping") => Some(Extra::Ping),
             Some(event) if event.starts_with("call_") => Some(Extra::Call),
             _ if wire.voice.is_some() => Some(Extra::Voice),
@@ -1140,35 +1185,132 @@ impl<'de> Deserialize<'de> for Message {
         Ok(Message {
             id: wire.id,
             user_id: wire.user_id,
+            author: wire.user,
             client_id: wire.client_id,
             body,
             extra,
+            notice,
             created_at: wire.created_at,
         })
     }
 }
 
 impl Message {
-    /// The first line of the text, or the mark of what it carries instead.
-    pub fn preview(&self) -> &str {
-        match (
-            self.body.lines().find(|line| !line.trim().is_empty()),
-            self.extra,
-        ) {
-            (Some(line), _) => line.trim(),
-            (None, Some(extra)) => extra.mark(),
-            (None, None) => "",
+    /// The first line of the text, or what a notice says, or the mark of what it carries instead.
+    pub fn preview(&self) -> Cow<'_, str> {
+        if let Some(told) = self.told() {
+            return Cow::Owned(told);
+        }
+        Cow::Borrowed(
+            match (
+                self.body.lines().find(|line| !line.trim().is_empty()),
+                self.extra,
+            ) {
+                (Some(line), _) => line.trim(),
+                (None, Some(extra)) => extra.mark(),
+                (None, None) => "",
+            },
+        )
+    }
+
+    /// What a notice says, as `grace added linus`.
+    pub fn told(&self) -> Option<String> {
+        let notice = self.notice.as_ref()?;
+        let actor = (self.author.as_ref()).map_or("someone", |author| author.handle.as_str());
+        let name = self.body.trim();
+        Some(match notice {
+            Notice::Created if name.is_empty() => format!("{actor} created the group"),
+            Notice::Created => format!("{actor} created #{name}"),
+            Notice::Renamed if name.is_empty() => format!("{actor} took the group's name away"),
+            Notice::Renamed => format!("{actor} renamed the group #{name}"),
+            Notice::Added(who) => format!("{actor} added {who}"),
+            Notice::Removed(who) => format!("{actor} removed {who}"),
+            Notice::Left => format!("{actor} left"),
+            Notice::Promoted(who) => format!("{actor} made {who} a maintainer"),
+            Notice::Demoted(who) => format!("{actor} made {who} a contributor"),
+            Notice::Inherited => format!("{actor} took over as maintainer"),
+        })
+    }
+}
+
+/// An org's id on dev-null.sh, a UUID.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct OrgId(pub String);
+
+/// Which conversation: the one with a person, by handle, or an org's.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Chat {
+    Direct(String),
+    Org(OrgId),
+}
+
+/// A group conversation, which dev-null.sh calls an org.
+#[derive(Debug, Clone)]
+pub struct Org {
+    pub id: OrgId,
+    pub name: Option<String>,
+    /// Maintainers first, then by name, the user among them.
+    pub members: Vec<User>,
+}
+
+impl Org {
+    /// The name, or for an org without one, who is in it.
+    pub fn label(&self) -> String {
+        match &self.name {
+            Some(name) => name.clone(),
+            None => (self.members.iter())
+                .map(|member| member.handle.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
         }
     }
 }
 
-/// One-to-one conversations. dev-null.sh's org conversations are left out.
+/// Who a conversation is with: one person, or the members of an org.
+#[derive(Debug, Clone)]
+pub enum Party {
+    Person(User),
+    Org(Org),
+}
+
+impl Party {
+    pub fn chat(&self) -> Chat {
+        match self {
+            Party::Person(user) => Chat::Direct(user.handle.clone()),
+            Party::Org(org) => Chat::Org(org.id.clone()),
+        }
+    }
+
+    pub fn is(&self, chat: &Chat) -> bool {
+        match (self, chat) {
+            (Party::Person(user), Chat::Direct(handle)) => user.handle == *handle,
+            (Party::Org(org), Chat::Org(id)) => org.id == *id,
+            _ => false,
+        }
+    }
+
+    /// `@grace`, or `#unix-room` the way an IRC client names a channel.
+    pub fn title(&self) -> String {
+        match self {
+            Party::Person(user) => format!("@{}", user.handle),
+            Party::Org(org) => format!("#{}", org.label()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Member {
+    user: User,
+}
+
+/// A conversation as the list of them shows it.
 #[derive(Debug, Clone)]
 pub struct Conversation {
-    pub partner: User,
+    pub party: Party,
     pub last: Option<Message>,
     pub last_at: Option<DateTime<Utc>>,
-    /// Messages from the partner the user hasn't read.
+    /// Messages from the others the user hasn't read.
     pub unread: u32,
     pub pinned: bool,
 }
@@ -1191,7 +1333,9 @@ impl ConversationPage {
         #[derive(Deserialize)]
         struct Row {
             id: String,
+            name: Option<String>,
             partner: Option<User>,
+            members: Option<Vec<Member>>,
             last_message: Option<Message>,
             last_message_at: Option<DateTime<Utc>>,
             ahead: u32,
@@ -1204,8 +1348,17 @@ impl ConversationPage {
             .flatten();
         let conversations = (wire.data.into_iter())
             .filter_map(|row| {
+                let party = match (row.partner, row.members) {
+                    (Some(partner), _) => Party::Person(partner),
+                    (None, Some(members)) => Party::Org(Org {
+                        id: OrgId(row.id),
+                        name: row.name,
+                        members: members.into_iter().map(|member| member.user).collect(),
+                    }),
+                    (None, None) => return None,
+                };
                 Some(Conversation {
-                    partner: row.partner?,
+                    party,
                     last: row.last_message,
                     last_at: row.last_message_at,
                     unread: row.ahead,
@@ -1253,7 +1406,7 @@ impl Access {
 /// A page of a conversation, oldest first.
 #[derive(Debug, Clone)]
 pub struct MessagePage {
-    pub partner: User,
+    pub party: Party,
     pub messages: Vec<Message>,
     pub has_older: bool,
     pub read_through: MessageId,
@@ -1261,6 +1414,8 @@ pub struct MessagePage {
 }
 
 impl MessagePage {
+    /// A page of the thread with a partner, or of an org's, which names the org and its members
+    /// instead.
     pub fn parse(json: &str) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Wire {
@@ -1269,7 +1424,9 @@ impl MessagePage {
 
         #[derive(Deserialize)]
         struct Data {
-            partner: User,
+            partner: Option<User>,
+            org: Option<OrgName>,
+            members: Option<Vec<Member>>,
             messages: Vec<Message>,
             has_older: bool,
             /// Null until the user has read anything here.
@@ -1277,9 +1434,26 @@ impl MessagePage {
             access: Access,
         }
 
+        #[derive(Deserialize)]
+        struct OrgName {
+            id: OrgId,
+            name: Option<String>,
+        }
+
         let data = serde_json::from_str::<Wire>(json)?.data;
+        let party = match (data.partner, data.org) {
+            (Some(partner), _) => Party::Person(partner),
+            (None, Some(org)) => Party::Org(Org {
+                id: org.id,
+                name: org.name,
+                members: (data.members.into_iter().flatten())
+                    .map(|member| member.user)
+                    .collect(),
+            }),
+            (None, None) => return Err(de::Error::custom("a thread with no partner and no org")),
+        };
         Ok(MessagePage {
-            partner: data.partner,
+            party,
             messages: data.messages,
             has_older: data.has_older,
             read_through: data.read_through_id.unwrap_or(MessageId(0)),

@@ -32,7 +32,7 @@ use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
-use ttyl::model::{ClientId, Log, Status};
+use ttyl::model::{Chat, ClientId, Conversation, Log, Message, Org, Party, Status};
 use ttyl::sched::Ticket;
 use ttyl::{body, compose, editor, headlines, locale, messages, signin, theme, viewer, welcome};
 
@@ -57,7 +57,8 @@ enum Command<'a> {
     Blocked,
     /// The conversations, one per line.
     Messages,
-    /// A message to `to`, with its text from `-m` or else from stdin.
+    /// A message to `to`, a person or `#` and a group's name, with its text from `-m` or else from
+    /// stdin.
     Message {
         to: &'a str,
         text: Option<&'a str>,
@@ -139,7 +140,7 @@ fn main() -> ExitCode {
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle | '#group' [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle or to a #group, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -365,8 +366,8 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn print_messages() -> Result<(), String> {
-    let client = client()?;
+/// Every conversation, page after page, in the order `gm` lists them.
+fn conversations(client: &Client) -> Result<Vec<Conversation>, String> {
     let mut conversations = Vec::new();
     let mut before: Option<String> = None;
     loop {
@@ -380,13 +381,18 @@ fn print_messages() -> Result<(), String> {
         }
     }
     messages::order(&mut conversations);
+    Ok(conversations)
+}
+
+fn print_messages() -> Result<(), String> {
     let mut out = String::new();
-    for conversation in &conversations {
-        let preview = conversation.last.as_ref().map_or("", |last| last.preview());
+    for conversation in conversations(&client()?)? {
+        let preview = (conversation.last.as_ref()).map_or_else(Default::default, Message::preview);
         let _ = writeln!(
             out,
-            "@{}\t{}\t{preview}",
-            conversation.partner.handle, conversation.unread
+            "{}\t{}\t{preview}",
+            conversation.party.title(),
+            conversation.unread
         );
     }
     match io::stdout().write_all(out.as_bytes()) {
@@ -395,28 +401,57 @@ fn print_messages() -> Result<(), String> {
     }
 }
 
+/// The group `ttyl msg` lists as `#name`, ignoring case the way IRC does.
+fn group(client: &Client, name: &str) -> Result<Org, String> {
+    let wanted = name.to_lowercase();
+    let mut named =
+        (conversations(client)?.into_iter()).filter_map(|conversation| match conversation.party {
+            Party::Org(org) if org.label().to_lowercase() == wanted => Some(org),
+            _ => None,
+        });
+    match (named.next(), named.next()) {
+        (Some(org), None) => Ok(org),
+        (Some(_), Some(_)) => Err(format!(
+            "more than one of your groups is named #{name}; send to it from ttyl"
+        )),
+        (None, _) => Err(format!(
+            "you're in no group named #{name}; ttyl msg lists your conversations"
+        )),
+    }
+}
+
 fn message(to: &str, text: Option<&str>) -> Result<(), String> {
-    let handle = to.strip_prefix('@').unwrap_or(to);
     let text = text_or_stdin(text, "nothing to send; pass -m <text> or pipe the text in")?;
     let body = text.trim();
     if let Some(refusal) = messages::refusal(body) {
         return Err(refusal);
     }
+    let client = client()?;
+    let (chat, title) = match to.strip_prefix('#') {
+        Some(name) => {
+            let party = Party::Org(group(&client, name)?);
+            (party.chat(), party.title())
+        }
+        None => {
+            let handle = to.strip_prefix('@').unwrap_or(to);
+            (Chat::Direct(handle.to_owned()), format!("@{handle}"))
+        }
+    };
     let client_id = ClientId(Nonce::random().uuid());
-    let sent = client()?
-        .send_message(handle, body, &client_id)
+    let sent = client
+        .send_message(&chat, body, &client_id)
         .map_err(|error| {
             if error.may_have_landed() {
                 messages::NO_ANSWER.to_owned()
-            } else if error.is_not_found() {
+            } else if error.is_not_found() && matches!(chat, Chat::Direct(_)) {
                 format!(
-                    "can't message @{handle}; dev-null.sh has no one by that handle you can reach"
+                    "can't message {title}; dev-null.sh has no one by that handle you can reach"
                 )
             } else {
                 refused(&error)
             }
         })?;
-    println!("[msg @{handle}] {}", sent.preview());
+    println!("[msg {title}] {}", sent.preview());
     Ok(())
 }
 

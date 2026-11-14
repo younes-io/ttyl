@@ -1,15 +1,16 @@
 # Messages
 
-dev-null.sh calls a one-to-one conversation a remote. ttyl shows yours as a
-list you read like a mail index, and each conversation the way an IRC client
-shows a query window.
+dev-null.sh calls a conversation a remote, and a group conversation an org.
+ttyl shows yours as a list you read like a mail index, a conversation with
+one person the way an IRC client shows a query window, and a group the way
+it shows a channel.
 
 ## Read your conversations
 
 Press <kbd>gm</kbd> from anywhere to list your conversations, one per line:
-the person, how many of their messages you haven't read, the first line of
-the last message and how long ago it came. Pinned conversations come first,
-then the ones with unread messages, then the rest, newest first.
+the person or the group, how many messages you haven't read, the first line
+of the last message and how long ago it came. Pinned conversations come
+first, then the ones with unread messages, then the rest, newest first.
 
 {{screen messages}}
 
@@ -39,6 +40,19 @@ A terminal can't show a message's image or play its voice note, so they show
 as `[image]` and `[voice note]`. Open the conversation on dev-null.sh to see
 or hear them.
 
+## Talk in a group
+
+A group shows in the list as `#` and its name, like an IRC channel, with how
+many members it has. Its last message names who wrote it. A group without a
+name goes by its members' handles.
+
+A group opens the same way a conversation does, and the same keys send,
+scroll and go back. Each message shows its author's nick, yours included. A
+line starting `-!-` says who added or removed someone, who left and who
+renamed the group.
+
+{{screen group}}
+
 ## Start a conversation
 
 Press <kbd>M</kbd> on a commit to message its author, or on a person in a
@@ -55,10 +69,19 @@ git diff --stat | ttyl msg @grace
 ```
 
 Run `ttyl msg` alone to print your conversations, one per line: the handle,
-the unread count and the first line of the last message, separated by tabs.
+or `#` and the group's name, the unread count and the first line of the last
+message, separated by tabs.
+
+To send to a group, name it as `ttyl msg` prints it. Quote it, since the shell
+reads `#` as the start of a comment:
+
+```sh
+ttyl msg '#unix-room' -m "reviewing now"
+```
 
 ## What ttyl leaves to the web
 
-ttyl reads and sends one-to-one text. Calls, reactions, typing, pins,
-archiving and conversations with an org stay on dev-null.sh, and org
-conversations don't show in the list.
+ttyl reads and sends text. Calls, reactions, typing, pins, mentions, replies,
+archiving and running a group (adding people, renaming it) stay on
+dev-null.sh. <kbd>M</kbd> starts a conversation with one person; start a
+group on the web.
