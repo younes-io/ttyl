@@ -106,6 +106,21 @@ ttyl commit --at 'tomorrow 9:00' -m "standup notes are up"
 
 ttyl prints when it will go out, such as `scheduled for Thu 22 Oct 09:00`.
 
+Add `--as` to post as an organization you're a member of. It refuses with
+`fatal: you are not a member of @handle` before it reads anything:
+
+```sh
+ttyl commit --as @acme -m "v2 is out"
+```
+
+## Post as an organization
+
+If you're a member of an organization, the composer title says who the
+commit goes out as, such as `commit as @you`. Press <kbd>ctrl-x</kbd> to
+switch to each of your organizations in turn, then back to you. The next
+commit, reply or quote starts as whoever you picked last. ttyl forgets your
+choice when it quits, so it never posts as an organization by surprise.
+
 ## If ttyl stops before sending
 
 - If the text looks like it holds a secret, such as an API key, ttyl asks

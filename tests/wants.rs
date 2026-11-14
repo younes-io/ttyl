@@ -2,7 +2,7 @@ mod common;
 
 use common::profile;
 use ttyl::api::{Account, Call, Me, Reply};
-use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row};
+use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row, Who};
 use ttyl::sched::CallKey;
 use ttyl::store::{Node, Store};
 
@@ -23,6 +23,7 @@ fn store() -> Store {
             name: None,
             pasteis_mode: false,
             pasteis_remaining: None,
+            organizations: Vec::new(),
         },
         unread: 0,
     });
@@ -155,35 +156,37 @@ fn a_settled_star_does_not_undo_a_change_made_elsewhere() {
 #[test]
 fn a_follow_with_no_known_state_asks_the_server_first() {
     let mut store = store();
-    assert_eq!(store.follow("grace"), None);
+    let grace = Who::Person("grace".to_owned());
+    assert_eq!(store.follow(&grace), None);
     assert_eq!(store.writes(idle), vec![Call::User("grace".to_owned())]);
 
     store.apply(&Call::User("grace".to_owned()), profile("grace", false));
-    assert_eq!(store.following("grace"), Some(true));
+    assert_eq!(store.following(&grace), Some(true));
     let follow = Call::Follow {
-        handle: "grace".to_owned(),
+        who: grace.clone(),
         on: true,
     };
     assert_eq!(store.writes(idle), vec![follow.clone()]);
 
     store.apply(&follow, Reply::Done);
     assert_eq!(store.writes(idle), Vec::new());
-    assert_eq!(store.follow("grace"), Some(false));
+    assert_eq!(store.follow(&grace), Some(false));
 }
 
 #[test]
 fn a_refused_follow_goes_back_to_what_the_server_has() {
     let mut store = store();
-    store.follow("grace");
+    let grace = Who::Person("grace".to_owned());
+    store.follow(&grace);
     store.apply(&Call::User("grace".to_owned()), profile("grace", true));
-    assert_eq!(store.following("grace"), Some(false));
+    assert_eq!(store.following(&grace), Some(false));
     let unfollow = Call::Follow {
-        handle: "grace".to_owned(),
+        who: grace.clone(),
         on: false,
     };
     assert_eq!(store.writes(idle), vec![unfollow.clone()]);
     store.refused(&unfollow);
-    assert_eq!(store.following("grace"), Some(true));
+    assert_eq!(store.following(&grace), Some(true));
     assert_eq!(store.writes(idle), Vec::new());
 }
 

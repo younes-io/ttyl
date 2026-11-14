@@ -283,6 +283,62 @@ fn commit_at_schedules_it_and_prints_when_it_goes_out() {
     }
 }
 
+const MEMBER: &str = r#"{"data":{"handle":"ada","name":"Ada","organizations":[{"type":"organization","id":"o1","role":"member","handle":"Acme"}]},"unread_notifications_count":0}"#;
+
+#[test]
+fn commit_as_posts_as_an_organization_spelled_as_the_server_spells_it() {
+    for (name, args, stdin) in [
+        (
+            "cli-as",
+            &["commit", "--as", "@acme", "-m", "shipped"][..],
+            None,
+        ),
+        ("cli-as-stdin", &["commit", "--as", "acme"], Some("shipped")),
+    ] {
+        let (base, server) = serve_in_turn(&[("200 OK", MEMBER), ("201 Created", &posted())]);
+        let output = against(name, &base, args, stdin);
+        let sent = server.join().unwrap();
+        let post: serde_json::Value = serde_json::from_str(&sent[1]).unwrap();
+        assert_eq!(
+            (&post["author"], &post["body"]),
+            (&"Acme".into(), &"shipped".into())
+        );
+        assert_eq!(output.status.code(), Some(0), "{name}");
+    }
+}
+
+#[test]
+fn commit_as_yourself_names_no_author() {
+    let (base, server) = serve_in_turn(&[("200 OK", MEMBER), ("201 Created", &posted())]);
+    let output = against(
+        "cli-as-me",
+        &base,
+        &["commit", "--as", "@ada", "-m", "hi"],
+        None,
+    );
+    let post: serde_json::Value = serde_json::from_str(&server.join().unwrap()[1]).unwrap();
+    assert!(post.get("author").is_none(), "{post}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commit_as_an_organization_you_are_not_in_is_fatal_before_anything_is_read_or_sent() {
+    let (base, server) = serve("200 OK", MEMBER);
+    let output = against(
+        "cli-as-refused",
+        &base,
+        &["commit", "--as", "@zeta"],
+        Some("shipped"),
+    );
+    server.join().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "ttyl: fatal: you are not a member of @zeta\n"
+    );
+}
+
 #[test]
 fn a_time_that_wont_do_is_fatal_before_anything_is_read_or_sent() {
     for (when, why) in [

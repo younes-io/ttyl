@@ -226,11 +226,57 @@ fn one_line(text: &str, limit: usize) -> String {
         .collect()
 }
 
+/// Whom a commit goes out as: you, or in turn each organization you're a member of.
+#[derive(Debug, Clone)]
+pub struct Voices {
+    me: String,
+    organizations: Vec<String>,
+    /// The organization speaking, or you when none is.
+    at: Option<usize>,
+}
+
+impl Voices {
+    /// Starts on `last`, the organization the last commit went out as, while you're still in it.
+    pub fn new(me: String, organizations: Vec<String>, last: Option<&str>) -> Self {
+        let at = last.and_then(|last| {
+            (organizations.iter()).position(|handle| handle.eq_ignore_ascii_case(last))
+        });
+        Voices {
+            me,
+            organizations,
+            at,
+        }
+    }
+
+    /// Whether there is anyone but you to post as.
+    pub fn many(&self) -> bool {
+        !self.organizations.is_empty()
+    }
+
+    /// You, then each organization, then you again.
+    pub fn cycle(&mut self) {
+        self.at = match self.at {
+            None => self.many().then_some(0),
+            Some(at) => (at + 1 < self.organizations.len()).then_some(at + 1),
+        };
+    }
+
+    /// The organization the commit goes out as, or none for you.
+    pub fn author(&self) -> Option<&str> {
+        self.at.map(|at| self.organizations[at].as_str())
+    }
+
+    fn handle(&self) -> &str {
+        self.author().unwrap_or(&self.me)
+    }
+}
+
 pub struct Composer {
     picker: Option<Picker>,
     dismissed: Option<usize>,
     target: Target,
     title: String,
+    voices: Voices,
     text: Buffer,
     poll: Option<PollForm>,
     /// The poll last taken off, so taking it off is never a loss.
@@ -249,7 +295,12 @@ pub struct Composer {
 }
 
 impl Composer {
-    pub fn open(target: Target, handle: Option<&str>, draft: Option<&Draft>) -> Self {
+    pub fn open(
+        target: Target,
+        handle: Option<&str>,
+        draft: Option<&Draft>,
+        voices: Voices,
+    ) -> Self {
         let title = match (&target, handle) {
             (Target::Reply(_), Some(handle)) => format!("Reply to @{handle}"),
             (Target::Quote(_), Some(handle)) => format!("Quote @{handle}"),
@@ -271,6 +322,7 @@ impl Composer {
             dismissed: None,
             target,
             title,
+            voices,
             text: Buffer::new(draft.map_or("", |draft| draft.text.as_str())),
             poll,
             stash: None,
@@ -289,6 +341,14 @@ impl Composer {
 
     pub fn target(&self) -> &Target {
         &self.target
+    }
+
+    pub fn voices(&self) -> &Voices {
+        &self.voices
+    }
+
+    pub fn cycle_voice(&mut self) {
+        self.voices.cycle();
     }
 
     pub fn send_at(&mut self, when: Option<DateTime<FixedOffset>>) {
@@ -772,9 +832,13 @@ impl Composer {
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, sending: bool) {
         self.width = layout_width(area.width);
         let title = match (sending, self.when) {
-            (true, None) => SENDING,
-            (true, Some(_)) => SCHEDULING,
-            (false, _) => &self.title,
+            (true, None) => SENDING.to_owned(),
+            (true, Some(_)) => SCHEDULING.to_owned(),
+            // Whom it goes out as shows only when there's a choice.
+            (false, _) if self.voices.many() => {
+                format!("{} as @{}", self.title, self.voices.handle())
+            }
+            (false, _) => self.title.clone(),
         };
         let block = Block::new()
             .borders(Borders::TOP)

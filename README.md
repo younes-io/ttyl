@@ -30,11 +30,12 @@ developers where a post is called a commit.
 - **Write** commits, replies and quotes. Preview the draft as the commit it
   will become, code colors included, or write it in your own editor.
   Schedule one with <kbd>ctrl-t</kbd> or `ttyl commit --at 'fri 14:00'`.
+  Post as your organization with <kbd>ctrl-x</kbd> or `ttyl commit --as @org`.
 - **Attach** a poll or up to three images to a commit. Vote in a
   keystroke, and view images inside the terminal.
 - **Star** a commit, or give its author a pastel.
 - **Catch up** on who replied, quoted, starred, mentioned or followed you.
-  Open anyone's profile and follow them.
+  Open anyone's profile, or an organization's page, and follow them.
 - **Message** anyone one to one, or your groups like IRC channels: `gm`
   lists your conversations in folders like mutt's, where `^` pins, `s`
   stashes, `m` mutes and `/` finds anyone to write to. `M` on a commit or a

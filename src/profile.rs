@@ -16,31 +16,37 @@ use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::{self, Action, Link};
 use crate::log;
 use crate::model::{
-    Activity, Circle, CommitId, Fold, Headline, Lane, Level, Log, LogPage, PALETTE_LEN, Person,
-    Profile, Row, Scale, Streaks, User,
+    Activity, Circle, CommitId, Fold, Headline, Lane, Level, Log, LogPage, Organization,
+    OrganizationPage, PALETTE_LEN, Person, Profile, Row, Scale, Streaks, Who,
 };
 use crate::store::Store;
 use crate::theme;
 use crate::thread::LOADING_NOTE_DELAY;
 
-/// The lists under a profile's header, in the order Tab walks them.
+/// The lists under a profile's header. A person's are in the order Tab walks them; an
+/// organization has its commits and the commits that mention it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Commits,
     Replies,
     Followers,
     Following,
+    Mentions,
 }
 
-impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Commits, Tab::Replies, Tab::Followers, Tab::Following];
+const PERSON_TABS: &[Tab] = &[Tab::Commits, Tab::Replies, Tab::Followers, Tab::Following];
+const ORGANIZATION_TABS: &[Tab] = &[Tab::Commits, Tab::Mentions];
+/// Every tab, one list each.
+const TABS: usize = 5;
 
+impl Tab {
     pub fn slug(self) -> &'static str {
         match self {
             Tab::Commits => "commits",
             Tab::Replies => "replies",
             Tab::Followers => "followers",
             Tab::Following => "following",
+            Tab::Mentions => "mentions",
         }
     }
 
@@ -48,16 +54,24 @@ impl Tab {
         self as usize
     }
 
-    fn call(self, handle: &str, cursor: Option<String>) -> Call {
-        let handle = handle.to_owned();
-        match self {
-            Tab::Commits | Tab::Replies => Call::Commits {
-                handle,
+    /// The tab's first page, or the next one from `cursor`. A first page of who someone follows
+    /// also asks for the organizations they follow, which go above the people.
+    fn calls(self, who: &Who, cursor: Option<String>) -> Vec<Call> {
+        let first = cursor.is_none();
+        let handle = who.handle().to_owned();
+        let call = match (who, self) {
+            (Who::Organization(_), Tab::Commits | Tab::Mentions) => Call::OrganizationCommits {
+                handle: handle.clone(),
+                mentions: self == Tab::Mentions,
+                cursor,
+            },
+            (_, Tab::Commits | Tab::Replies | Tab::Mentions) => Call::Commits {
+                handle: handle.clone(),
                 replies: self == Tab::Replies,
                 cursor,
             },
-            Tab::Followers | Tab::Following => Call::People {
-                handle,
+            (_, Tab::Followers | Tab::Following) => Call::People {
+                handle: handle.clone(),
                 circle: if self == Tab::Followers {
                     Circle::Followers
                 } else {
@@ -65,7 +79,15 @@ impl Tab {
                 },
                 cursor,
             },
+        };
+        let mut calls = vec![call];
+        if first && self == Tab::Following {
+            calls.push(Call::FollowedOrganizations {
+                handle,
+                cursor: None,
+            });
         }
+        calls
     }
 
     /// Whose tab a list call fills, which tab, and the cursor it asked from.
@@ -77,6 +99,18 @@ impl Tab {
                 cursor,
             } => {
                 let tab = if *replies { Tab::Replies } else { Tab::Commits };
+                Some((handle, tab, cursor.as_deref()))
+            }
+            Call::OrganizationCommits {
+                handle,
+                mentions,
+                cursor,
+            } => {
+                let tab = if *mentions {
+                    Tab::Mentions
+                } else {
+                    Tab::Commits
+                };
                 Some((handle, tab, cursor.as_deref()))
             }
             Call::People {
@@ -100,6 +134,7 @@ impl Tab {
             Tab::Replies => format!("@{handle} has no replies yet."),
             Tab::Followers => format!("@{handle} has no followers yet."),
             Tab::Following => format!("@{handle} isn't following anyone yet."),
+            Tab::Mentions => format!("Nobody has mentioned @{handle} yet."),
         }
     }
 }
@@ -108,6 +143,7 @@ impl Tab {
 pub enum Item {
     Commit(CommitId),
     Person(Box<Person>),
+    Organization(Box<Organization>),
     Headline(Box<Headline>),
 }
 
@@ -116,6 +152,7 @@ impl Item {
         match (self, other) {
             (Item::Commit(a), Item::Commit(b)) => a == b,
             (Item::Person(a), Item::Person(b)) => a.user.id == b.user.id,
+            (Item::Organization(a), Item::Organization(b)) => a.handle == b.handle,
             (Item::Headline(a), Item::Headline(b)) => a.id == b.id,
             _ => false,
         }
@@ -125,7 +162,10 @@ impl Item {
     pub fn opens(&self) -> Opens {
         match self {
             Item::Commit(id) => Opens::Thread(id.clone()),
-            Item::Person(person) => Opens::Profile(person.user.handle.clone()),
+            Item::Person(person) => Opens::Profile(Who::Person(person.user.handle.clone())),
+            Item::Organization(organization) => {
+                Opens::Profile(Who::Organization(organization.handle.clone()))
+            }
             Item::Headline(headline) => Opens::Headline(headline.clone()),
         }
     }
@@ -134,7 +174,7 @@ impl Item {
 /// What Enter on a row opens.
 pub enum Opens {
     Thread(CommitId),
-    Profile(String),
+    Profile(Who),
     /// The headline's commits, under its recap.
     Headline(Box<Headline>),
 }
@@ -152,6 +192,8 @@ pub struct Paged {
     folded: Vec<bool>,
     /// Their pinned commit, put first by the profile rather than by the server.
     pinned: Option<CommitId>,
+    /// How many items lead with the organizations someone follows, which page apart from the people.
+    organizations: usize,
 }
 
 impl Paged {
@@ -179,7 +221,7 @@ impl Paged {
     pub fn commit(&self) -> Option<&CommitId> {
         match self.selected()? {
             Item::Commit(id) => Some(id),
-            Item::Person(_) | Item::Headline(_) => None,
+            Item::Person(_) | Item::Organization(_) | Item::Headline(_) => None,
         }
     }
 
@@ -246,11 +288,13 @@ impl Paged {
         self.failure = None;
         let Some(cursor) = cursor else {
             self.pinned = None;
-            let kept = self.items().get(self.selected);
+            let kept = self.selected().cloned();
+            let mut all = self.items()[..self.organizations].to_vec();
+            all.extend(items);
             self.selected = kept
-                .and_then(|kept| items.iter().position(|item| item.same(kept)))
+                .and_then(|kept| all.iter().position(|item| item.same(&kept)))
                 .unwrap_or(0);
-            self.loaded = Some((items, next_cursor));
+            self.loaded = Some((all, next_cursor));
             return;
         };
         let Some((loaded, next)) = &mut self.loaded else {
@@ -266,6 +310,27 @@ impl Paged {
             }
         }
         *next = next_cursor.filter(|_| loaded.len() > before);
+    }
+
+    /// Puts the organizations someone follows above the people: a first page in place of the
+    /// ones listed, a later one after them.
+    pub fn land_organizations(&mut self, first: bool, organizations: Vec<Organization>) {
+        let kept = self.selected().cloned();
+        let (items, _) = self.loaded.get_or_insert_with(Default::default);
+        if first {
+            items.drain(..self.organizations);
+            self.organizations = 0;
+        }
+        for organization in organizations {
+            let item = Item::Organization(Box::new(organization));
+            if !items.iter().any(|each| each.same(&item)) {
+                items.insert(self.organizations, item);
+                self.organizations += 1;
+            }
+        }
+        self.selected = kept
+            .and_then(|kept| items.iter().position(|item| item.same(&kept)))
+            .unwrap_or(0);
     }
 
     /// Draws the list, and says where its selected card went.
@@ -308,7 +373,7 @@ impl Paged {
             .iter()
             .filter_map(|item| match item {
                 Item::Commit(id) => Some(id.clone()),
-                Item::Person(_) | Item::Headline(_) => None,
+                Item::Person(_) | Item::Organization(_) | Item::Headline(_) => None,
             })
             .collect();
         let (feed, folded) = if ids.is_empty() {
@@ -358,25 +423,44 @@ impl Paged {
     }
 }
 
+/// Whose page a profile is, and their header once it has come.
+enum Header {
+    Person(Option<Box<Profile>>),
+    Organization(Option<Box<OrganizationPage>>),
+}
+
+impl Header {
+    fn loaded(&self) -> bool {
+        match self {
+            Header::Person(profile) => profile.is_some(),
+            Header::Organization(page) => page.is_some(),
+        }
+    }
+}
+
 /// Someone's profile: their header over the tab shown, each tab paged on its own.
 pub struct ProfileScreen {
     handle: String,
-    profile: Option<Profile>,
+    header: Header,
     failure: Option<Failure>,
     asked_at: Instant,
     tab: Tab,
-    lists: [Paged; Tab::ALL.len()],
+    lists: [Paged; TABS],
     /// Where the selected card was last drawn, for a box about it to open beside.
     card: Option<Rect>,
 }
 
 impl ProfileScreen {
-    pub fn new(handle: String, now: Instant) -> Self {
-        let mut lists: [Paged; Tab::ALL.len()] = Default::default();
+    pub fn new(who: Who, now: Instant) -> Self {
+        let mut lists: [Paged; TABS] = Default::default();
         lists[Tab::Commits.index()].asked(now);
+        let (handle, header) = match who {
+            Who::Person(handle) => (handle, Header::Person(None)),
+            Who::Organization(handle) => (handle, Header::Organization(None)),
+        };
         ProfileScreen {
             handle,
-            profile: None,
+            header,
             failure: None,
             asked_at: now,
             tab: Tab::Commits,
@@ -394,6 +478,20 @@ impl ProfileScreen {
         &self.handle
     }
 
+    pub fn who(&self) -> Who {
+        match self.header {
+            Header::Person(_) => Who::Person(self.handle.clone()),
+            Header::Organization(_) => Who::Organization(self.handle.clone()),
+        }
+    }
+
+    fn tabs(&self) -> &'static [Tab] {
+        match self.header {
+            Header::Person(_) => PERSON_TABS,
+            Header::Organization(_) => ORGANIZATION_TABS,
+        }
+    }
+
     fn list(&self) -> &Paged {
         &self.lists[self.tab.index()]
     }
@@ -402,21 +500,49 @@ impl ProfileScreen {
         &mut self.lists[self.tab.index()]
     }
 
+    /// The header, then the first page of the tab shown.
+    pub fn calls(&self) -> Vec<Call> {
+        let header = match self.header {
+            Header::Person(_) => Call::User(self.handle.clone()),
+            Header::Organization(_) => Call::Organization(self.handle.clone()),
+        };
+        let mut calls = vec![header];
+        calls.extend(self.tab_calls());
+        calls
+    }
+
     /// The first page of the tab shown.
-    pub fn tab_call(&self) -> Call {
-        self.tab.call(&self.handle, None)
+    pub fn tab_calls(&self) -> Vec<Call> {
+        self.tab.calls(&self.who(), None)
     }
 
     pub fn set_profile(&mut self, profile: Profile) {
-        self.failure = None;
-        self.profile = Some(profile);
+        if let Header::Person(header) = &mut self.header {
+            self.failure = None;
+            *header = Some(Box::new(profile));
+        }
+    }
+
+    pub fn set_organization(&mut self, page: Box<OrganizationPage>) {
+        if let Header::Organization(header) = &mut self.header {
+            self.failure = None;
+            *header = Some(page);
+        }
+    }
+
+    /// Puts the organizations they follow above the people they follow.
+    pub fn land_organizations(&mut self, first: bool, organizations: Vec<Organization>) {
+        self.lists[Tab::Following.index()].land_organizations(first, organizations);
     }
 
     /// Puts their pinned commit first in their commits, as the store shows it now, so every
     /// commit key works on it and a pin made anywhere moves it at once, even one this profile
     /// hasn't listed.
     fn pin(&mut self, store: &Store) {
-        let header = (self.profile.as_ref())
+        let Header::Person(profile) = &self.header else {
+            return;
+        };
+        let header = (profile.as_ref())
             .and_then(|profile| profile.pinned.as_ref())
             .map(|row| &row.commit.id);
         let list = &mut self.lists[Tab::Commits.index()];
@@ -425,7 +551,7 @@ impl ProfileScreen {
         };
         let listed = items.iter().filter_map(|item| match item {
             Item::Commit(id) => Some(id),
-            Item::Person(_) | Item::Headline(_) => None,
+            Item::Person(_) | Item::Organization(_) | Item::Headline(_) => None,
         });
         let pinned = (header.into_iter().chain(listed))
             .find(|id| store.pinned(id))
@@ -447,7 +573,7 @@ impl ProfileScreen {
             let created = |id: &CommitId| store.row(id).map(|row| row.commit.created_at);
             let at = items.iter().position(|item| match item {
                 Item::Commit(id) => created(id) < created(&old),
-                Item::Person(_) | Item::Headline(_) => false,
+                Item::Person(_) | Item::Organization(_) | Item::Headline(_) => false,
             });
             match at {
                 Some(at) => items.insert(at, Item::Commit(old)),
@@ -479,7 +605,7 @@ impl ProfileScreen {
 
     /// A failed reload over a header or rows still shown, for the hint line.
     pub fn failure(&self) -> Option<&Failure> {
-        let header = self.profile.as_ref().and(self.failure.as_ref());
+        let header = self.failure.as_ref().filter(|_| self.header.loaded());
         header.or(self.list().stale())
     }
 
@@ -491,29 +617,41 @@ impl ProfileScreen {
         self.list().items().get(self.list().selected)
     }
 
-    /// The person this profile is about, once their header has come.
-    pub fn user(&self) -> Option<&User> {
-        self.profile.as_ref().map(|profile| &profile.person.user)
-    }
-
     pub fn opens(&self) -> Option<Opens> {
         self.selected().map(Item::opens)
     }
 
-    /// Where `link` goes for the person this profile is about, when they have one.
+    /// Where `link` goes for whom this profile is about, when they have one.
     pub fn link(&self, link: Link) -> Option<String> {
-        let person = &self.profile.as_ref()?.person;
-        let given = |url: &Option<String>| url.clone().filter(|url| !url.is_empty());
+        let (website, github, page) = match &self.header {
+            Header::Person(profile) => {
+                let person = &profile.as_ref()?.person;
+                (
+                    &person.website,
+                    person.github_url.as_ref(),
+                    &person.user.html_url,
+                )
+            }
+            Header::Organization(page) => {
+                let organization = &page.as_ref()?.organization;
+                (
+                    &organization.website,
+                    Some(&organization.github_url),
+                    &organization.html_url,
+                )
+            }
+        };
+        let given = |url: Option<&String>| url.filter(|url| !url.is_empty()).cloned();
         match link {
-            Link::Website => given(&person.website).map(|site| {
+            Link::Website => given(website.as_ref()).map(|site| {
                 if site.contains("://") {
                     site
                 } else {
                     format!("https://{site}")
                 }
             }),
-            Link::GitHub => given(&person.github_url),
-            Link::Page => Some(person.user.html_url.clone()),
+            Link::GitHub => given(github),
+            Link::Page => Some(page.clone()),
         }
     }
 
@@ -528,11 +666,12 @@ impl ProfileScreen {
 
     /// Moves within the tab or to another, and says whether the tab it lands on needs its first page.
     pub fn act(&mut self, action: Action, now: Instant) -> bool {
-        let at = self.tab.index();
-        let count = Tab::ALL.len();
+        let tabs = self.tabs();
+        let at = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
+        let count = tabs.len();
         match action {
-            Action::NextFilter => self.tab = Tab::ALL[(at + 1) % count],
-            Action::PreviousFilter => self.tab = Tab::ALL[(at + count - 1) % count],
+            Action::NextFilter => self.tab = tabs[(at + 1) % count],
+            Action::PreviousFilter => self.tab = tabs[(at + count - 1) % count],
             _ => {
                 self.list_mut().act(action);
                 return false;
@@ -543,7 +682,7 @@ impl ProfileScreen {
 
     /// Clears what failed so a reload shows the loading line again where nothing is shown.
     pub fn reload(&mut self, now: Instant) {
-        if self.profile.is_none() {
+        if !self.header.loaded() {
             self.failure = None;
             self.asked_at = now;
         }
@@ -551,7 +690,7 @@ impl ProfileScreen {
     }
 
     pub fn placeholder_at(&self) -> Option<Instant> {
-        if self.profile.is_none() && self.failure.is_none() {
+        if !self.header.loaded() && self.failure.is_none() {
             return Some(self.asked_at + LOADING_NOTE_DELAY);
         }
         self.list().placeholder_at()
@@ -560,7 +699,7 @@ impl ProfileScreen {
     /// The next page of the tab shown, once the selection nears its end.
     pub fn wants_older(&self) -> Option<Call> {
         let cursor = self.list().wants_older()?;
-        Some(self.tab.call(&self.handle, Some(cursor)))
+        self.tab.calls(&self.who(), Some(cursor)).pop()
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -574,7 +713,7 @@ impl ProfileScreen {
     ) {
         self.card = None;
         self.pin(store);
-        let Some(profile) = &self.profile else {
+        if !self.header.loaded() {
             if let Some(failure) = &self.failure {
                 frame.render_widget(
                     Paragraph::new(fatal::screen(failure, None)).wrap(Wrap { trim: false }),
@@ -585,7 +724,7 @@ impl ProfileScreen {
                 frame.render_widget(Line::styled(loading, theme::muted()), area);
             }
             return;
-        };
+        }
         // The tabs are the rule between the header and the list, and on a wide screen they join
         // the box that holds both.
         let edge = Style::new().fg(log::edge(true));
@@ -611,9 +750,14 @@ impl ProfileScreen {
         // The graph goes first when the header would leave the list too little room.
         let room = usize::from(inside.height.saturating_sub(8));
         let width = inside.width.saturating_sub(2 * pad);
-        let mut header = header(profile, &links, store, width, true);
+        let lines = |graph: bool| match &self.header {
+            Header::Person(Some(profile)) => header(profile, &links, store, width, graph),
+            Header::Organization(Some(page)) => organization_header(page, &links, store, width),
+            Header::Person(None) | Header::Organization(None) => Vec::new(),
+        };
+        let mut header = lines(true);
         if header.len() + 2 > room {
-            header = self::header(profile, &links, store, width, false);
+            header = lines(false);
         }
         let height = (header.len() as u16 + 2).min(room as u16);
         let [top, rule, list] = Layout::vertical([
@@ -626,11 +770,9 @@ impl ProfileScreen {
             Paragraph::new(header).block(Block::new().padding(Padding::new(pad, pad, 1, 1))),
             top,
         );
-        let names = Tab::ALL.map(Tab::slug);
-        let active = Tab::ALL
-            .iter()
-            .position(|tab| *tab == self.tab)
-            .unwrap_or(0);
+        let tabs = self.tabs();
+        let names: Vec<&str> = tabs.iter().map(|tab| tab.slug()).collect();
+        let active = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
         let tabs = log::tabs(&names, active, true, usize::from(rule.width));
         let fill = usize::from(rule.width).saturating_sub(tabs.width());
         let (open, close) = if framed { ("├", "┤") } else { ("", "") };
@@ -720,6 +862,135 @@ fn bare(url: &str) -> String {
         .to_owned()
 }
 
+/// What a profile's header shows: who they are, what they say about themselves, where they are
+/// and where to find them on the left; their standing with you, counts and rank on the right.
+struct Sides {
+    name: Vec<Span<'static>>,
+    chips: Vec<Span<'static>>,
+    bio: Option<String>,
+    facts: Vec<Vec<Span<'static>>>,
+    links: Vec<Vec<Span<'static>>>,
+    counts: Vec<(String, &'static str)>,
+    standing: Option<Vec<Vec<Span<'static>>>>,
+}
+
+fn quiet() -> Style {
+    Style::new().fg(theme::MUTED_FOREGROUND)
+}
+
+fn faint() -> Style {
+    Style::new().fg(theme::FAINT)
+}
+
+/// A name in its lane, with the handle after it when the two differ.
+fn named(name: &str, handle: &str, lane: Lane) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::styled(
+        name.to_owned(),
+        Style::new()
+            .fg(theme::lane(lane))
+            .add_modifier(Modifier::BOLD),
+    )];
+    if name != handle {
+        spans.push(Span::styled(format!("  @{handle}"), quiet()));
+    }
+    spans
+}
+
+fn following_chip() -> Span<'static> {
+    Span::styled(
+        " following ",
+        Style::new()
+            .fg(theme::BACKGROUND)
+            .bg(theme::PRIMARY)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// Where to find them, with the key that opens each.
+fn link_groups(links: &[(String, String)]) -> Vec<Vec<Span<'static>>> {
+    links
+        .iter()
+        .map(|(url, key)| {
+            vec![
+                Span::styled(format!("{} ", theme::icons().link), faint()),
+                Span::styled(bare(url), Style::new().fg(theme::PRIMARY)),
+                Span::styled(format!(" {key}"), quiet()),
+            ]
+        })
+        .collect()
+}
+
+/// Lays the sides out in two columns, or one under the other when the screen is narrow.
+fn columns(sides: Sides, width: usize) -> Vec<Vec<Span<'static>>> {
+    let bold = Style::new()
+        .fg(theme::FOREGROUND)
+        .add_modifier(Modifier::BOLD);
+    let bio = |width: usize, lines: &mut Vec<Vec<Span<'static>>>| {
+        if let Some(bio) = sides.bio.as_ref().filter(|bio| !bio.is_empty()) {
+            lines.push(Vec::new());
+            feed::wrap(
+                &[(bio.clone(), Style::new().fg(theme::FOREGROUND))],
+                width,
+                lines,
+            );
+        }
+    };
+
+    let mut lines = Vec::new();
+    if width >= SIDE * 2 + GUTTER {
+        let left = width - SIDE - GUTTER;
+        let mut body = vec![feed::fit(sides.name, left)];
+        bio(left, &mut body);
+        body.push(Vec::new());
+        body.extend(flow(sides.facts, faint(), left));
+        body.extend(flow(sides.links, faint(), left));
+        let mut side = vec![right(sides.chips, SIDE), Vec::new()];
+        let digits = sides.counts.iter().map(|(count, _)| count.len()).max();
+        for (count, noun) in &sides.counts {
+            let pad = digits.unwrap_or(0) - count.len();
+            side.push(right(
+                vec![
+                    Span::styled(format!("{}{count}", " ".repeat(pad)), bold),
+                    Span::styled(format!("  {noun:<9}"), quiet()),
+                ],
+                SIDE,
+            ));
+        }
+        if let Some(standing) = sides.standing {
+            side.push(Vec::new());
+            side.extend(standing.into_iter().map(|line| right(line, SIDE)));
+        }
+        for row in 0..body.len().max(side.len()) {
+            let mut line = body.get(row).cloned().unwrap_or_default();
+            let used = Line::from(line.clone()).width();
+            line.push(Span::raw(" ".repeat(left + GUTTER - used)));
+            line.extend(side.get(row).cloned().unwrap_or_default());
+            lines.push(line);
+        }
+    } else {
+        lines.push(feed::fit(sides.name, width));
+        lines.push(right(sides.chips, width));
+        bio(width, &mut lines);
+        lines.push(Vec::new());
+        lines.extend(flow(sides.facts, faint(), width));
+        lines.extend(flow(sides.links, faint(), width));
+        let counts = (sides.counts.into_iter())
+            .map(|(count, noun)| {
+                vec![
+                    Span::styled(count, bold),
+                    Span::styled(format!(" {noun}"), quiet()),
+                ]
+            })
+            .collect();
+        lines.extend(flow(counts, faint(), width));
+        if let Some(standing) = sides.standing {
+            lines.push(Vec::new());
+            lines.extend(standing);
+        }
+    }
+    lines
+}
+
 /// Who they are and their standing with you, what they say about themselves, where they are,
 /// where to find them with the key that opens each, and their counts.
 fn header(
@@ -732,38 +1003,19 @@ fn header(
     let width = usize::from(width);
     let person = &profile.person;
     let user = &person.user;
-    let faint = Style::new().fg(theme::FAINT);
-    let quiet = Style::new().fg(theme::MUTED_FOREGROUND);
+    let quiet = quiet();
 
     let mut chips = Vec::new();
     if user.handle == store.me.handle {
         chips.push(Span::styled(" you ", quiet.bg(theme::MUTED)));
-    } else if store
-        .following(&user.handle)
-        .unwrap_or(profile.is_following)
-    {
-        chips.push(Span::styled(
-            " following ",
-            Style::new()
-                .fg(theme::BACKGROUND)
-                .bg(theme::PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ));
+    } else if store.following(&user.who()).unwrap_or(profile.is_following) {
+        chips.push(following_chip());
     }
     if store.follows_you(&user.handle, profile.follows_you) {
         if !chips.is_empty() {
             chips.push(Span::raw(" "));
         }
         chips.push(Span::styled(" follows you ", quiet.bg(theme::MUTED)));
-    }
-    let mut name = vec![Span::styled(
-        user.name.clone(),
-        Style::new()
-            .fg(theme::lane(user.lane))
-            .add_modifier(Modifier::BOLD),
-    )];
-    if user.name != user.handle {
-        name.push(Span::styled(format!("  @{}", user.handle), quiet));
     }
 
     let given = |fact: &Option<String>| fact.clone().filter(|fact| !fact.is_empty());
@@ -779,18 +1031,7 @@ fn header(
         quiet,
     )]);
 
-    let links: Vec<Vec<Span<'static>>> = links
-        .iter()
-        .map(|(url, key)| {
-            vec![
-                Span::styled(format!("{} ", theme::icons().link), faint),
-                Span::styled(bare(url), Style::new().fg(theme::PRIMARY)),
-                Span::styled(format!(" {key}"), quiet),
-            ]
-        })
-        .collect();
-
-    let counts: Vec<(String, &str)> = [
+    let counts = [
         (person.commits_count, "commits"),
         (person.followers_count, "followers"),
         (person.following_count, "following"),
@@ -798,85 +1039,75 @@ fn header(
     .into_iter()
     .filter_map(|(count, noun)| Some((grouped(count?), noun)))
     .collect();
-    let bold = Style::new()
-        .fg(theme::FOREGROUND)
-        .add_modifier(Modifier::BOLD);
     let lane = theme::lane(user.lane);
     let standing = profile.level.as_ref().map(|level| {
         let mine = user.handle == store.me.handle;
         standing(level, mine, lane)
     });
-    let bio = |width: usize, lines: &mut Vec<Vec<Span<'static>>>| {
-        if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
-            lines.push(Vec::new());
-            feed::wrap(
-                &[(bio.clone(), Style::new().fg(theme::FOREGROUND))],
-                width,
-                lines,
-            );
-        }
+    let sides = Sides {
+        name: named(&user.name, &user.handle, user.lane),
+        chips,
+        bio: person.bio.clone(),
+        facts,
+        links: link_groups(links),
+        counts,
+        standing,
     };
-
-    let mut lines = Vec::new();
-    if width >= SIDE * 2 + GUTTER {
-        // Who they are on the left, their standing and counts in a column on the right.
-        let left = width - SIDE - GUTTER;
-        let mut body = vec![feed::fit(name, left)];
-        bio(left, &mut body);
-        body.push(Vec::new());
-        body.extend(flow(facts, faint, left));
-        body.extend(flow(links, faint, left));
-        let mut side = vec![right(chips, SIDE), Vec::new()];
-        let digits = counts.iter().map(|(count, _)| count.len()).max();
-        for (count, noun) in &counts {
-            let pad = digits.unwrap_or(0) - count.len();
-            side.push(right(
-                vec![
-                    Span::styled(format!("{}{count}", " ".repeat(pad)), bold),
-                    Span::styled(format!("  {noun:<9}"), quiet),
-                ],
-                SIDE,
-            ));
-        }
-        if let Some(standing) = standing {
-            side.push(Vec::new());
-            side.extend(standing.into_iter().map(|line| right(line, SIDE)));
-        }
-        for row in 0..body.len().max(side.len()) {
-            let mut line = body.get(row).cloned().unwrap_or_default();
-            let used = Line::from(line.clone()).width();
-            line.push(Span::raw(" ".repeat(left + GUTTER - used)));
-            line.extend(side.get(row).cloned().unwrap_or_default());
-            lines.push(line);
-        }
-    } else {
-        lines.push(feed::fit(name, width));
-        lines.push(right(chips, width));
-        bio(width, &mut lines);
-        lines.push(Vec::new());
-        lines.extend(flow(facts, faint, width));
-        lines.extend(flow(links, faint, width));
-        let counts = counts
-            .into_iter()
-            .map(|(count, noun)| {
-                vec![
-                    Span::styled(count, bold),
-                    Span::styled(format!(" {noun}"), quiet),
-                ]
-            })
-            .collect();
-        lines.extend(flow(counts, faint, width));
-        if let Some(standing) = standing {
-            lines.push(Vec::new());
-            lines.extend(standing);
-        }
-    }
+    let mut lines = columns(sides, width);
     if graph && let Some(activity) = &profile.activity {
         lines.push(Vec::new());
         lines.extend(self::activity(activity, profile.streaks, lane, width));
     }
 
     lines.into_iter().map(Line::from).collect()
+}
+
+/// An organization's name and whether you follow it, what it says about itself, where it is,
+/// who runs it on dev-null.sh, where to find it, and how many follow it.
+fn organization_header(
+    page: &OrganizationPage,
+    links: &[(String, String)],
+    store: &Store,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let organization = &page.organization;
+    let quiet = quiet();
+    let who = Who::Organization(organization.handle.clone());
+    let mut chips = vec![Span::styled(" org ", quiet.bg(theme::MUTED))];
+    if store.following(&who).unwrap_or(page.is_following) {
+        chips.push(Span::raw(" "));
+        chips.push(following_chip());
+    }
+    let mut facts = Vec::new();
+    if let Some(location) = organization.location.clone().filter(|at| !at.is_empty()) {
+        facts.push(vec![Span::styled(location, quiet)]);
+    }
+    if !organization.admins.is_empty() {
+        let mut admins = vec![Span::styled("admins", quiet)];
+        for admin in &organization.admins {
+            admins.push(Span::styled(
+                format!(" @{}", admin.handle),
+                Style::new().fg(theme::lane(admin.lane)),
+            ));
+        }
+        facts.push(admins);
+    }
+    let counts = (organization.followers_count)
+        .map(|count| (grouped(count), "followers"))
+        .into_iter()
+        .collect();
+    let sides = Sides {
+        name: named(&organization.name, &organization.handle, organization.lane),
+        chips,
+        bio: organization.bio.clone(),
+        facts,
+        links: link_groups(links),
+        counts,
+        standing: None,
+    };
+    (columns(sides, usize::from(width)).into_iter())
+        .map(Line::from)
+        .collect()
 }
 
 /// Their level and rank, and on your own profile how far you are from the next rank.
@@ -1033,8 +1264,8 @@ fn grouped(count: u32) -> String {
     out
 }
 
-/// One node per person, the way the inbox lays out a follow group, or per headline: its name over
-/// its recap.
+/// One node per person or organization, the way the inbox lays out a follow group, or per
+/// headline: its name over its recap.
 fn nodes(items: &[Item], store: &Store, width: u16) -> Feed {
     let mut out = Writer::new(width);
     let mut entries = Vec::with_capacity(items.len());
@@ -1046,6 +1277,7 @@ fn nodes(items: &[Item], store: &Store, width: u16) -> Feed {
         let lane = match item {
             Item::Commit(_) => continue,
             Item::Person(person) => person_node(&mut out, person, store),
+            Item::Organization(organization) => organization_node(&mut out, organization, store),
             Item::Headline(headline) => {
                 let lane = Lane::Palette(index as u8 % PALETTE_LEN);
                 headline_node(&mut out, headline, lane);
@@ -1063,6 +1295,25 @@ fn nodes(items: &[Item], store: &Store, width: u16) -> Feed {
         lines: out.lines,
         entries,
     }
+}
+
+/// An organization as a following list shows it, marked apart from the people under it.
+fn organization_node(out: &mut Writer, organization: &Organization, store: &Store) -> Lane {
+    let lane = Style::new().fg(theme::lane(organization.lane));
+    let mut spans = vec![
+        Span::styled(organization.name.clone(), lane.add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" @{} · org", organization.handle), theme::muted()),
+    ];
+    let who = Who::Organization(organization.handle.clone());
+    if (store.following(&who).or(organization.is_followed)).unwrap_or(false) {
+        spans.push(Span::styled(" · following", theme::muted()));
+    }
+    out.line(Span::styled("◇ ", lane), feed::fit(spans, out.content()));
+    if let Some(bio) = organization.bio.as_ref().filter(|bio| !bio.is_empty()) {
+        let bio = vec![Span::styled(bio.replace('\n', " "), theme::muted())];
+        out.line(feed::rail(), feed::fit(bio, out.content()));
+    }
+    organization.lane
 }
 
 fn person_node(out: &mut Writer, person: &Person, store: &Store) -> Lane {
@@ -1087,7 +1338,7 @@ fn person_node(out: &mut Writer, person: &Person, store: &Store) -> Lane {
         spans.push(Span::styled(" · follows you", theme::muted()));
     }
     if store
-        .following(&user.handle)
+        .following(&user.who())
         .or(person.is_followed)
         .unwrap_or(false)
     {

@@ -86,7 +86,13 @@ pub enum Status {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
     Palette(u8),
-    Custom { r: u8, g: u8, b: u8 },
+    Custom {
+        r: u8,
+        g: u8,
+        b: u8,
+    },
+    /// An organization whose admins chose no lane, which dev-null.sh draws in its own blue.
+    Site,
 }
 
 pub const PALETTE_LEN: u8 = 6;
@@ -100,12 +106,13 @@ impl<'de> Deserialize<'de> for Lane {
             Hex(String),
         }
 
-        match Wire::deserialize(deserializer)? {
-            Wire::Index(index) if index < PALETTE_LEN => Ok(Lane::Palette(index)),
-            Wire::Index(index) => Err(de::Error::custom(format!(
+        match Option::<Wire>::deserialize(deserializer)? {
+            None => Ok(Lane::Site),
+            Some(Wire::Index(index)) if index < PALETTE_LEN => Ok(Lane::Palette(index)),
+            Some(Wire::Index(index)) => Err(de::Error::custom(format!(
                 "lane {index} is outside the palette"
             ))),
-            Wire::Hex(hex) => parse_hex(&hex)
+            Some(Wire::Hex(hex)) => parse_hex(&hex)
                 .map(|(r, g, b)| Lane::Custom { r, g, b })
                 .ok_or_else(|| de::Error::custom(format!("lane {hex:?} is not a #rrggbb color"))),
         }
@@ -169,6 +176,31 @@ impl From<WireSegment> for Segment {
     }
 }
 
+/// Whose page a profile is, as its `type` says. People and GitHub organizations share @handles on
+/// dev-null.sh, but each has its own routes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileType {
+    #[default]
+    User,
+    Organization,
+}
+
+/// A handle and whose page it is, which picks the routes that follow it or list its commits.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Who {
+    Person(String),
+    Organization(String),
+}
+
+impl Who {
+    pub fn handle(&self) -> &str {
+        match self {
+            Who::Person(handle) | Who::Organization(handle) => handle,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct User {
     pub id: UserId,
@@ -177,6 +209,18 @@ pub struct User {
     pub avatar_url: Option<String>,
     pub html_url: String,
     pub lane: Lane,
+    /// Only a commit's author says; everyone else ttyl lists is a person.
+    #[serde(rename = "type", default)]
+    pub profile_type: ProfileType,
+}
+
+impl User {
+    pub fn who(&self) -> Who {
+        match self.profile_type {
+            ProfileType::User => Who::Person(self.handle.clone()),
+            ProfileType::Organization => Who::Organization(self.handle.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -932,6 +976,72 @@ impl Profile {
     }
 }
 
+/// A GitHub organization as its page on dev-null.sh shows it. Its own page also counts its
+/// followers and lists its admins, first one first; a list says whether the user follows it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Organization {
+    pub handle: String,
+    pub name: String,
+    pub bio: Option<String>,
+    pub location: Option<String>,
+    pub website: Option<String>,
+    pub github_url: String,
+    pub html_url: String,
+    pub lane: Lane,
+    #[serde(default)]
+    pub followers_count: Option<u32>,
+    #[serde(default)]
+    pub admins: Vec<User>,
+    #[serde(default)]
+    pub is_followed: Option<bool>,
+}
+
+/// An organization's page and whether the user follows it.
+#[derive(Debug, Clone)]
+pub struct OrganizationPage {
+    pub organization: Organization,
+    pub is_following: bool,
+}
+
+impl OrganizationPage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Organization,
+            is_following: bool,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(OrganizationPage {
+            organization: wire.data,
+            is_following: wire.is_following,
+        })
+    }
+}
+
+/// The organizations someone follows, newest follow first.
+#[derive(Debug, Clone)]
+pub struct OrganizationList {
+    pub organizations: Vec<Organization>,
+    pub next_cursor: Option<String>,
+}
+
+impl OrganizationList {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Organization>,
+            meta: Meta,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(OrganizationList {
+            organizations: wire.data,
+            next_cursor: wire.meta.next_cursor,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RowPage {
     pub rows: Vec<Row>,
@@ -1005,7 +1115,7 @@ impl PeoplePage {
         })
     }
 
-    /// The people `search/profiles` finds. Organizations, which ttyl has no page for, are left out.
+    /// The people `search/profiles` finds. The organizations it finds too are left out for now.
     pub fn parse_search(json: &str) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Wire {

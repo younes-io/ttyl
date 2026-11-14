@@ -10,7 +10,7 @@ use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::clock::Spark;
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{CommitId, Focus, Log, LogPage, Reason};
+use ttyl::model::{CommitId, Focus, Log, LogPage, Reason, Who};
 use ttyl::sched::Ticket;
 use ttyl::theme;
 
@@ -32,7 +32,7 @@ fn star(on: bool) -> Call {
 
 fn follow(on: bool) -> Call {
     Call::Follow {
-        handle: "grace".to_owned(),
+        who: Who::Person("grace".to_owned()),
         on,
     }
 }

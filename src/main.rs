@@ -44,10 +44,12 @@ enum Command<'a> {
     Run,
     Redirect(&'a str),
     Status,
-    /// A commit from the shell, with its text from `-m` or else from stdin, sent now or `at` a time.
+    /// A commit from the shell, with its text from `-m` or else from stdin, sent now or `at` a
+    /// time, as you or `as` an organization you're a member of.
     Commit {
         text: Option<&'a str>,
         at: Option<&'a str>,
+        as_: Option<&'a str>,
     },
     /// A log printed the way `git log` prints commits.
     Log(Log, Format),
@@ -96,12 +98,13 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
 }
 
 fn commit_command<'a>(mut args: &[&'a str]) -> Command<'a> {
-    let (mut text, mut at) = (None, None);
+    let (mut text, mut at, mut as_) = (None, None, None);
     loop {
         match args {
-            [] => return Command::Commit { text, at },
+            [] => return Command::Commit { text, at, as_ },
             ["-m", value, rest @ ..] => (text, args) = (Some(*value), rest),
             ["--at", value, rest @ ..] => (at, args) = (Some(*value), rest),
+            ["--as", value, rest @ ..] => (as_, args) = (Some(*value), rest),
             [arg, ..] => return Command::Unknown(arg),
         }
     }
@@ -128,7 +131,7 @@ fn main() -> ExitCode {
         Command::Run => report(start()),
         Command::Redirect(url) => report(signin::forward(url).map_err(|error| error.to_string())),
         Command::Status => report(status()),
-        Command::Commit { text, at } => report(commit(text, at)),
+        Command::Commit { text, at, as_ } => report(commit(text, at, as_)),
         Command::Log(log, format) => report(print_log(log, format)),
         Command::Headlines => report(print_headlines()),
         Command::Blocked => report(print_blocked()),
@@ -140,7 +143,7 @@ fn main() -> ExitCode {
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle | '#group' [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle or to a #group, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>] [--as <@org>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle | '#group' [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time; --as posts it as an\n             organization you're a member of\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle or to a #group, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -310,13 +313,19 @@ fn text_or_stdin(text: Option<&str>, nothing: &str) -> Result<String, String> {
     }
 }
 
-fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
+fn commit(text: Option<&str>, at: Option<&str>, as_: Option<&str>) -> Result<(), String> {
     // Read before stdin, so a time that won't do fails before the text is typed.
     let at = at
         .map(|at| {
             ttyl::at::resolve(at, &Local::now()).map_err(|refusal| format!("fatal: {refusal}"))
         })
         .transpose()?;
+    let client = client()?;
+    // So is whom it goes out as, which only /me knows.
+    let author = match as_ {
+        Some(handle) => author(&client, handle)?,
+        None => None,
+    };
     let text = text_or_stdin(
         text,
         "nothing to commit; pass -m <text> or pipe the text in",
@@ -329,14 +338,16 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
             body: text,
             attachment: Attachment::None,
             at: at.fixed_offset(),
+            author,
         },
         None => Call::Post {
             target: Target::New,
             body: text,
             attachment: Attachment::None,
+            author,
         },
     };
-    let reply = client()?.call(&call).map_err(|error| {
+    let reply = client.call(&call).map_err(|error| {
         if error.may_have_landed() {
             engine::NO_ANSWER.to_owned()
         } else {
@@ -364,6 +375,19 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
     }
     println!("{}", commit.html_url);
     Ok(())
+}
+
+/// The organization `--as` names, spelled as dev-null.sh spells it, or none when it names you.
+fn author(client: &Client, handle: &str) -> Result<Option<String>, String> {
+    let handle = handle.strip_prefix('@').unwrap_or(handle);
+    let me = client.me().map_err(|error| refused(&error))?.me;
+    if me.handle.eq_ignore_ascii_case(handle) {
+        return Ok(None);
+    }
+    (me.organizations.into_iter())
+        .find(|membership| membership.handle.eq_ignore_ascii_case(handle))
+        .map(|membership| Some(membership.handle))
+        .ok_or_else(|| format!("fatal: you are not a member of @{handle}"))
 }
 
 /// Every conversation, page after page, in the order `gm` lists them. A conversation that moved

@@ -153,6 +153,7 @@ fn enter_schedules_the_draft_then_closes_it_with_where_to_find_it() {
             body: "shipped it".to_owned(),
             attachment: Attachment::None,
             at: DateTime::parse_from_rfc3339("2026-10-23T14:00:00+00:00").unwrap(),
+            author: None,
         }
     );
     let rows = screen(&mut engine, WIDTH, HEIGHT, at);

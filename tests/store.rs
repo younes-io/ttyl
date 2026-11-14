@@ -18,6 +18,7 @@ fn store() -> Store {
             name: None,
             pasteis_mode: false,
             pasteis_remaining: None,
+            organizations: Vec::new(),
         },
         unread: 0,
     })
@@ -82,6 +83,7 @@ fn an_account_reply_moves_the_unread_count() {
                 name: Some("Ada".to_owned()),
                 pasteis_mode: false,
                 pasteis_remaining: None,
+                organizations: Vec::new(),
             },
             unread: 3,
         }),

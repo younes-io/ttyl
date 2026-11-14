@@ -18,8 +18,9 @@ use crate::draft::Target;
 use crate::model::{
     Candidate, Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus,
     Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId,
-    MessagePage, NotificationId, NotificationPage, PeoplePage, Profile, Reason, Refile,
-    RepliesPage, RowPage, Scheduled, ScheduledId, Segment, Settings, Translation,
+    MessagePage, NotificationId, NotificationPage, OrganizationList, OrganizationPage, PeoplePage,
+    Profile, Reason, Refile, RepliesPage, RowPage, Scheduled, ScheduledId, Segment, Settings,
+    Translation, Who,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -42,6 +43,14 @@ pub struct Me {
     pub pasteis_mode: bool,
     #[serde(default)]
     pub pasteis_remaining: Option<u32>,
+    /// The organizations the user is a member of, oldest membership first, which they may post as.
+    #[serde(default)]
+    pub organizations: Vec<Membership>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Membership {
+    pub handle: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,7 +87,7 @@ pub enum Call {
         on: bool,
     },
     Follow {
-        handle: String,
+        who: Who,
         on: bool,
     },
     /// Mutes someone, silently as the web does, or unmutes them.
@@ -99,6 +108,19 @@ pub enum Call {
         on: bool,
     },
     User(String),
+    /// An organization's page.
+    Organization(String),
+    /// An organization's commits, or with `mentions` the commits that mention it.
+    OrganizationCommits {
+        handle: String,
+        mentions: bool,
+        cursor: Option<String>,
+    },
+    /// The organizations someone follows, which their following list shows above the people.
+    FollowedOrganizations {
+        handle: String,
+        cursor: Option<String>,
+    },
     /// Someone's commits, or with `replies` their replies, as their profile lists them.
     Commits {
         handle: String,
@@ -146,12 +168,15 @@ pub enum Call {
         target: Target,
         body: String,
         attachment: Attachment,
+        /// The organization it goes out as, by handle, or `None` for the user.
+        author: Option<String>,
     },
     /// Queues a new commit to go out at `at`. Only the user sees it until then.
     Schedule {
         body: String,
         attachment: Attachment,
         at: DateTime<FixedOffset>,
+        author: Option<String>,
     },
     /// The user's scheduled commits still waiting, soonest first.
     Queue,
@@ -230,6 +255,8 @@ pub enum Reply {
         remaining: u32,
     },
     User(Box<Profile>),
+    Organization(Box<OrganizationPage>),
+    Organizations(OrganizationList),
     Rows(RowPage),
     People(PeoplePage),
     Headlines(Vec<Headline>),
@@ -402,8 +429,13 @@ impl Client {
             Call::Star { id, on } => self
                 .star(id, *on)
                 .map(|focus| Reply::Commit(Box::new(focus))),
-            Call::Follow { handle, on } => {
-                let path = format!("/api/v1/users/{}/follow", escape(handle));
+            Call::Follow { who, on } => {
+                let path = match who {
+                    Who::Person(handle) => format!("/api/v1/users/{}/follow", escape(handle)),
+                    Who::Organization(handle) => {
+                        format!("/api/v1/organizations/{}/follow", escape(handle))
+                    }
+                };
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
@@ -434,6 +466,38 @@ impl Client {
             Call::User(handle) => self
                 .user(handle)
                 .map(|profile| Reply::User(Box::new(profile))),
+            Call::Organization(handle) => {
+                let path = format!("/api/v1/organizations/{}", escape(handle));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (OrganizationPage::parse(&text))
+                    .map(|page| Reply::Organization(Box::new(page)))
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::OrganizationCommits {
+                handle,
+                mentions,
+                cursor,
+            } => {
+                let list = if *mentions { "mentions" } else { "commits" };
+                let mut path = format!("/api/v1/organizations/{}/{list}", escape(handle));
+                if let Some(cursor) = cursor {
+                    path.push_str(&format!("?cursor={}", escape(cursor)));
+                }
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (RowPage::parse(&text))
+                    .map(Reply::Rows)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::FollowedOrganizations { handle, cursor } => {
+                let mut path = format!("/api/v1/users/{}/following/organizations", escape(handle));
+                if let Some(cursor) = cursor {
+                    path.push_str(&format!("?cursor={}", escape(cursor)));
+                }
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (OrganizationList::parse(&text))
+                    .map(Reply::Organizations)
+                    .map_err(|error| unreadable(status, error))
+            }
             Call::Commits {
                 handle,
                 replies,
@@ -516,15 +580,17 @@ impl Client {
                 target,
                 body,
                 attachment,
+                author,
             } => self
-                .post(target, body, attachment)
+                .post(target, body, attachment, author.as_deref())
                 .map(|focus| Reply::Commit(Box::new(focus))),
             Call::Schedule {
                 body,
                 attachment,
                 at,
+                author,
             } => self
-                .schedule(body, attachment, at)
+                .schedule(body, attachment, at, author.as_deref())
                 .map(|scheduled| Reply::Scheduled(Box::new(scheduled))),
             Call::Queue => {
                 let (status, text) =
@@ -661,7 +727,13 @@ impl Client {
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 
-    fn post(&self, target: &Target, body: &str, attachment: &Attachment) -> Result<Focus, Error> {
+    fn post(
+        &self,
+        target: &Target,
+        body: &str,
+        attachment: &Attachment,
+        author: Option<&str>,
+    ) -> Result<Focus, Error> {
         #[derive(Deserialize)]
         struct Wire {
             data: Focus,
@@ -672,8 +744,11 @@ impl Client {
             Target::Reply(id) => (Some(&id.0), None),
             Target::Quote(id) => (None, Some(&id.0)),
         };
-        let json =
+        let mut json =
             serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted });
+        if let Some(author) = author {
+            json["author"] = author.into();
+        }
         let (status, text) = self.attached("/api/v1/commits", json, attachment)?;
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
@@ -683,8 +758,12 @@ impl Client {
         body: &str,
         attachment: &Attachment,
         when: &DateTime<FixedOffset>,
+        author: Option<&str>,
     ) -> Result<Scheduled, Error> {
-        let json = serde_json::json!({ "body": body, "scheduled_at": at::wire(when) });
+        let mut json = serde_json::json!({ "body": body, "scheduled_at": at::wire(when) });
+        if let Some(author) = author {
+            json["author"] = author.into();
+        }
         let (status, text) = self.attached("/api/v1/scheduled-commits", json, attachment)?;
         Scheduled::parse(&text).map_err(|error| unreadable(status, error))
     }

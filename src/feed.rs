@@ -19,8 +19,8 @@ use crate::clock::Spark;
 use crate::code;
 use crate::keys::Action;
 use crate::model::{
-    Commit, CommitId, Deletion, Fold, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment,
-    Showing, Shown, Status,
+    Commit, CommitId, Deletion, Fold, Lane, Log, LogPage, Media, Poll, ProfileType, Quote, Reply,
+    Row, Segment, Showing, Shown, Status,
 };
 use crate::theme;
 
@@ -1090,6 +1090,9 @@ pub(crate) fn header<Tz: TimeZone>(
         Span::styled(author.name.clone(), bold),
         Span::styled(format!(" @{}", author.handle), theme::muted()),
     ];
+    if author.profile_type == ProfileType::Organization {
+        spans.push(Span::styled(" · org", theme::muted()));
+    }
     spans.push(Span::styled(
         format!(" · {}", relative_time(commit.created_at, now)),
         theme::muted(),

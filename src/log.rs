@@ -200,6 +200,7 @@ impl LogScreen {
             | Action::NextFilter
             | Action::PreviousFilter
             | Action::Schedule
+            | Action::PostAs
             | Action::Later
             | Action::Unschedule
             | Action::SendNow

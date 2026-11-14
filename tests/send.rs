@@ -111,6 +111,7 @@ fn ctrl_s_sends_the_draft_once_and_locks_the_panel_until_it_lands() {
             target: Target::New,
             body: "hello".to_owned(),
             attachment: Attachment::None,
+            author: None,
         }
     );
     assert!(
@@ -234,6 +235,7 @@ fn a_reply_counts_on_its_parent_and_joins_the_end_of_its_loaded_replies() {
             target: Target::Reply(grace()),
             body: "my reply".to_owned(),
             attachment: Attachment::None,
+            author: None,
         }
     );
     reply(
@@ -292,6 +294,7 @@ fn a_quote_goes_on_top_of_latest() {
             target: Target::Quote(grace()),
             body: "quoted you".to_owned(),
             attachment: Attachment::None,
+            author: None,
         }
     );
     reply(

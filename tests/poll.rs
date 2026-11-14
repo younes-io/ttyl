@@ -94,6 +94,7 @@ fn a_poll_goes_out_with_its_options_and_how_long_it_lasts() {
                 options: vec!["vim".to_owned(), "emacs".to_owned()],
                 duration: Duration::Week,
             }),
+            author: None,
         }],
     );
 }

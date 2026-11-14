@@ -360,7 +360,7 @@ impl GroupList {
     pub fn opens(&self) -> Option<profile::Opens> {
         let event = &self.list.selected()?.event;
         if event.kind == Kind::Followed {
-            return Some(profile::Opens::Profile(event.actor.handle.clone()));
+            return Some(profile::Opens::Profile(event.actor.who()));
         }
         event.commit_id().cloned().map(profile::Opens::Thread)
     }
