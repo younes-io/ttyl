@@ -366,12 +366,22 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
 }
 
 fn print_messages() -> Result<(), String> {
-    let mut page = client()?
-        .conversations(None)
-        .map_err(|error| refused(&error))?;
-    messages::order(&mut page.conversations);
+    let client = client()?;
+    let mut conversations = Vec::new();
+    let mut before: Option<String> = None;
+    loop {
+        let page = client
+            .conversations(before.as_deref())
+            .map_err(|error| refused(&error))?;
+        conversations.extend(page.conversations);
+        match page.next {
+            Some(next) if before.as_ref() != Some(&next) => before = Some(next),
+            _ => break,
+        }
+    }
+    messages::order(&mut conversations);
     let mut out = String::new();
-    for conversation in &page.conversations {
+    for conversation in &conversations {
         let preview = conversation.last.as_ref().map_or("", |last| last.preview());
         let _ = writeln!(
             out,

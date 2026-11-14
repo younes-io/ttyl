@@ -35,7 +35,7 @@ use crate::keys::{
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
-use crate::messages::{self, ConversationScreen, Conversations};
+use crate::messages::{self, ConversationScreen, Conversations, Unsent};
 use crate::model::{
     self, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Reason, Row, ScheduledId,
     Shown, Status, Translation, Untranslated, User,
@@ -137,7 +137,7 @@ pub struct Session {
     /// The commit deleted moments ago, which `u` can still bring back.
     undoable: Option<CommitId>,
     /// What was typed in a conversation and not sent, by handle, kept for when it opens again.
-    unsent: HashMap<String, String>,
+    unsent: HashMap<String, Unsent>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -527,10 +527,10 @@ impl Session {
         match (self.stack.last_mut(), action) {
             (_, Action::Back) => {
                 if let Some(Screen::Conversation(conversation)) = self.stack.pop() {
-                    let (handle, text) = conversation.leave();
-                    match text.is_empty() {
+                    let (handle, unsent) = conversation.leave();
+                    match unsent.is_empty() {
                         true => self.unsent.remove(&handle),
-                        false => self.unsent.insert(handle, text),
+                        false => self.unsent.insert(handle, unsent),
                     };
                 }
             }
@@ -1004,7 +1004,7 @@ fn open_conversation(
     now: Instant,
 ) {
     let unsent = session.unsent.remove(&partner.handle).unwrap_or_default();
-    let conversation = ConversationScreen::new(partner, &unsent, now);
+    let conversation = ConversationScreen::new(partner, unsent, now);
     sched.send(conversation.poll(), Priority::Now);
     timers.set(Timer::Converse, now + CONVERSE);
     session
@@ -2729,10 +2729,16 @@ impl Engine {
                     }
                     Call::MarkRead { .. } => offline,
                     Call::SendMessage {
-                        handle, client_id, ..
+                        handle,
+                        body,
+                        client_id,
                     } => {
-                        if let Some(conversation) = session.conversation_with(&handle) {
-                            conversation.unsent(&client_id);
+                        match session.conversation_with(&handle) {
+                            Some(conversation) => conversation.unsent(&client_id),
+                            None => {
+                                let unsent = session.unsent.entry(handle).or_default();
+                                unsent.restore(client_id, body);
+                            }
                         }
                         self.toast = Some(match error.may_have_landed() {
                             true => messages::NO_ANSWER.to_owned(),

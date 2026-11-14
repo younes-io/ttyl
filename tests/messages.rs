@@ -7,7 +7,7 @@ use std::time::Instant;
 use common::{boot, contains, press, runs, screen, secs, tap};
 use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
-use ttyl::api::{Call, Paging, Reply};
+use ttyl::api::{Call, Error, Paging, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{ConversationPage, Message, MessageId, MessagePage};
 
@@ -462,4 +462,158 @@ fn capital_m_on_a_commit_opens_the_conversation_with_its_author() {
     let rows = screen(&mut engine, 100, 30, at);
     assert!(rows[0].contains("@margaret"), "{rows:#?}");
     assert!(rows[28].contains("› "), "{rows:#?}");
+}
+
+/// Types `text` into the open conversation and presses enter, returning the send and its id.
+fn send(engine: &mut Engine, text: &str, at: Instant) -> (Vec<Effect>, String) {
+    press(engine, text, at);
+    let effects = tap(engine, KeyCode::Enter, at);
+    let client_id = match runs(&effects).as_slice() {
+        [Call::SendMessage { client_id, .. }] => client_id.0.clone(),
+        other => panic!("enter sends the message: {other:#?}"),
+    };
+    (effects, client_id)
+}
+
+fn fail(engine: &mut Engine, effects: &[Effect], error: fn() -> Error, at: Instant) {
+    for effect in effects {
+        if let Effect::Run(ticket, Call::SendMessage { .. }) = effect {
+            engine.update(Event::Reply(*ticket, Err(error())), at);
+        }
+    }
+}
+
+#[test]
+fn a_message_grace_sent_just_before_yours_still_comes_in() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let (effects, client_id) = send(&mut engine, "on it", at);
+    let mine = message(107, ADA, "on it", &client_id, "2026-10-21T09:59:00Z");
+    answer(&mut engine, &effects, at, |call| {
+        matches!(call, Call::SendMessage { .. })
+            .then(|| Reply::Message(Box::new(serde_json::from_value(mine.clone()).unwrap())))
+    });
+
+    let effects = engine.pump(at + secs(3));
+    let poll = Call::Messages {
+        handle: "grace".to_owned(),
+        paging: Paging::After(MessageId(105)),
+    };
+    assert!(
+        runs(&effects).contains(&&poll),
+        "a sent message doesn't move where polling picks up: {effects:#?}"
+    );
+    let theirs = message(
+        106,
+        GRACE,
+        "wait, one more thing",
+        "5a4b3c2d-0b1d-4c55-8e41-1f9e2b3c4d5e",
+        "2026-10-21T09:58:30Z",
+    );
+    let effects = answer(&mut engine, &effects, at + secs(3), |call| {
+        (*call == poll).then(|| thread(Some(vec![theirs.clone(), mine.clone()]), "open"))
+    });
+    assert!(
+        runs(&effects).contains(&&Call::MarkRead {
+            handle: "grace".to_owned(),
+            through: MessageId(107),
+        }),
+        "{effects:#?}"
+    );
+    let rows = screen(&mut engine, 100, 30, at + secs(3));
+    assert!(
+        row(&rows, "wait, one more thing").0 < row(&rows, "<ada> on it").0,
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.contains("<ada> on it"))
+            .count(),
+        1,
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_poll_answered_after_the_conversation_reopened_leaves_it_loading() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let stale = engine.pump(at + secs(3));
+    tap(&mut engine, KeyCode::Esc, at + secs(3));
+    tap(&mut engine, KeyCode::Enter, at + secs(3));
+    let arrived = message(
+        107,
+        GRACE,
+        "pushed v2",
+        "7c1e9a52-0b1d-4c55-8e41-1f9e2b3c4d5e",
+        "2026-10-21T09:59:00Z",
+    );
+    answer(&mut engine, &stale, at + secs(3), |call| {
+        matches!(call, Call::Messages { .. }).then(|| thread(Some(vec![arrived.clone()]), "open"))
+    });
+    let rows = screen(&mut engine, 100, 30, at + secs(3));
+    assert!(
+        !contains(&rows, "pushed v2") && !contains(&rows, "the start of your conversation"),
+        "the old screen's poll doesn't stand in for the history: {rows:#?}"
+    );
+
+    let effects = engine.pump(at + secs(6));
+    let latest = Call::Messages {
+        handle: "grace".to_owned(),
+        paging: Paging::Latest,
+    };
+    assert!(runs(&effects).contains(&&latest), "{effects:#?}");
+    answer(&mut engine, &effects, at + secs(6), dev_null);
+    let rows = screen(&mut engine, 100, 30, at + secs(6));
+    assert!(contains(&rows, "are you around tomorrow?"), "{rows:#?}");
+}
+
+#[test]
+fn a_send_that_may_have_landed_goes_again_with_the_same_id() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let (effects, first) = send(&mut engine, "on it", at);
+    fail(&mut engine, &effects, || Error::Unexpected(502), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[28].contains("› on it"), "{rows:#?}");
+
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        matches!(runs(&effects).as_slice(), [Call::SendMessage { client_id, .. }] if client_id.0 == first),
+        "dev-null.sh keeps one copy if the first did land: {effects:#?}"
+    );
+    fail(&mut engine, &effects, || Error::Unexpected(502), at);
+    press(&mut engine, "!", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        matches!(runs(&effects).as_slice(), [Call::SendMessage { client_id, body, .. }] if client_id.0 != first && body == "on it!"),
+        "changed text is a new message: {effects:#?}"
+    );
+}
+
+#[test]
+fn a_send_refused_after_leaving_comes_back_on_reopening() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let (effects, _) = send(&mut engine, "on it", at);
+    tap(&mut engine, KeyCode::Esc, at);
+    fail(
+        &mut engine,
+        &effects,
+        || Error::Api {
+            status: 403,
+            code: None,
+            message: "@grace hasn't merged your request yet.".to_owned(),
+            retry_after: None,
+        },
+        at,
+    );
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    answer(&mut engine, &effects, at, dev_null);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[28].contains("› on it"), "{rows:#?}");
 }
