@@ -99,6 +99,10 @@ pub enum Call {
     Starred {
         cursor: Option<String>,
     },
+    /// Commits nearest in meaning to the words, as the web's search finds them.
+    SearchCommits(String),
+    /// People whose name or handle matches.
+    SearchPeople(String),
     Delete(CommitId),
     /// Undoes deleting the user's commit, within the server's 30-second window.
     Restore(CommitId),
@@ -325,6 +329,20 @@ impl Client {
                 .people(handle, *circle, cursor.as_deref())
                 .map(Reply::People),
             Call::Starred { cursor } => self.starred(cursor.as_deref()).map(Reply::Rows),
+            Call::SearchCommits(query) => {
+                let path = format!("/api/v1/search/commits?q={}", escape(query));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (RowPage::parse_search(&text))
+                    .map(Reply::Rows)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::SearchPeople(name) => {
+                let path = format!("/api/v1/search/profiles?q={}", escape(name));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (PeoplePage::parse_search(&text))
+                    .map(Reply::People)
+                    .map_err(|error| unreadable(status, error))
+            }
             Call::Delete(id) => {
                 let path = format!("/api/v1/commits/{}", escape(&id.0));
                 self.send("DELETE", &path, String::new())

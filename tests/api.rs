@@ -927,3 +927,30 @@ fn what_is_kept_is_readable_only_by_its_owner() {
         .mode();
     assert_eq!(mode & 0o077, 0, "{mode:o}");
 }
+
+#[test]
+fn search_reads_commits_and_people_from_their_routes() {
+    let commits = serde_json::json!({ "data": fixture("log-latest")["data"] });
+    let (reply, seen) = exchange(&Call::SearchCommits("offset & cursor".to_owned()), &commits);
+    assert!(
+        matches!(reply, Reply::Rows(page) if !page.rows.is_empty() && page.next_cursor.is_none())
+    );
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/search/commits?q=offset%20%26%20cursor HTTP/1.1"
+    );
+
+    let mut grace = person();
+    grace["is_followed"] = serde_json::json!(true);
+    let profiles =
+        serde_json::json!({ "users": [grace], "organizations": [{ "slug": "laravel" }] });
+    let (reply, seen) = exchange(&Call::SearchPeople("gra".to_owned()), &profiles);
+    assert!(
+        matches!(&reply, Reply::People(page) if page.people.len() == 1 && page.people[0].is_followed == Some(true)),
+        "{reply:?}"
+    );
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/search/profiles?q=gra HTTP/1.1"
+    );
+}

@@ -39,6 +39,19 @@ terminal, the thread takes the whole screen.
 
 If the commit quotes another one, press <kbd>gq</kbd> to open the quoted commit.
 
+## Search
+
+Press <kbd>/</kbd>, type a few words and press <kbd>enter</kbd>. dev-null.sh
+finds commits by meaning, not only by the words in them, and lists the
+closest first. Start with `@` to find people by name or handle instead, as in
+`/@grace`.
+
+Press <kbd>enter</kbd> on a result to open its thread or the person's profile.
+Press <kbd>/</kbd> again to change the search. It starts from the last one, and
+<kbd>esc</kbd> still leads back to where you began.
+
+dev-null.sh allows 15 commit searches a minute.
+
 ## Share a commit
 
 - Press <kbd>y</kbd> to copy the link to the selected commit.

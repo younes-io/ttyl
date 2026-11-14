@@ -26,10 +26,12 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES,
-    PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
-    SECRET_SCOPES, SPLASH_SCOPES, STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES,
+    PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
+    REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope,
+    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
+use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
     self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status, User,
@@ -40,7 +42,6 @@ use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
 use crate::signin::Callback;
-use crate::starred::{self, StarredScreen};
 use crate::store::{Node, Slot, Store};
 use crate::theme;
 use crate::thread::ThreadScreen;
@@ -126,6 +127,8 @@ pub struct Session {
     filled: HashSet<CommitId>,
     /// The shell command the last pipe ran, which the next one starts from.
     piped: String,
+    /// What the last search asked for, which the next one starts from.
+    searched: String,
     /// The commit deleted moments ago, which `u` can still bring back.
     undoable: Option<CommitId>,
 }
@@ -143,7 +146,7 @@ enum Screen {
     Inbox,
     Group(Box<GroupList>),
     Profile(Box<ProfileScreen>),
-    Starred(Box<StarredScreen>),
+    List(Box<ListScreen>),
 }
 
 enum Overlay {
@@ -178,6 +181,10 @@ enum Overlay {
         input: String,
         command: String,
     },
+    /// Typing what to search for: words for commits, `@name` for people.
+    Search {
+        query: String,
+    },
 }
 
 const SERVER_DETAILS_MAX: usize = 500;
@@ -188,7 +195,7 @@ impl Session {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => thread.card(),
             Some(Screen::Profile(profile)) => profile.card(),
-            Some(Screen::Starred(starred)) => starred.card(),
+            Some(Screen::List(list)) => list.card(),
             Some(Screen::Inbox | Screen::Group(_)) => None,
             None => self.log.card(),
         }
@@ -197,7 +204,7 @@ impl Session {
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::Starred(_))
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::List(_))
             | None => None,
         }
     }
@@ -206,9 +213,7 @@ impl Session {
     fn shown_thread(&self, now: Instant) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::Starred(_)) => {
-                None
-            }
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::List(_)) => None,
             None => self.log.peek(&self.store, now),
         }
     }
@@ -259,12 +264,26 @@ impl Session {
         matches!(self.stack.last(), Some(Screen::Inbox))
     }
 
-    /// Every open starred list, wherever it sits in the stack.
-    fn starred_mut(&mut self) -> impl Iterator<Item = &mut StarredScreen> {
-        self.stack.iter_mut().filter_map(|screen| match screen {
-            Screen::Starred(starred) => Some(starred.as_mut()),
+    /// Every open list filled from `source`, wherever it sits in the stack.
+    fn lists_mut<'a>(&'a mut self, source: &'a Source) -> impl Iterator<Item = &'a mut ListScreen> {
+        self.stack
+            .iter_mut()
+            .filter_map(move |screen| match screen {
+                Screen::List(list) if list.source() == source => Some(list.as_mut()),
+                _ => None,
+            })
+    }
+
+    fn list(&self) -> Option<&ListScreen> {
+        match self.stack.last() {
+            Some(Screen::List(list)) => Some(list),
             _ => None,
-        })
+        }
+    }
+
+    fn on_starred(&self) -> bool {
+        self.list()
+            .is_some_and(|list| *list.source() == Source::Starred)
     }
 
     fn screen_scopes(&self) -> &'static [Scope] {
@@ -276,7 +295,8 @@ impl Session {
             Some(Screen::Group(_)) => GROUP_SCOPES,
             Some(Screen::Profile(profile)) if profile.people_tab() => PROFILE_PEOPLE_SCOPES,
             Some(Screen::Profile(_)) => PROFILE_SCOPES,
-            Some(Screen::Starred(_)) => STARRED_SCOPES,
+            Some(Screen::List(list)) if list.people() => LIST_PEOPLE_SCOPES,
+            Some(Screen::List(_)) => LIST_SCOPES,
         }
     }
 
@@ -287,16 +307,18 @@ impl Session {
         if action == Action::Profile {
             return self.profile_target().is_some();
         }
-        matches!(action, Action::Quit | Action::Help | Action::Saver)
-            || (action == Action::Undo && self.undoable.is_some())
+        matches!(
+            action,
+            Action::Quit | Action::Help | Action::Saver | Action::Search
+        ) || (action == Action::Undo && self.undoable.is_some())
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
-            || (action == Action::Starred && !matches!(self.stack.last(), Some(Screen::Starred(_))))
+            || (action == Action::Starred && !self.on_starred())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
                 Some(Screen::Group(group)) => group.can(action),
                 Some(Screen::Profile(profile)) => profile.can(action),
-                Some(Screen::Starred(starred)) => starred.can(action),
+                Some(Screen::List(list)) => list.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -313,7 +335,10 @@ impl Session {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
             },
-            Some(Screen::Starred(starred)) => starred.commit()?,
+            Some(Screen::List(list)) => match list.selected()? {
+                Item::Commit(id) => id,
+                Item::Person(person) => return Some(Selected::Person(&person.user)),
+            },
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
         match self.store.node(id)? {
@@ -377,14 +402,7 @@ impl Session {
                 }
             }
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
-            (Some(Screen::Starred(starred)), Action::Open) => {
-                if let Some(id) = starred.commit().cloned() {
-                    self.stack
-                        .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
-                    return Some(id);
-                }
-            }
-            (Some(Screen::Starred(starred)), action) => starred.act(action),
+            (Some(Screen::List(list)), action) => list.act(action),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
             (Some(Screen::Profile(profile)), action) => {
@@ -428,6 +446,7 @@ impl Session {
             Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             Some(Overlay::Pipe { .. }) => PIPE_SCOPES,
+            Some(Overlay::Search { .. }) => SEARCH_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
                 Some(Some(Prompt::Rules)) => RULES_SCOPES,
@@ -442,9 +461,12 @@ impl Session {
 
     fn input_mode(&self) -> InputMode {
         match self.overlay {
-            Some(Overlay::Delete(_) | Overlay::Details { .. } | Overlay::Pipe { .. }) => {
-                InputMode::Text
-            }
+            Some(
+                Overlay::Delete(_)
+                | Overlay::Details { .. }
+                | Overlay::Pipe { .. }
+                | Overlay::Search { .. },
+            ) => InputMode::Text,
             None if self
                 .composer
                 .as_ref()
@@ -468,7 +490,9 @@ impl Session {
     fn pasted(&mut self, pasted: &str) {
         let (text, max) = match &mut self.overlay {
             Some(Overlay::Details { text, .. }) => (text, SERVER_DETAILS_MAX),
-            Some(Overlay::Pipe { command, .. }) => (command, usize::MAX),
+            Some(Overlay::Pipe { command: text, .. } | Overlay::Search { query: text }) => {
+                (text, usize::MAX)
+            }
             _ => return,
         };
         let room = max.saturating_sub(text.chars().count());
@@ -495,19 +519,21 @@ impl Session {
                 }
                 _ => {}
             },
-            Some(Overlay::Pipe { command, .. }) => match event.code {
-                KeyCode::Backspace => {
-                    command.pop();
+            Some(Overlay::Pipe { command: text, .. } | Overlay::Search { query: text }) => {
+                match event.code {
+                    KeyCode::Backspace => {
+                        text.pop();
+                    }
+                    KeyCode::Char(ch)
+                        if !event
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        text.push(ch);
+                    }
+                    _ => {}
                 }
-                KeyCode::Char(ch)
-                    if !event
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                {
-                    command.push(ch);
-                }
-                _ => {}
-            },
+            }
             Some(
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
@@ -637,6 +663,13 @@ impl Session {
             }
             Some(Overlay::Pipe { command, .. }) => {
                 Some((format!("| {command}█"), Style::new().fg(theme::FOREGROUND)))
+            }
+            Some(Overlay::Search { query }) if query.is_empty() => Some((
+                "/█  words to find commits, or @name for people".to_owned(),
+                Style::new().fg(theme::FOREGROUND),
+            )),
+            Some(Overlay::Search { query }) => {
+                Some((format!("/{query}█"), Style::new().fg(theme::FOREGROUND)))
             }
             Some(
                 Overlay::Help { .. }
@@ -1154,7 +1187,7 @@ impl Engine {
         };
         let call = match session.stack.last() {
             Some(Screen::Profile(profile)) => profile.wants_older(),
-            Some(Screen::Starred(starred)) => starred.wants_older(),
+            Some(Screen::List(list)) => list.wants_older(),
             _ => None,
         };
         if let Some(call) = call {
@@ -1188,7 +1221,7 @@ impl Engine {
             Some(Screen::Inbox) => session.inbox.placeholder_at(),
             Some(Screen::Group(group)) => group.placeholder_at(),
             Some(Screen::Profile(profile)) => profile.placeholder_at(),
-            Some(Screen::Starred(starred)) => starred.placeholder_at(),
+            Some(Screen::List(list)) => list.placeholder_at(),
             None => session.log.peek_due(),
         }
     }
@@ -1338,6 +1371,26 @@ impl Engine {
                     }
                 }
             }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Search { .. })) =>
+            {
+                if let Some(Overlay::Search { query }) = session.overlay.take() {
+                    let query = query.trim().to_owned();
+                    if !query.is_empty() && query != "@" {
+                        session.searched = query.clone();
+                        let list = ListScreen::new(Source::search(&query), now);
+                        self.sched.send(list.call(), Priority::Now);
+                        // A search from results refines it, so back still leads where the first began.
+                        if session
+                            .list()
+                            .is_some_and(|list| *list.source() != Source::Starred)
+                        {
+                            session.stack.pop();
+                        }
+                        session.stack.push(Screen::List(Box::new(list)));
+                    }
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1436,12 +1489,16 @@ impl Engine {
                 }
             }
             (Phase::Ready(session), Action::Starred) => {
-                if !matches!(session.stack.last(), Some(Screen::Starred(_))) {
-                    session
-                        .stack
-                        .push(Screen::Starred(Box::new(StarredScreen::new(now))));
-                    self.sched.send(StarredScreen::call(None), Priority::Now);
+                if !session.on_starred() {
+                    let list = ListScreen::new(Source::Starred, now);
+                    self.sched.send(list.call(), Priority::Now);
+                    session.stack.push(Screen::List(Box::new(list)));
                 }
+            }
+            (Phase::Ready(session), Action::Search) => {
+                session.overlay = Some(Overlay::Search {
+                    query: session.searched.clone(),
+                });
             }
             (Phase::Ready(_), Action::Refresh) => self.reload(true, now),
             (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
@@ -1473,6 +1530,10 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Open) if session.group().is_some() => {
                 let opens = session.group().and_then(GroupList::opens);
+                self.open_row(opens, now);
+            }
+            (Phase::Ready(session), Action::Open) if session.list().is_some() => {
+                let opens = session.list().and_then(ListScreen::opens);
                 self.open_row(opens, now);
             }
             (Phase::Ready(session), Action::Open) if session.profile().is_some() => {
@@ -1557,9 +1618,9 @@ impl Engine {
                         .send(Call::User(profile.handle().to_owned()), Priority::Now);
                     self.sched.send(profile.tab_call(), Priority::Now);
                 }
-                Screen::Starred(starred) => {
-                    starred.reload(now);
-                    self.sched.send(StarredScreen::call(None), Priority::Now);
+                Screen::List(list) => {
+                    list.reload(now);
+                    self.sched.send(list.call(), Priority::Now);
                 }
                 Screen::Inbox => {}
             }
@@ -1784,19 +1845,11 @@ impl Engine {
                 }
                 return Vec::new();
             }
-            Call::Starred { cursor } => {
-                if let Reply::Rows(page) = reply {
-                    let ids = session.store.absorb_rows(page.rows);
-                    for starred in session.starred_mut() {
-                        starred.land(cursor.as_deref(), ids.clone(), page.next_cursor.clone());
-                    }
-                }
-                return Vec::new();
-            }
-            Call::Commits { .. } | Call::People { .. } => {
-                let Some((handle, tab, cursor)) = Tab::of(call) else {
-                    return Vec::new();
-                };
+            Call::Commits { .. }
+            | Call::People { .. }
+            | Call::Starred { .. }
+            | Call::SearchCommits(_)
+            | Call::SearchPeople(_) => {
                 let (items, next): (Vec<Item>, _) = match reply {
                     Reply::Rows(page) => {
                         let ids = session.store.absorb_rows(page.rows);
@@ -1817,8 +1870,14 @@ impl Engine {
                     }
                     _ => return Vec::new(),
                 };
-                for profile in session.profiles_mut(handle) {
-                    profile.land(tab, cursor, items.clone(), next.clone());
+                if let Some((handle, tab, cursor)) = Tab::of(call) {
+                    for profile in session.profiles_mut(handle) {
+                        profile.land(tab, cursor, items.clone(), next.clone());
+                    }
+                } else if let Some((source, cursor)) = Source::of(call) {
+                    for list in session.lists_mut(&source) {
+                        list.land(cursor, items.clone(), next.clone());
+                    }
                 }
                 return Vec::new();
             }
@@ -1918,6 +1977,7 @@ impl Engine {
             asked_to_refresh: HashSet::new(),
             filled: HashSet::new(),
             piped: String::new(),
+            searched: String::new(),
             undoable: None,
         }));
         for log in LOGS {
@@ -2042,9 +2102,11 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Starred { .. } => {
-                        for starred in session.starred_mut() {
-                            starred.fail(failure.clone());
+                    Call::Starred { .. } | Call::SearchCommits(_) | Call::SearchPeople(_) => {
+                        if let Some((source, _)) = Source::of(&call) {
+                            for list in session.lists_mut(&source) {
+                                list.fail(failure.clone());
+                            }
                         }
                         offline
                     }
@@ -2271,7 +2333,7 @@ impl Engine {
                     .map(|profile| format!("@{}", profile.handle()));
                 let title = match session.stack.last() {
                     Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
-                    Some(Screen::Starred(_)) => Some(starred::TITLE),
+                    Some(Screen::List(list)) => Some(list.title()),
                     _ => handle.as_deref(),
                 };
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
@@ -2429,9 +2491,9 @@ impl Engine {
                         now,
                         wall,
                     ),
-                    Some(Screen::Starred(starred)) => {
+                    Some(Screen::List(list)) => {
                         let area = framed_as(frame, body, framed, "");
-                        starred.draw(frame, area, &session.store, &self.timers, now, wall)
+                        list.draw(frame, area, &session.store, &self.timers, now, wall)
                     }
                     None => {
                         let pane = session.log.draw(
@@ -2494,7 +2556,12 @@ impl Engine {
                         popup::dim(frame.buffer_mut(), screen, None);
                         (self.gallery).draw(frame, screen, id, session.images(id), *at);
                     }
-                    Some(Overlay::Delete(_) | Overlay::Vote { .. } | Overlay::Pipe { .. })
+                    Some(
+                        Overlay::Delete(_)
+                        | Overlay::Vote { .. }
+                        | Overlay::Pipe { .. }
+                        | Overlay::Search { .. },
+                    )
                     | None => {}
                 }
             }

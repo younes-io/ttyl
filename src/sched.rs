@@ -45,6 +45,7 @@ pub enum CallKey {
     Starred {
         older: bool,
     },
+    Search(String),
     Delete(CommitId),
     Restore(CommitId),
     Pastel(CommitId),
@@ -92,6 +93,8 @@ impl Call {
             Call::Starred { cursor } => CallKey::Starred {
                 older: cursor.is_some(),
             },
+            Call::SearchCommits(query) => CallKey::Search(query.clone()),
+            Call::SearchPeople(name) => CallKey::Search(format!("@{name}")),
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Restore(id) => CallKey::Restore(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),
