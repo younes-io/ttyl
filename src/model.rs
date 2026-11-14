@@ -119,7 +119,8 @@ impl<'de> Deserialize<'de> for Lane {
     }
 }
 
-fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
+/// A lowercase `#rrggbb` color, as dev-null.sh writes one.
+pub fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     let digits = hex.strip_prefix('#')?;
     if digits.len() != 6
         || !digits
@@ -447,13 +448,32 @@ pub fn markdown(segments: &[Segment]) -> String {
     out
 }
 
-/// What the user set on dev-null.sh that ttyl reads.
-#[derive(Debug, Clone)]
+/// What the user set on dev-null.sh's settings page that ttyl reads and changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
+    /// The zone the web shows the user's times in, or `None` to follow the device.
+    pub timezone: Option<Zone>,
     /// The language commits translate into, or `None` to follow the device.
     pub translation_language: Option<String>,
-    /// The codes of the languages dev-null.sh translates into.
-    pub languages: Vec<String>,
+    /// Whether translated commits show first.
+    pub automatic_translation: bool,
+    /// The languages dev-null.sh translates into, by English name.
+    pub languages: Vec<Language>,
+}
+
+/// A timezone the user set, and whether their profile shows the time there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zone {
+    pub name: String,
+    pub local_time: bool,
+}
+
+/// A language dev-null.sh translates into.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Language {
+    pub code: String,
+    pub name: String,
+    pub native_name: String,
 }
 
 impl Settings {
@@ -465,22 +485,57 @@ impl Settings {
 
         #[derive(Deserialize)]
         struct Data {
+            #[serde(default)]
+            timezone: Option<String>,
+            #[serde(default)]
+            show_local_time: bool,
             translation_language: Option<String>,
+            #[serde(default = "on")]
+            automatic_translation: bool,
             translation_languages: Vec<Language>,
         }
 
-        #[derive(Deserialize)]
-        struct Language {
-            code: String,
+        fn on() -> bool {
+            true
         }
 
         let data = serde_json::from_str::<Wire>(json)?.data;
         Ok(Settings {
+            timezone: data.timezone.map(|name| Zone {
+                name,
+                local_time: data.show_local_time,
+            }),
             translation_language: data.translation_language,
-            languages: (data.translation_languages.into_iter())
-                .map(|language| language.code)
-                .collect(),
+            automatic_translation: data.automatic_translation,
+            languages: data.translation_languages,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct DeviceId(pub String);
+
+/// A key approved to sign requests as the user: a terminal running ttyl, a phone, another app.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Device {
+    pub id: DeviceId,
+    pub name: String,
+    pub app_name: Option<String>,
+    pub fingerprint: String,
+    pub approved_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+impl Device {
+    /// The devices `me/devices` lists, newest approval first.
+    pub fn parse_list(json: &str) -> serde_json::Result<Vec<Device>> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Device>,
+        }
+
+        serde_json::from_str::<Wire>(json).map(|wire| wire.data)
     }
 }
 

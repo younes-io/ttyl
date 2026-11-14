@@ -207,6 +207,9 @@ impl LogScreen {
             | Action::Find
             | Action::Keep(_)
             | Action::Hush(_)
+            | Action::Settings
+            | Action::Edit
+            | Action::Revoke
             | Action::Messages
             | Action::PageUp
             | Action::PageDown => false,

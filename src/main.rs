@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::Local;
+use chrono::{Local, SecondsFormat};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self as input, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste,
@@ -26,13 +26,17 @@ use ratatui_image::picker::Picker;
 use ttyl::api::{self, Call, Client, Reply};
 use ttyl::attach::{self, Attachment};
 use ttyl::cache::{Cache, Start};
+use ttyl::config::{Config, Key, Wants};
 use ttyl::desktop::{self, Clipped};
 use ttyl::device::Nonce;
 use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
-use ttyl::model::{Chat, ClientId, Conversation, Folder, Log, Message, Org, Party, Status};
+use ttyl::model::{
+    Chat, ClientId, Conversation, DeviceId, Folder, Log, Message, Org, Party, PeoplePage, Settings,
+    Status,
+};
 use ttyl::sched::Ticket;
 use ttyl::{body, compose, editor, headlines, locale, messages, signin, theme, viewer, welcome};
 
@@ -57,6 +61,14 @@ enum Command<'a> {
     Headlines,
     /// The handles the user blocks, one per line.
     Blocked,
+    /// The handles the user mutes, one per line.
+    Muted,
+    /// The devices that sign in as the user, one per line.
+    Devices,
+    /// Revokes the device with this id.
+    Revoke(&'a str),
+    /// The account's settings, read and written the way `git config` reads and writes its own.
+    Config(Setting<'a>),
     /// The conversations, one per line.
     Messages,
     /// A message to `to`, a person or `#` and a group's name, with its text from `-m` or else from
@@ -70,6 +82,13 @@ enum Command<'a> {
     Unknown(&'a str),
 }
 
+enum Setting<'a> {
+    List,
+    Get(&'a str),
+    /// A key set to a value. An empty one unsets it, as `--unset` does.
+    Set(&'a str, &'a str),
+}
+
 fn command<'a>(args: &[&'a str]) -> Command<'a> {
     match args {
         [] => Command::Run,
@@ -77,7 +96,20 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         ["status"] => Command::Status,
         ["commit", rest @ ..] => commit_command(rest),
         ["blocked"] => Command::Blocked,
-        ["status" | "blocked", arg, ..] => Command::Unknown(arg),
+        ["muted"] => Command::Muted,
+        ["devices"] => Command::Devices,
+        ["devices", "revoke", id] => Command::Revoke(id),
+        ["config"] => Command::Config(Setting::List),
+        ["config", "--unset", key] => Command::Config(Setting::Set(key, "")),
+        ["config", key] if !key.starts_with('-') => Command::Config(Setting::Get(key)),
+        ["config", key, value] if !key.starts_with('-') => {
+            Command::Config(Setting::Set(key, value))
+        }
+        [
+            "status" | "blocked" | "muted" | "devices" | "config",
+            arg,
+            ..,
+        ] => Command::Unknown(arg),
         ["msg"] => Command::Messages,
         ["msg", to, rest @ ..] if !to.starts_with('-') => match rest {
             [] => Command::Message { to, text: None },
@@ -135,6 +167,10 @@ fn main() -> ExitCode {
         Command::Log(log, format) => report(print_log(log, format)),
         Command::Headlines => report(print_headlines()),
         Command::Blocked => report(print_blocked()),
+        Command::Muted => report(print_muted()),
+        Command::Devices => report(print_devices()),
+        Command::Revoke(id) => report(revoke(id)),
+        Command::Config(setting) => config(setting),
         Command::Messages => report(print_messages()),
         Command::Message { to, text } => report(message(to, text)),
         Command::Version => {
@@ -142,8 +178,11 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Help => {
+            let keys: String = (Key::ALL.iter())
+                .map(|key| format!("\n  {:<22} {}: {}", key.name(), key.takes(), key.about()))
+                .collect();
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>] [--as <@org>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle | '#group' [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time; --as posts it as an\n             organization you're a member of\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle or to a #group, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>] [--as <@org>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl muted\n       ttyl devices [revoke <id>]\n       ttyl config [<key> [<value>] | --unset <key>]\n       ttyl msg [@handle | '#group' [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time; --as posts it as an\n             organization you're a member of\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  muted      print the handles you mute, one per line\n  devices    print the devices signed in as you, one per line: id, last used, fingerprint, name;\n             revoke <id> signs that one out\n  config     print your settings as key=value lines, print one, or set one\n  msg        send a message to @handle or to a #group, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nConfig keys:{keys}\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -258,11 +297,22 @@ fn print_log(log: Log, format: Format) -> Result<(), String> {
 }
 
 fn print_blocked() -> Result<(), String> {
+    print_handles(|client, cursor| client.blocked(cursor))
+}
+
+fn print_muted() -> Result<(), String> {
+    print_handles(|client, cursor| client.muted(cursor))
+}
+
+/// Prints every page of people one handle per line, the way `ttyl blocked` and `ttyl muted` do.
+fn print_handles(
+    page: impl Fn(&Client, Option<&str>) -> Result<PeoplePage, api::Error>,
+) -> Result<(), String> {
     let client = client()?;
     let mut stdout = io::stdout().lock();
     let mut cursor = None;
     loop {
-        let page = (client.blocked(cursor.as_deref())).map_err(|error| refused(&error))?;
+        let page = page(&client, cursor.as_deref()).map_err(|error| refused(&error))?;
         for person in &page.people {
             match writeln!(stdout, "{}", person.user.handle) {
                 Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
@@ -274,6 +324,105 @@ fn print_blocked() -> Result<(), String> {
             None => return Ok(()),
         }
     }
+}
+
+fn print_devices() -> Result<(), String> {
+    let client = client()?;
+    let this = client.key().fingerprint();
+    let devices = client.devices().map_err(|error| refused(&error))?;
+    let mut text = String::new();
+    for device in devices {
+        let used = (device.last_used_at).map_or_else(
+            || "never".to_owned(),
+            |at| at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        );
+        let mark = if device.fingerprint == this {
+            " (this device)"
+        } else {
+            ""
+        };
+        let (id, fingerprint, name) = (device.id.0, device.fingerprint, device.name);
+        let _ = writeln!(text, "{id}\t{used}\t{fingerprint}\t{name}{mark}");
+    }
+    match io::stdout().write_all(text.as_bytes()) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// Revokes the device with `id`, which only an id names, so a typo can't sign out another one.
+fn revoke(id: &str) -> Result<(), String> {
+    let client = client()?;
+    let id = DeviceId(id.to_owned());
+    let this = (client.devices().map_err(|error| refused(&error))?)
+        .into_iter()
+        .any(|device| device.id == id && device.fingerprint == client.key().fingerprint());
+    client.revoke(&id).map_err(|error| refused(&error))?;
+    if this {
+        eprintln!("revoked this device. run ttyl to sign in again.");
+    }
+    Ok(())
+}
+
+/// Reads or writes a setting the way `git config` does: a key that isn't set prints nothing and
+/// fails, and a bad key or value says why on a `fatal:` line.
+fn config(setting: Setting) -> ExitCode {
+    match configure(setting) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(line) => {
+            eprintln!("{line}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Whether there was a value to print or set.
+fn configure(setting: Setting) -> Result<bool, String> {
+    let (name, value) = match setting {
+        Setting::List => return list_config(),
+        Setting::Get(name) => (name, None),
+        Setting::Set(name, value) => (name, Some(value)),
+    };
+    let key = Key::named(name)
+        .ok_or_else(|| format!("fatal: unknown key '{name}'. 'ttyl --help' lists them"))?;
+    let (client, me, settings) = account()?;
+    let wants = Wants::default();
+    let config = Config::new(&me, Some(&settings), &wants);
+    let Some(value) = value else {
+        let value = config.get(key);
+        if let Some(value) = &value {
+            println!("{value}");
+        }
+        return Ok(value.is_some());
+    };
+    let change = config.set(key, value)?;
+    client
+        .configure(&change)
+        .map_err(|error| format!("fatal: {}", refused(&error)))?;
+    Ok(true)
+}
+
+fn list_config() -> Result<bool, String> {
+    let (_, me, settings) = account()?;
+    let wants = Wants::default();
+    let config = Config::new(&me, Some(&settings), &wants);
+    let text: String = (Key::ALL.into_iter())
+        .filter_map(|key| Some(format!("{}={}\n", key.name(), config.get(key)?)))
+        .collect();
+    match io::stdout().write_all(text.as_bytes()) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(format!("fatal: {error}")),
+        _ => Ok(true),
+    }
+}
+
+/// The account and its settings, as `ttyl config` reads them.
+fn account() -> Result<(Client, api::Me, Settings), String> {
+    let fatal = |error: api::Error| format!("fatal: {}", refused(&error));
+    let client = client().map_err(|error| format!("fatal: {error}"))?;
+    let me = client.me().map_err(fatal)?.me;
+    let settings = client.settings().map_err(fatal)?;
+    Ok((client, me, settings))
 }
 
 /// Shows `text` through `$PAGER`, or `less` as git does, which quits at once when it fits the screen.
@@ -540,6 +689,7 @@ fn run(
     let mut engine = Engine::new(device_name.clone(), now)
         .with_drafts(Drafts::new(saved))
         .with_picker(picker)
+        .with_fingerprint(client.key().fingerprint())
         .with_language(locale::device([
             all.as_deref(),
             messages.as_deref(),

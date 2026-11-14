@@ -2,9 +2,11 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::api::{Call, Paging};
+use crate::config::Field;
 use crate::draft::Target;
 use crate::model::{
-    Chat, Circle, ClientId, CommitId, Filter, Folder, HeadlineId, Log, NotificationId, ScheduledId,
+    Chat, Circle, ClientId, CommitId, DeviceId, Filter, Folder, HeadlineId, Log, NotificationId,
+    ScheduledId,
 };
 
 /// The server's signed throttle: this many requests in any sliding window.
@@ -36,6 +38,16 @@ pub enum CallKey {
     Settings,
     Translate(CommitId),
     Block(String),
+    Muted {
+        older: bool,
+    },
+    Blocked {
+        older: bool,
+    },
+    Devices,
+    Revoke(DeviceId),
+    /// One request per setting in flight, so the latest change goes once the one before lands.
+    Configure(Field),
     User(String),
     Organization(String),
     OrganizationCommits {
@@ -114,6 +126,15 @@ impl Call {
             Call::Settings => CallKey::Settings,
             Call::Translate { id, .. } => CallKey::Translate(id.clone()),
             Call::Block { handle, .. } => CallKey::Block(handle.clone()),
+            Call::Muted { cursor } => CallKey::Muted {
+                older: cursor.is_some(),
+            },
+            Call::Blocked { cursor } => CallKey::Blocked {
+                older: cursor.is_some(),
+            },
+            Call::Devices => CallKey::Devices,
+            Call::Revoke(id) => CallKey::Revoke(id.clone()),
+            Call::Configure(change) => CallKey::Configure(change.field()),
             Call::User(handle) => CallKey::User(handle.clone()),
             Call::Organization(handle) => CallKey::Organization(handle.clone()),
             Call::OrganizationCommits {

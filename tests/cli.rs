@@ -674,3 +674,119 @@ fn blocked_prints_one_handle_per_line_for_the_shell() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "grace\nlinus\n");
 }
+
+#[test]
+fn muted_prints_one_handle_per_line_for_the_shell() {
+    let page = serde_json::json!({
+        "data": [{
+            "id": "id-grace", "handle": "grace", "name": "grace", "avatar_url": null,
+            "html_url": "https://dev-null.sh/@grace", "created_at": "2026-01-01T00:00:00Z", "lane": 1,
+        }],
+        "meta": { "next_cursor": null },
+    });
+    let (base, _server) = serve("200 OK", &page.to_string());
+    let output = against("cli-muted", &base, &["muted"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "grace\n");
+}
+
+#[test]
+fn devices_prints_one_device_per_line() {
+    let devices = serde_json::json!({ "data": [{
+        "id": "d-phone", "name": "my phone", "app_name": "dev-null", "fingerprint": "SHA256:phone",
+        "approved_at": "2026-10-20T10:00:00Z", "last_used_at": "2026-10-21T08:00:00Z",
+    }]});
+    let (base, _server) = serve("200 OK", &devices.to_string());
+    let output = against("cli-devices", &base, &["devices"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "d-phone\t2026-10-21T08:00:00Z\tSHA256:phone\tmy phone\n"
+    );
+}
+
+#[test]
+fn devices_revoke_takes_an_explicit_id() {
+    let (base, server) = serve_in_turn(&[("200 OK", r#"{"data":[]}"#), ("204 No Content", "")]);
+    let output = against("cli-revoke", &base, &["devices", "revoke", "d-phone"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(server.join().unwrap().len(), 2, "lists, then revokes");
+    assert_eq!(ttyl(&["devices", "revoke"]).status.code(), Some(2));
+}
+
+const ME: &str = r#"{"data":{"handle":"ada","name":"Ada","pasteis_mode":true,"preferred_lane":null,"automatic_lane":3,"remotes":null},"unread_notifications_count":0}"#;
+const SETTINGS: &str = r#"{"data":{"timezone":"Europe/Lisbon","show_local_time":false,"translation_language":null,"automatic_translation":true,"translation_languages":[{"code":"fr","name":"French","native_name":"français"}],"is_admin":false,"push":{}}}"#;
+
+#[test]
+fn config_lists_settings_as_key_value_lines_leaving_out_unset_ones() {
+    let (base, _server) = serve_in_turn(&[("200 OK", ME), ("200 OK", SETTINGS)]);
+    let output = against("cli-config-list", &base, &["config"], None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "account.pasteis=true\naccount.color=auto\nregion.timezone=Europe/Lisbon\nregion.local-time=false\nregion.auto-translate=true\nremotes.enabled=false\n"
+    );
+}
+
+#[test]
+fn config_prints_one_value_and_fails_quietly_when_it_is_unset() {
+    let (base, _server) = serve_in_turn(&[("200 OK", ME), ("200 OK", SETTINGS)]);
+    let output = against(
+        "cli-config-get",
+        &base,
+        &["config", "region.timezone"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Europe/Lisbon\n");
+
+    let (base, _server) = serve_in_turn(&[("200 OK", ME), ("200 OK", SETTINGS)]);
+    let output = against(
+        "cli-config-unset",
+        &base,
+        &["config", "region.language"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn config_sets_a_value_through_its_route() {
+    let (base, server) = serve_in_turn(&[("200 OK", ME), ("200 OK", SETTINGS), ("200 OK", ME)]);
+    let output = against(
+        "cli-config-set",
+        &base,
+        &["config", "region.language", "French"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let seen = server.join().unwrap();
+    assert_eq!(seen[2], r#"{"translation_language":"fr"}"#);
+}
+
+#[test]
+fn config_says_fatal_on_a_bad_key_or_value() {
+    let output = ttyl(&["config", "region.tz"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "fatal: unknown key 'region.tz'. 'ttyl --help' lists them\n"
+    );
+
+    let (base, _server) = serve_in_turn(&[("200 OK", ME), ("200 OK", SETTINGS)]);
+    let output = against(
+        "cli-config-bad",
+        &base,
+        &["config", "account.pasteis", "maybe"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "fatal: bad boolean config value 'maybe' for 'account.pasteis'\n"
+    );
+}

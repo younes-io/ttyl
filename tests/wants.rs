@@ -24,6 +24,9 @@ fn store() -> Store {
             pasteis_mode: false,
             pasteis_remaining: None,
             organizations: Vec::new(),
+            preferred_lane: None,
+            automatic_lane: 0,
+            remotes: None,
         },
         unread: 0,
     });

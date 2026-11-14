@@ -13,14 +13,15 @@ use ureq::http::Request;
 use crate::at;
 use crate::attach::{self, Attachment, Image};
 use crate::cache::Cache;
+use crate::config::{self, Change};
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
-    Candidate, Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus,
-    Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId,
-    MessagePage, NotificationId, NotificationPage, OrganizationList, OrganizationPage, PeoplePage,
-    Profile, Reason, Refile, RepliesPage, RowPage, Scheduled, ScheduledId, Segment, Settings,
-    Translation, Who,
+    Candidate, Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Device, DeviceId,
+    Filter, Focus, Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Lane, Log, LogPage,
+    Message, MessageId, MessagePage, NotificationId, NotificationPage, OrganizationList,
+    OrganizationPage, PeoplePage, Profile, Reason, Refile, RepliesPage, RowPage, Scheduled,
+    ScheduledId, Segment, Settings, Translation, Who,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -43,6 +44,14 @@ pub struct Me {
     pub pasteis_mode: bool,
     #[serde(default)]
     pub pasteis_remaining: Option<u32>,
+    /// The lane or color the user picked, or `None` for the automatic one.
+    #[serde(default)]
+    pub preferred_lane: Option<Lane>,
+    #[serde(default)]
+    pub automatic_lane: u8,
+    /// Who can push to the user, while Remotes are on.
+    #[serde(default)]
+    pub remotes: Option<config::Remotes>,
     /// The organizations the user is a member of, oldest membership first, which they may post as.
     #[serde(default)]
     pub organizations: Vec<Membership>,
@@ -107,6 +116,20 @@ pub enum Call {
         handle: String,
         on: bool,
     },
+    /// The people the user mutes, last muted first.
+    Muted {
+        cursor: Option<String>,
+    },
+    /// The people the user blocks, last blocked first.
+    Blocked {
+        cursor: Option<String>,
+    },
+    /// The devices that may sign requests as the user, newest approval first.
+    Devices,
+    /// Revokes a device. Revoking the one signing signs ttyl out.
+    Revoke(DeviceId),
+    /// Changes one of the user's settings, answered as `me` answers.
+    Configure(Change),
     User(String),
     /// An organization's page.
     Organization(String),
@@ -266,6 +289,7 @@ pub enum Reply {
     Preview(Vec<Segment>),
     Settings(Settings),
     Translation(Box<Translation>),
+    Devices(Vec<Device>),
     Scheduled(Box<Scheduled>),
     Queue(Vec<Scheduled>),
     /// A scheduled commit went out early, and whether it waits for review.
@@ -444,12 +468,7 @@ impl Client {
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
-            Call::Settings => {
-                let (status, text) = self.send("GET", "/api/v1/me/settings", String::new())?;
-                (Settings::parse(&text))
-                    .map(Reply::Settings)
-                    .map_err(|error| unreadable(status, error))
-            }
+            Call::Settings => self.settings().map(Reply::Settings),
             Call::Translate { id, language } => {
                 let path = format!("/api/v1/commits/{}/translation", escape(&id.0));
                 let body = serde_json::json!({ "language": language }).to_string();
@@ -463,6 +482,11 @@ impl Client {
                 self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
                     .map(|_| Reply::Done)
             }
+            Call::Muted { cursor } => self.muted(cursor.as_deref()).map(Reply::People),
+            Call::Blocked { cursor } => self.blocked(cursor.as_deref()).map(Reply::People),
+            Call::Devices => self.devices().map(Reply::Devices),
+            Call::Revoke(id) => self.revoke(id).map(|()| Reply::Done),
+            Call::Configure(change) => self.configure(change).map(Reply::Account),
             Call::User(handle) => self
                 .user(handle)
                 .map(|profile| Reply::User(Box::new(profile))),
@@ -879,12 +903,42 @@ impl Client {
 
     /// The people the user blocks, last blocked first.
     pub fn blocked(&self, cursor: Option<&str>) -> Result<PeoplePage, Error> {
-        let mut path = String::from("/api/v1/me/blocked");
-        if let Some(cursor) = cursor {
-            path.push_str(&format!("?cursor={}", escape(cursor)));
-        }
+        self.listed("/api/v1/me/blocked", cursor)
+    }
+
+    /// The people the user mutes, last muted first.
+    pub fn muted(&self, cursor: Option<&str>) -> Result<PeoplePage, Error> {
+        self.listed("/api/v1/me/muted", cursor)
+    }
+
+    fn listed(&self, path: &str, cursor: Option<&str>) -> Result<PeoplePage, Error> {
+        let path = match cursor {
+            Some(cursor) => format!("{path}?cursor={}", escape(cursor)),
+            None => path.to_owned(),
+        };
         let (status, text) = self.send("GET", &path, String::new())?;
         PeoplePage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn settings(&self) -> Result<Settings, Error> {
+        let (status, text) = self.send("GET", "/api/v1/me/settings", String::new())?;
+        Settings::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn devices(&self) -> Result<Vec<Device>, Error> {
+        let (status, text) = self.send("GET", "/api/v1/me/devices", String::new())?;
+        Device::parse_list(&text).map_err(|error| unreadable(status, error))
+    }
+
+    pub fn revoke(&self, id: &DeviceId) -> Result<(), Error> {
+        let path = format!("/api/v1/me/devices/{}", escape(&id.0));
+        self.send("DELETE", &path, String::new()).map(|_| ())
+    }
+
+    pub fn configure(&self, change: &Change) -> Result<Account, Error> {
+        let (path, body) = change.request();
+        let (status, text) = self.send("PUT", path, body.to_string())?;
+        parse(status, &text)
     }
 
     fn pastel(&self, id: &CommitId) -> Result<Reply, Error> {

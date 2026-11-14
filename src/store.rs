@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 
 use crate::api::{Account, Call, Failure, Me, Reply};
+use crate::config::{Change, Config, Wants};
 use crate::draft::Target;
 use crate::locale;
 use crate::model::{
@@ -30,6 +31,12 @@ pub struct Store {
     blocks: HashMap<String, Switch>,
     filings: HashMap<Chat, Filing>,
     language: Language,
+    /// The language the device reads in, which commits translate into unless the user picked one.
+    device_language: Option<String>,
+    /// What dev-null.sh's settings page last said, once asked.
+    settings: Option<Settings>,
+    /// Settings the user changed that dev-null.sh hasn't confirmed.
+    wants: Wants,
     translations: HashMap<CommitId, Translating>,
     /// Everyone whose follow of the user a block ended. Unblocking leaves it ended.
     unfollowed_by: HashSet<String>,
@@ -84,12 +91,9 @@ impl Filing {
     }
 }
 
-/// The language commits translate into, settled when the user first asks for a translation.
+/// The language commits translate into, settled once dev-null.sh says whether the user picked one.
 enum Language {
-    /// dev-null.sh hasn't said yet whether the user picked one. Holds the device's, if it names one.
-    Unsettled {
-        device: Option<String>,
-    },
+    Unsettled,
     Settled(String),
 }
 
@@ -242,7 +246,10 @@ impl Store {
             pin_want: None,
             follows: HashMap::new(),
             mutes: HashMap::new(),
-            language: Language::Unsettled { device: None },
+            language: Language::Unsettled,
+            device_language: None,
+            settings: None,
+            wants: Wants::default(),
             translations: HashMap::new(),
             blocks: HashMap::new(),
             filings: HashMap::new(),
@@ -258,7 +265,7 @@ impl Store {
     /// Translates into `device`, the language the device reads in, unless the user picked one on dev-null.sh.
     pub fn with_device_language(self, device: Option<String>) -> Self {
         Store {
-            language: Language::Unsettled { device },
+            device_language: device,
             ..self
         }
     }
@@ -376,6 +383,42 @@ impl Store {
         (self.filings.get(chat)).map(|filing| filing.want)
     }
 
+    /// Whether the user mutes `handle`, as far as ttyl knows.
+    pub fn muting(&self, handle: &str) -> bool {
+        self.mutes.get(handle).is_some_and(|mute| mute.want)
+    }
+
+    /// Takes in people dev-null.sh says the user mutes, or with `blocks` blocks, short of a change
+    /// the user made since.
+    pub fn listed(&mut self, handles: impl IntoIterator<Item = String>, blocks: bool) {
+        let switches = if blocks {
+            &mut self.blocks
+        } else {
+            &mut self.mutes
+        };
+        for handle in handles {
+            switches
+                .entry(handle)
+                .and_modify(|switch| switch.server = true)
+                .or_insert(Switch {
+                    server: true,
+                    want: true,
+                });
+        }
+        self.generation += 1;
+    }
+
+    /// The account's settings as the user wants them.
+    pub fn config(&self) -> Config<'_> {
+        Config::new(&self.me, self.settings.as_ref(), &self.wants)
+    }
+
+    /// Wants a setting changed, which goes to dev-null.sh once nothing else is changing it.
+    pub fn configure(&mut self, change: Change) {
+        self.wants.want(change);
+        self.generation += 1;
+    }
+
     /// Flips the commit between its translation and the original, asking dev-null.sh for the
     /// translation the first time. Says why instead when dev-null.sh found nothing to translate.
     pub fn translate(&mut self, id: &CommitId) -> Option<Untranslated> {
@@ -391,26 +434,27 @@ impl Store {
         None
     }
 
-    /// Settles the language once dev-null.sh has answered: the one the user picked, else the device's if
-    /// dev-null.sh translates into it.
-    fn settle_language(&mut self, settings: &Settings) {
-        if let Language::Unsettled { device } = &self.language {
-            let device = device
-                .as_deref()
-                .filter(|device| (settings.languages.iter()).any(|language| language == device));
-            let language = locale::target(settings.translation_language.as_deref(), device);
-            self.language = Language::Settled(language);
-        }
+    /// Settles the language from what dev-null.sh's settings say: the one the user picked, else the
+    /// device's if dev-null.sh translates into it.
+    fn settle_language(&mut self) {
+        let Some(settings) = &self.settings else {
+            return;
+        };
+        let device = (self.device_language.as_deref())
+            .filter(|device| (settings.languages.iter()).any(|language| language.code == *device));
+        let language = locale::target(settings.translation_language.as_deref(), device);
+        self.language = Language::Settled(language);
     }
 
     /// A settings request that failed. A refusal is final, so the device's language stands. Anything
     /// else may pass, so the translations waiting on it drop and the next `t` asks again.
     pub fn settings_failed(&mut self, refused: bool) {
         match &self.language {
-            Language::Unsettled { device } if refused => {
-                self.language = Language::Settled(locale::target(None, device.as_deref()));
+            Language::Unsettled if refused => {
+                let device = self.device_language.as_deref();
+                self.language = Language::Settled(locale::target(None, device));
             }
-            Language::Unsettled { .. } => {
+            Language::Unsettled => {
                 (self.translations)
                     .retain(|_, translating| !matches!(translating, Translating::Asking { .. }));
                 self.generation += 1;
@@ -518,7 +562,7 @@ impl Store {
             .filter(|(_, translating)| matches!(translating, Translating::Asking { .. }))
             .map(|(id, _)| id);
         match &self.language {
-            Language::Unsettled { .. } => {
+            Language::Unsettled => {
                 if !pending(&CallKey::Settings) && asking.next().is_some() {
                     calls.push(Call::Settings);
                 }
@@ -548,6 +592,17 @@ impl Store {
                     chat: chat.clone(),
                     change,
                 });
+            }
+        }
+        // A want equal to what dev-null.sh holds goes, unless a change before it may still land over it.
+        let server = Config::new(&self.me, self.settings.as_ref(), Wants::NONE);
+        self.wants.retain(|want| {
+            pending(&CallKey::Configure(want.field()))
+                || server.change(want.field()).as_ref() != Some(want)
+        });
+        for want in self.wants.iter() {
+            if !pending(&CallKey::Configure(want.field())) {
+                calls.push(Call::Configure(want.clone()));
             }
         }
         self.unsent_pastels.retain(|id, left| {
@@ -612,8 +667,15 @@ impl Store {
             Call::Translate { id, .. } => {
                 self.translations.remove(id);
             }
+            Call::Configure(change) => {
+                self.wants.retain(|want| want != change);
+            }
             Call::Me
             | Call::Settings
+            | Call::Muted { .. }
+            | Call::Blocked { .. }
+            | Call::Devices
+            | Call::Revoke(_)
             | Call::Redeem { .. }
             | Call::Page(_)
             | Call::Older { .. }
@@ -656,6 +718,12 @@ impl Store {
             (_, Reply::Account(account)) => {
                 self.me = account.me;
                 self.unread = account.unread;
+                if let Call::Configure(change) = call
+                    && let Some(settings) = &mut self.settings
+                {
+                    change.confirm(settings);
+                    self.settle_language();
+                }
             }
             (Call::Older { log, cursor }, Reply::Page(page)) => self.append(*log, cursor, page),
             (Call::Since { log, since }, Reply::Page(page)) => {
@@ -712,6 +780,13 @@ impl Store {
                 self.absorb_rows(page.rows);
             }
             (_, Reply::Headlines(_)) => {}
+            (Call::Muted { .. } | Call::Blocked { .. }, Reply::People(page)) => {
+                let blocks = matches!(call, Call::Blocked { .. });
+                self.listed(
+                    page.people.into_iter().map(|person| person.user.handle),
+                    blocks,
+                );
+            }
             (_, Reply::People(page)) => {
                 for person in page.people {
                     if let Some(server) = person.is_followed {
@@ -764,7 +839,9 @@ impl Store {
                 }
             }
             (Call::Settings, Reply::Settings(settings)) => {
-                self.settle_language(&settings);
+                self.settings = Some(settings);
+                self.settle_language();
+                self.generation += 1;
             }
             (Call::Translate { id, .. }, Reply::Translation(translation)) => {
                 if let Some(Translating::Asking { show }) = self.translations.get(id) {
@@ -820,6 +897,7 @@ impl Store {
                 | Reply::Group(_)
                 | Reply::Preview(_)
                 | Reply::Settings(_)
+                | Reply::Devices(_)
                 | Reply::Translation(_)
                 | Reply::Done
                 | Reply::Scheduled(_)

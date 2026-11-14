@@ -47,6 +47,9 @@ developers where a post is called a commit.
   shell with `ttyl log`, the way `git log` does.
 - **Keep** your drafts through a closed composer and a quit. ttyl also asks
   before it sends text that looks like a secret.
+- **Configure** your account with `g,`: timezone, translation language,
+  color, remotes, the people you mute and block, and your devices. Or from
+  the shell with `ttyl config`, the way `git config` works.
 
 <table>
   <tr>

@@ -22,24 +22,25 @@ use crate::clock::{
     TOAST, Timer, Timers, UNDO,
 };
 use crate::compose::{Composer, Prompt, Voices};
+use crate::config::Key;
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, CONVERSATION_SCOPES,
-    DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keep, Keymap,
-    LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, MUTE_SCOPES, PEOPLE_SCOPES,
-    PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, QUEUE_SCOPES,
-    REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope,
-    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    DETAILS_SCOPES, EDIT_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode,
+    Keep, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, MUTE_SCOPES,
+    PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
+    QUEUE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES,
+    SETTINGS_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::messages::{self, ConversationScreen, Conversations, Picked, Unsent};
 use crate::model::{
-    self, Chat, Commit, CommitId, Filed, Filter, Fold, Kind, Log, NotificationId, Organization,
-    Party, ProfileType, Reason, Refile, Row, ScheduledId, Shown, Status, Translation, Untranslated,
-    User, Who,
+    self, Chat, Commit, CommitId, DeviceId, Filed, Filter, Fold, Kind, Log, NotificationId,
+    Organization, Party, ProfileType, Reason, Refile, Row, ScheduledId, Shown, Status, Translation,
+    Untranslated, User, Who,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -47,6 +48,7 @@ use crate::queue::{self, QueueScreen};
 use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
+use crate::settings::{self, SettingsScreen};
 use crate::signin::Callback;
 use crate::store::{Node, Slot, Store};
 use crate::theme;
@@ -161,6 +163,7 @@ enum Screen {
     Queue(Box<QueueScreen>),
     Messages(Box<Conversations>),
     Conversation(Box<ConversationScreen>),
+    Settings(Box<SettingsScreen>),
 }
 
 enum Overlay {
@@ -222,6 +225,18 @@ enum Overlay {
     },
     /// Asking before dropping the request from this handle for good.
     Drop(String),
+    /// Typing a new value for a setting, with `at` the match tab moved to.
+    Edit {
+        key: Key,
+        text: String,
+        at: Option<usize>,
+    },
+    /// Asking before revoking a device, which signs ttyl out when it's this one.
+    Revoke {
+        id: DeviceId,
+        name: String,
+        this: bool,
+    },
 }
 
 const SERVER_DETAILS_MAX: usize = 500;
@@ -238,7 +253,8 @@ impl Session {
                 | Screen::Group(_)
                 | Screen::Queue(_)
                 | Screen::Messages(_)
-                | Screen::Conversation(_),
+                | Screen::Conversation(_)
+                | Screen::Settings(_),
             ) => None,
             None => self.log.card(),
         }
@@ -254,7 +270,8 @@ impl Session {
                 | Screen::List(_)
                 | Screen::Queue(_)
                 | Screen::Messages(_)
-                | Screen::Conversation(_),
+                | Screen::Conversation(_)
+                | Screen::Settings(_),
             )
             | None => None,
         }
@@ -271,7 +288,8 @@ impl Session {
                 | Screen::List(_)
                 | Screen::Queue(_)
                 | Screen::Messages(_)
-                | Screen::Conversation(_),
+                | Screen::Conversation(_)
+                | Screen::Settings(_),
             ) => None,
             None => self.log.peek(&self.store, now),
         }
@@ -419,6 +437,21 @@ impl Session {
         })
     }
 
+    fn settings(&self) -> Option<&SettingsScreen> {
+        match self.stack.last() {
+            Some(Screen::Settings(settings)) => Some(settings),
+            _ => None,
+        }
+    }
+
+    /// Every open settings screen, wherever it sits in the stack.
+    fn settings_mut(&mut self) -> impl Iterator<Item = &mut SettingsScreen> {
+        self.stack.iter_mut().filter_map(|screen| match screen {
+            Screen::Settings(settings) => Some(settings.as_mut()),
+            _ => None,
+        })
+    }
+
     fn screen_scopes(&self) -> &'static [Scope] {
         match self.stack.last() {
             None => LOG_SCOPES,
@@ -433,10 +466,16 @@ impl Session {
             Some(Screen::Queue(_)) => QUEUE_SCOPES,
             Some(Screen::Messages(_)) => MESSAGES_SCOPES,
             Some(Screen::Conversation(_)) => CONVERSATION_SCOPES,
+            Some(Screen::Settings(_)) => SETTINGS_SCOPES,
         }
     }
 
     fn screen_allows(&self, action: Action) -> bool {
+        if let Some(settings) = self.settings()
+            && matches!(action, Action::Commit(_) | Action::Edit | Action::Revoke)
+        {
+            return settings.can(action, self.store.config());
+        }
         if let Action::Commit(act) = action {
             return self.allows(act);
         }
@@ -450,6 +489,7 @@ impl Session {
             || (action == Action::Starred && !self.on_list(&Source::Starred))
             || (action == Action::Headlines && !self.on_list(&Source::Headlines))
             || (action == Action::Later && !self.on_queue())
+            || (action == Action::Settings && self.settings().is_none())
             || (action == Action::Messages && self.messages().is_none())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
@@ -460,6 +500,7 @@ impl Session {
                 Some(Screen::Queue(queue)) => queue.can(action),
                 Some(Screen::Messages(messages)) => messages.can(action),
                 Some(Screen::Conversation(conversation)) => conversation.can(action),
+                Some(Screen::Settings(settings)) => settings.can(action, self.store.config()),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -489,6 +530,9 @@ impl Session {
                 Item::Headline(_) => return None,
             },
             Some(Screen::Queue(_)) => return None,
+            Some(Screen::Settings(settings)) => {
+                return settings.person(self.store.config()).map(Selected::Person);
+            }
             Some(Screen::Messages(_) | Screen::Conversation(_)) => return None,
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
@@ -604,6 +648,7 @@ impl Session {
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
             (Some(Screen::List(list)), action) => list.act(action),
             (Some(Screen::Queue(queue)), action) => queue.act(action),
+            (Some(Screen::Settings(settings)), action) => settings.act(action, self.store.config()),
             (Some(Screen::Messages(messages)), action) => messages.act(action),
             (Some(Screen::Conversation(conversation)), action) => conversation.act(action),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
@@ -675,7 +720,9 @@ impl Session {
     fn scopes(&self) -> &'static [Scope] {
         match self.overlay {
             Some(Overlay::Help { .. }) => HELP_SCOPES,
-            Some(Overlay::Delete(_) | Overlay::Block(_) | Overlay::Drop(_)) => CONFIRM_SCOPES,
+            Some(
+                Overlay::Delete(_) | Overlay::Block(_) | Overlay::Drop(_) | Overlay::Revoke { .. },
+            ) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
             Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
@@ -683,6 +730,7 @@ impl Session {
             Some(Overlay::Pipe { .. }) => PIPE_SCOPES,
             Some(Overlay::Search { .. } | Overlay::Find { .. }) => SEARCH_SCOPES,
             Some(Overlay::At { .. }) => AT_SCOPES,
+            Some(Overlay::Edit { .. }) => EDIT_SCOPES,
             Some(Overlay::Unschedule { .. }) => CONFIRM_SCOPES,
             Some(Overlay::Mute { .. }) => MUTE_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
@@ -708,7 +756,9 @@ impl Session {
                 | Overlay::Search { .. }
                 | Overlay::Find { .. }
                 | Overlay::At { .. }
-                | Overlay::Unschedule { .. },
+                | Overlay::Unschedule { .. }
+                | Overlay::Edit { .. }
+                | Overlay::Revoke { .. },
             ) => InputMode::Text,
             None if self
                 .composer
@@ -739,7 +789,8 @@ impl Session {
                 Overlay::Pipe { command: text, .. }
                 | Overlay::Search { query: text }
                 | Overlay::Find { query: text }
-                | Overlay::At { text },
+                | Overlay::At { text }
+                | Overlay::Edit { text, .. },
             ) => (text, usize::MAX),
             None => {
                 if let Some(conversation) = self.conversation_mut() {
@@ -762,8 +813,26 @@ impl Session {
                 Overlay::Delete(_)
                 | Overlay::Unschedule { .. }
                 | Overlay::Block(_)
-                | Overlay::Drop(_),
+                | Overlay::Drop(_)
+                | Overlay::Revoke { .. },
             ) => self.overlay = None,
+            Some(Overlay::Edit { text, at, .. }) => {
+                let control = event.modifiers.contains(KeyModifiers::CONTROL);
+                match event.code {
+                    KeyCode::Backspace => {
+                        text.pop();
+                    }
+                    // As readline clears the line.
+                    KeyCode::Char('u') if control => text.clear(),
+                    KeyCode::Char(ch)
+                        if !control && !event.modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        text.push(ch);
+                    }
+                    _ => return,
+                }
+                *at = None;
+            }
             Some(Overlay::Details { text, .. }) => match event.code {
                 KeyCode::Backspace => {
                     text.pop();
@@ -835,6 +904,18 @@ impl Session {
                 (None, Some(Call::Delete(id)))
             }
             (Overlay::Unschedule { id, .. }, Action::Confirm) => (None, Some(Call::Unschedule(id))),
+            (Overlay::Revoke { id, .. }, Action::Confirm) => (None, Some(Call::Revoke(id))),
+            (Overlay::Edit { key, text, at }, Action::Next | Action::Previous) => {
+                let count = self.store.config().candidates(key, &text).len();
+                let at = match (at, action) {
+                    _ if count == 0 => None,
+                    (None, Action::Next) => Some(0),
+                    (None, _) => Some(count - 1),
+                    (Some(at), Action::Next) => Some((at + 1) % count),
+                    (Some(at), _) => Some((at + count - 1) % count),
+                };
+                (Some(Overlay::Edit { key, text, at }), None)
+            }
             (Overlay::Reason { id, at }, Action::Down) => (
                 Some(Overlay::Reason {
                     id,
@@ -960,6 +1041,23 @@ impl Session {
                     prompt,
                     Style::new().fg(theme::DESTRUCTIVE),
                 )])
+            }
+            Some(Overlay::Revoke { name, this, .. }) => {
+                let prompt = match this {
+                    true => "revoke this device? ttyl signs out and asks to sign in again [y/N]"
+                        .to_owned(),
+                    false => format!("revoke {name}? it can't sign in until approved again [y/N]"),
+                };
+                Some(vec![Span::styled(
+                    fatal::cut(&prompt, room),
+                    Style::new().fg(theme::DESTRUCTIVE),
+                )])
+            }
+            Some(Overlay::Edit { key, text, at }) => {
+                let field = typed(format!("{}: {text}█", key.name()));
+                let left = room.saturating_sub(field.width());
+                let menu = settings::menu(self.store.config(), *key, text, *at, left);
+                Some([vec![field], menu].concat())
             }
             Some(Overlay::Pipe { command, .. }) => Some(vec![typed(format!("| {command}█"))]),
             Some(Overlay::Search { query }) if query.is_empty() => Some(vec![typed(
@@ -1175,6 +1273,18 @@ fn reask_messages(sched: &mut Scheduler, session: &mut Session) {
     }
 }
 
+/// What the settings screen shows: the account, its settings, the people muted and blocked, and
+/// the devices.
+fn settings_calls() -> [Call; 5] {
+    [
+        Call::Me,
+        Call::Settings,
+        Call::Muted { cursor: None },
+        Call::Blocked { cursor: None },
+        Call::Devices,
+    ]
+}
+
 fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
     let call = Call::Group {
         id: group.id().clone(),
@@ -1303,6 +1413,8 @@ pub struct Engine {
     lifted: Option<String>,
     /// The language the device reads in, which commits translate into unless the user picked one.
     device_language: Option<String>,
+    /// The fingerprint of the key this terminal signs with, which marks it among the devices.
+    fingerprint: Option<String>,
     wall: Wall,
 }
 
@@ -1357,6 +1469,7 @@ impl Engine {
             reloaded_at: None,
             lifted: None,
             device_language: None,
+            fingerprint: None,
             wall: Wall::default(),
         }
     }
@@ -1371,6 +1484,14 @@ impl Engine {
 
     pub fn with_drafts(self, drafts: Drafts) -> Self {
         Engine { drafts, ..self }
+    }
+
+    /// Knows this terminal's key by `fingerprint`, so the device list marks it and revoking it warns.
+    pub fn with_fingerprint(self, fingerprint: String) -> Self {
+        Engine {
+            fingerprint: Some(fingerprint),
+            ..self
+        }
     }
 
     /// Translates into `device`, as the device's locale names it, unless the user picked a language on
@@ -1753,7 +1874,7 @@ impl Engine {
             Some(Screen::Group(group)) => group.placeholder_at(),
             Some(Screen::Profile(profile)) => profile.placeholder_at(),
             Some(Screen::List(list)) => list.placeholder_at(),
-            Some(Screen::Queue(_)) => None,
+            Some(Screen::Queue(_) | Screen::Settings(_)) => None,
             Some(Screen::Messages(messages)) => messages.placeholder_at(),
             Some(Screen::Conversation(conversation)) => conversation.placeholder_at(),
             None => session.log.peek_due(),
@@ -1975,6 +2096,17 @@ impl Engine {
                     self.toast(refiled(&title, change), now);
                 }
             }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Edit { .. })) =>
+            {
+                if let Some(Overlay::Edit { key, text, at }) = session.overlay.take() {
+                    let config = session.store.config();
+                    match config.set(key, &settings::chosen(config, key, &text, at)) {
+                        Ok(change) => session.store.configure(change),
+                        Err(why) => self.toast(why, now),
+                    }
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -2173,6 +2305,48 @@ impl Engine {
                     self.sched.send(Call::Queue, Priority::Now);
                 }
             }
+            (Phase::Ready(session), Action::Settings) => {
+                if session.settings().is_none() {
+                    session.stack.push(Screen::Settings(Box::default()));
+                    for call in settings_calls() {
+                        self.sched.send(call, Priority::Now);
+                    }
+                }
+            }
+            (Phase::Ready(session), Action::Edit) => {
+                let config = session.store.config();
+                if let Some(settings::Row::Key(key)) = session
+                    .settings()
+                    .and_then(|settings| settings.selected(config))
+                {
+                    if key.typed() {
+                        let text = config.get(key).unwrap_or_default();
+                        session.overlay = Some(Overlay::Edit {
+                            key,
+                            text,
+                            at: None,
+                        });
+                    } else {
+                        match config.next(key) {
+                            Ok(change) => session.store.configure(change),
+                            Err(why) => self.toast(why, now),
+                        }
+                    }
+                }
+            }
+            (Phase::Ready(session), Action::Revoke) => {
+                let config = session.store.config();
+                if let Some(device) = session
+                    .settings()
+                    .and_then(|settings| settings.device(config))
+                {
+                    session.overlay = Some(Overlay::Revoke {
+                        id: device.id.clone(),
+                        name: device.name.clone(),
+                        this: self.fingerprint.as_deref() == Some(device.fingerprint.as_str()),
+                    });
+                }
+            }
             (Phase::Ready(session), Action::Unschedule) => {
                 if let Some(item) = session.queue().and_then(QueueScreen::selected) {
                     session.overlay = Some(Overlay::Unschedule {
@@ -2320,6 +2494,12 @@ impl Engine {
                 }
                 Screen::Inbox => {}
                 Screen::Queue(_) => self.sched.send(Call::Queue, Priority::Now),
+                Screen::Settings(settings) => {
+                    settings.reload();
+                    for call in settings_calls() {
+                        self.sched.send(call, Priority::Now);
+                    }
+                }
             }
         }
     }
@@ -2403,7 +2583,12 @@ impl Engine {
             Some(Selected::Row(row)) => row.commit.clone(),
             Some(Selected::Note { commit, .. }) => commit.clone(),
             Some(Selected::Person(user)) => {
-                if let Some(text) = session.block(user.handle.clone()) {
+                let handle = user.handle.clone();
+                let toast = match act {
+                    Act::Mute => Some(muted(&handle, session.store.mute(&handle))),
+                    _ => session.block(handle),
+                };
+                if let Some(text) = toast {
                     self.toast(text, now);
                 }
                 return Vec::new();
@@ -2557,6 +2742,52 @@ impl Engine {
                 .map(Effect::Draft)
                 .into_iter()
                 .collect();
+        }
+        if let Call::Muted { cursor } | Call::Blocked { cursor } = call
+            && let Reply::People(page) = &reply
+        {
+            let blocks = matches!(call, Call::Blocked { .. });
+            for settings in session.settings_mut() {
+                settings.land_people(page, blocks, cursor.is_none());
+            }
+            if let Some(next) = page.next_cursor.clone() {
+                let cursor = Some(next);
+                let more = match blocks {
+                    true => Call::Blocked { cursor },
+                    false => Call::Muted { cursor },
+                };
+                self.sched.send(more, Priority::Now);
+            }
+            session.store.apply(call, reply);
+            return Vec::new();
+        }
+        if let (Call::Devices, Reply::Devices(devices)) = (call, &reply) {
+            for settings in session.settings_mut() {
+                settings.land_devices(devices.clone());
+            }
+            return Vec::new();
+        }
+        if let Call::Revoke(id) = call {
+            let fingerprint = self.fingerprint.as_deref();
+            let mut name = None;
+            let mut this = false;
+            for settings in session.settings_mut() {
+                if let Some(device) = settings.device_by(id) {
+                    this = fingerprint == Some(device.fingerprint.as_str());
+                    name = Some(device.name.clone());
+                }
+                settings.revoked(id);
+            }
+            if this {
+                self.sign_out();
+                self.phase = Phase::SignIn(Step::Ready(Some(
+                    "You revoked this device. Sign in to use ttyl here again.".to_owned(),
+                )));
+                return Vec::new();
+            }
+            let name = name.unwrap_or_else(|| "the device".to_owned());
+            self.toast(format!("revoked {name}. it's signed out."), now);
+            return Vec::new();
         }
         if let Call::Queue = call {
             if let Reply::Queue(items) = reply {
@@ -3117,6 +3348,7 @@ impl Engine {
                     | Call::Pin { .. }
                     | Call::User(_)
                     | Call::Organization(_)
+                    | Call::Configure(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
                         true
@@ -3128,6 +3360,7 @@ impl Engine {
                     | Call::Block { .. }
                     | Call::User(_)
                     | Call::Organization(_)
+                    | Call::Configure(_)
                     | Call::Delete(_)
                     | Call::Restore(_)
                     | Call::Pastel(_)
@@ -3170,10 +3403,35 @@ impl Engine {
                             }
                         );
                         session.store.settings_failed(refused);
-                        if !refused {
+                        let mut shown = false;
+                        for settings in session.settings_mut() {
+                            settings.fail_region(failure.clone());
+                            shown = true;
+                        }
+                        if !refused && !shown {
                             self.toast = Some(format!("can't translate yet: {error}"));
                             self.timers.set(Timer::Toast, now + TOAST);
                         }
+                        offline
+                    }
+                    Call::Muted { .. } | Call::Blocked { .. } => {
+                        let blocks = matches!(call, Call::Blocked { .. });
+                        for settings in session.settings_mut() {
+                            settings.fail_people(failure.clone(), blocks);
+                        }
+                        offline
+                    }
+                    Call::Devices => {
+                        for settings in session.settings_mut() {
+                            settings.fail_devices(failure.clone());
+                        }
+                        offline
+                    }
+                    Call::Revoke(_) => {
+                        self.toast = Some(error.to_string());
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        // It may be gone already, so the list shows what's true.
+                        self.sched.send(Call::Devices, Priority::Now);
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
@@ -3373,6 +3631,7 @@ impl Engine {
                     Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
                     Some(Screen::List(list)) => Some(list.title()),
                     Some(Screen::Queue(_)) => Some(queue::TITLE),
+                    Some(Screen::Settings(_)) => Some(settings::TITLE),
                     Some(Screen::Messages(_)) => Some(messages::TITLE),
                     Some(Screen::Conversation(conversation)) => Some(conversation.title()),
                     _ => handle.as_deref(),
@@ -3566,6 +3825,11 @@ impl Engine {
                         let area = framed_as(frame, body, framed, "");
                         conversation.draw(frame, area, now, wall)
                     }
+                    Some(Screen::Settings(screen)) => {
+                        let area = framed_as(frame, body, framed, "");
+                        let fingerprint = self.fingerprint.as_deref();
+                        screen.draw(frame, area, &session.store, fingerprint, wall)
+                    }
                     None => {
                         let pane = session.log.draw(
                             frame,
@@ -3637,7 +3901,9 @@ impl Engine {
                         | Overlay::Unschedule { .. }
                         | Overlay::Find { .. }
                         | Overlay::Mute { .. }
-                        | Overlay::Drop(_),
+                        | Overlay::Drop(_)
+                        | Overlay::Edit { .. }
+                        | Overlay::Revoke { .. },
                     )
                     | None => {}
                 }
