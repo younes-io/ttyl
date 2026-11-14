@@ -7,8 +7,9 @@ use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
 use crate::locale;
 use crate::model::{
-    Card, CommitId, CommitPage, Deletion, Fold, Log, LogPage, RepliesPage, Row, Settings, Showing,
-    Shown, Suggestion, Tombstone, Translated, Translation, Untranslated,
+    Card, Chat, CommitId, CommitPage, Deletion, Filed, Fold, Hush, Log, LogPage, Refile,
+    RepliesPage, Row, Settings, Showing, Shown, Suggestion, Tombstone, Translated, Translation,
+    Untranslated,
 };
 use crate::sched::CallKey;
 
@@ -27,6 +28,7 @@ pub struct Store {
     follows: HashMap<String, Follow>,
     mutes: HashMap<String, Switch>,
     blocks: HashMap<String, Switch>,
+    filings: HashMap<Chat, Filing>,
     language: Language,
     translations: HashMap<CommitId, Translating>,
     /// Everyone whose follow of the user a block ended. Unblocking leaves it ended.
@@ -49,6 +51,33 @@ pub enum Follow {
 struct Switch {
     server: bool,
     want: bool,
+}
+
+/// How the user keeps a conversation, as dev-null.sh last said and as they want it now, with how
+/// long the mute they last asked for lasts and the one dev-null.sh last took.
+#[derive(Debug, Clone, Copy)]
+struct Filing {
+    server: Filed,
+    want: Filed,
+    hush: Hush,
+    took: Option<Hush>,
+}
+
+impl Filing {
+    /// The change still to send, if any, one at a time.
+    fn next(&self) -> Option<Refile> {
+        let (server, want) = (self.server, self.want);
+        let rehush = want.muted && self.took.is_some_and(|took| took != self.hush);
+        if server.pinned != want.pinned {
+            Some(Refile::Pin(want.pinned))
+        } else if server.stashed != want.stashed {
+            Some(Refile::Stash(want.stashed))
+        } else if server.muted != want.muted || rehush {
+            Some(Refile::Mute(want.muted.then_some(self.hush)))
+        } else {
+            None
+        }
+    }
 }
 
 /// The language commits translate into, settled when the user first asks for a translation.
@@ -212,6 +241,7 @@ impl Store {
             language: Language::Unsettled { device: None },
             translations: HashMap::new(),
             blocks: HashMap::new(),
+            filings: HashMap::new(),
             unfollowed_by: HashSet::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
@@ -300,6 +330,30 @@ impl Store {
         mute.want = !mute.want;
         self.generation += 1;
         mute.want
+    }
+
+    /// Changes how the user keeps `chat`, which shows as `shown`, and returns how they now want it.
+    pub fn refile(&mut self, chat: &Chat, shown: Filed, change: Refile) -> Filed {
+        let filing = self.filings.entry(chat.clone()).or_insert(Filing {
+            server: shown,
+            want: shown,
+            hush: Hush::Forever,
+            took: None,
+        });
+        match change {
+            Refile::Pin(on) => filing.want.pinned = on,
+            Refile::Stash(on) => filing.want.stashed = on,
+            Refile::Mute(hush) => {
+                filing.want.muted = hush.is_some();
+                filing.hush = hush.unwrap_or(filing.hush);
+            }
+        }
+        filing.want
+    }
+
+    /// Each conversation changed in a way dev-null.sh hasn't confirmed yet, as the user wants it.
+    pub fn filings(&self) -> impl Iterator<Item = (&Chat, Filed)> {
+        (self.filings.iter()).map(|(chat, filing)| (chat, filing.want))
     }
 
     /// Flips the commit between its translation and the original, asking dev-null.sh for the
@@ -459,6 +513,16 @@ impl Store {
                 });
             }
         }
+        for (chat, filing) in &self.filings {
+            if let Some(change) = filing.next()
+                && !pending(&CallKey::File(chat.clone()))
+            {
+                calls.push(Call::File {
+                    chat: chat.clone(),
+                    change,
+                });
+            }
+        }
         self.unsent_pastels.retain(|id, left| {
             if !pending(&CallKey::Pastel(id.clone())) {
                 calls.push(Call::Pastel(id.clone()));
@@ -494,6 +558,10 @@ impl Store {
                 if let Some(block) = self.blocks.get_mut(handle) {
                     block.want = block.server;
                 }
+            }
+            // The list reloads to show what dev-null.sh kept.
+            Call::File { chat, .. } => {
+                self.filings.remove(chat);
             }
             Call::User(handle) => {
                 if let Some(Follow::Asking { .. }) = self.follows.get(handle) {
@@ -538,6 +606,8 @@ impl Store {
             | Call::Headlines
             | Call::Headline(_)
             | Call::Conversations { .. }
+            | Call::Answer { .. }
+            | Call::Candidates(_)
             | Call::Messages { .. }
             | Call::MarkRead { .. }
             | Call::SendMessage { .. } => return,
@@ -637,6 +707,21 @@ impl Store {
                     mute.server = *on;
                 }
             }
+            (Call::File { chat, change }, Reply::Done) => {
+                if let Some(filing) = self.filings.get_mut(chat) {
+                    match *change {
+                        Refile::Pin(on) => filing.server.pinned = on,
+                        Refile::Stash(on) => filing.server.stashed = on,
+                        Refile::Mute(hush) => {
+                            filing.server.muted = hush.is_some();
+                            filing.took = hush;
+                        }
+                    }
+                    if filing.next().is_none() {
+                        self.filings.remove(chat);
+                    }
+                }
+            }
             (Call::Settings, Reply::Settings(settings)) => {
                 self.settle_language(&settings);
             }
@@ -699,6 +784,7 @@ impl Store {
                 | Reply::Queue(_)
                 | Reply::Submitted { .. }
                 | Reply::Conversations(_)
+                | Reply::Candidates(_)
                 | Reply::Messages(_)
                 | Reply::Message(_),
             ) => {}

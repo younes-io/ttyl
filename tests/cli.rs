@@ -424,7 +424,7 @@ fn remotes_in_two_pages() -> (String, String) {
     let remotes: serde_json::Value = serde_json::from_str(&fixture("remotes")).unwrap();
     let rows = remotes["data"].as_array().unwrap();
     let page = |rows: &[serde_json::Value], has_more: bool| {
-        serde_json::json!({ "data": rows, "has_more": has_more }).to_string()
+        serde_json::json!({ "data": rows, "has_more": has_more, "requests_count": 0 }).to_string()
     };
     (page(&rows[..4], true), page(&rows[3..], false))
 }

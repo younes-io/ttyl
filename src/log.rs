@@ -203,6 +203,9 @@ impl LogScreen {
             | Action::Later
             | Action::Unschedule
             | Action::SendNow
+            | Action::Find
+            | Action::Keep(_)
+            | Action::Hush(_)
             | Action::Messages
             | Action::PageUp
             | Action::PageDown => false,
@@ -507,6 +510,41 @@ pub fn named_tabs(
     room: usize,
 ) -> Option<Line<'static>> {
     Some(tab_line(names, active, focused, true)).filter(|line| line.width() <= room)
+}
+
+/// Tabs along a rule, like the log's, for a screen without a box. When the names don't fit they
+/// stay as words, with single gaps when narrow, because no key picks one by number.
+pub fn tab_bar(names: &[&str], active: usize, width: u16) -> Line<'static> {
+    let width = usize::from(width);
+    if let Some(mut rule) = named_tabs(names, active, true, width) {
+        let fill = width.saturating_sub(rule.width());
+        rule.push_span(Span::styled("─".repeat(fill), Style::new().fg(edge(true))));
+        return rule;
+    }
+    let wide: usize = names.iter().map(|name| name.len() + 2).sum();
+    let gap = if wide <= width { "  " } else { " " };
+    let spans = names.iter().enumerate().flat_map(|(at, name)| {
+        let lead = if at == 0 { "" } else { gap };
+        let (slash, style) = if at == active {
+            (
+                "/",
+                Style::new()
+                    .fg(theme::FOREGROUND)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            ("", theme::muted())
+        };
+        [
+            Span::raw(lead),
+            Span::styled(
+                slash,
+                Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(name.to_string(), style),
+        ]
+    });
+    Line::from(spans.collect::<Vec<_>>())
 }
 
 fn tab_line(names: &[&str], active: usize, focused: bool, named: bool) -> Line<'static> {

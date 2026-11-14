@@ -16,10 +16,10 @@ use crate::device::Nonce;
 use crate::engine::AHEAD;
 use crate::fatal;
 use crate::feed;
-use crate::keys::{self, Act, Action};
+use crate::keys::{self, Act, Action, Keep};
 use crate::model::{
-    Access, Chat, ClientId, Conversation, ConversationPage, Message, MessageId, MessagePage, Party,
-    User,
+    Access, Candidate, Chat, ClientId, Conversation, ConversationPage, Filed, Folder, Message,
+    MessageId, MessagePage, Party, User,
 };
 use crate::text::Buffer;
 use crate::theme;
@@ -32,7 +32,8 @@ pub const NO_ANSWER: &str = "fatal: no answer from dev-null.sh. it may have gone
 
 /// Pinned first, then unread, then the rest, each group in dev-null.sh's order of newest first.
 pub fn order(conversations: &mut [Conversation]) {
-    conversations.sort_by_key(|conversation| (!conversation.pinned, conversation.unread == 0));
+    conversations
+        .sort_by_key(|conversation| (!conversation.filed.pinned, conversation.unread == 0));
 }
 
 /// Why a message can't go as written, before anything is sent.
@@ -49,10 +50,18 @@ pub fn refusal(body: &str) -> Option<String> {
     }
 }
 
-/// The conversations with people and orgs: pinned first, then unread, then the rest, each in
-/// dev-null.sh's order of newest first. One line each, like a mail index.
+/// One folder of conversations: pinned first, then unread, then the rest, each in dev-null.sh's
+/// order of newest first. One line each, like a mail index. A find narrows the folder to a name
+/// and lists the people it matches under it, to start a conversation with.
 pub struct Conversations {
+    folder: Folder,
+    /// What `/` narrowed the folder to, empty for all of it.
+    query: String,
     loaded: Option<Loaded>,
+    /// The people the find matches, once dev-null.sh says.
+    people: Vec<Candidate>,
+    /// Requests waiting on the user, as the last page said.
+    requests: u32,
     failure: Option<Failure>,
     asked_at: Instant,
     selected: usize,
@@ -64,10 +73,21 @@ struct Loaded {
     next: Option<String>,
 }
 
+/// What the selected row of the list is.
+pub enum Picked<'a> {
+    Conversation(&'a Conversation),
+    /// Someone the find matched, to start a conversation with.
+    Person(&'a Candidate),
+}
+
 impl Conversations {
     pub fn new(now: Instant) -> Self {
         Conversations {
+            folder: Folder::Open,
+            query: String::new(),
             loaded: None,
+            people: Vec::new(),
+            requests: 0,
             failure: None,
             asked_at: now,
             selected: 0,
@@ -75,9 +95,27 @@ impl Conversations {
         }
     }
 
-    /// The first page.
+    /// The folder's first page.
     pub fn call(&self) -> Call {
-        Call::Conversations { before: None }
+        Call::Conversations {
+            folder: self.folder,
+            query: self.query.clone(),
+            before: None,
+        }
+    }
+
+    /// The people the find matches, when there is one.
+    pub fn people_call(&self) -> Option<Call> {
+        (!self.query.is_empty()).then(|| Call::Candidates(self.query.clone()))
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Whether a page or a failure is for the folder and find on screen.
+    pub fn shows(&self, folder: Folder, query: &str) -> bool {
+        self.folder == folder && self.query == query
     }
 
     fn rows(&self) -> &[Conversation] {
@@ -86,8 +124,35 @@ impl Conversations {
             .map_or(&[], |loaded| loaded.rows.as_slice())
     }
 
-    pub fn selected(&self) -> Option<&Conversation> {
-        self.rows().get(self.selected)
+    /// The people the find matched, but for anyone the user already talks to in the list.
+    fn people(&self) -> Vec<&Candidate> {
+        let rows = self.rows();
+        (self.people.iter())
+            .filter(|candidate| {
+                let chat = Chat::Direct(candidate.user.handle.clone());
+                !rows.iter().any(|row| row.party.is(&chat))
+            })
+            .collect()
+    }
+
+    fn count(&self) -> usize {
+        self.rows().len() + self.people().len()
+    }
+
+    pub fn selected(&self) -> Option<Picked<'_>> {
+        let rows = self.rows();
+        match rows.get(self.selected) {
+            Some(conversation) => Some(Picked::Conversation(conversation)),
+            None => (self.people().get(self.selected - rows.len()))
+                .map(|candidate| Picked::Person(candidate)),
+        }
+    }
+
+    fn selected_conversation(&self) -> Option<&Conversation> {
+        match self.selected()? {
+            Picked::Conversation(conversation) => Some(conversation),
+            Picked::Person(_) => None,
+        }
     }
 
     /// A failed reload over rows still shown, for the hint line.
@@ -97,16 +162,28 @@ impl Conversations {
     }
 
     pub fn can(&self, action: Action) -> bool {
+        let requests = self.folder == Folder::Requests;
+        let conversation = self.selected_conversation();
         match action {
             Action::Open => self.selected().is_some(),
-            Action::Back | Action::Refresh => true,
-            Action::Down | Action::Up | Action::Top | Action::Bottom => !self.rows().is_empty(),
+            Action::Back
+            | Action::Refresh
+            | Action::Find
+            | Action::NextFilter
+            | Action::PreviousFilter => true,
+            Action::Down | Action::Up | Action::Top | Action::Bottom => self.count() > 0,
+            Action::Keep(Keep::Pin | Keep::Stash | Keep::Mute) => {
+                !requests && conversation.is_some()
+            }
+            Action::Keep(Keep::Merge | Keep::Drop) => {
+                requests && conversation.is_some_and(|row| matches!(row.party, Party::Person(_)))
+            }
             _ => false,
         }
     }
 
     pub fn act(&mut self, action: Action) {
-        let last = self.rows().len().saturating_sub(1);
+        let last = self.count().saturating_sub(1);
         self.selected = match action {
             Action::Down => (self.selected + 1).min(last),
             Action::Up => self.selected.saturating_sub(1),
@@ -114,6 +191,57 @@ impl Conversations {
             Action::Bottom => last,
             _ => self.selected,
         };
+    }
+
+    /// The folders to cycle through: requests only while some wait, or while it is open.
+    fn folders(&self) -> Vec<Folder> {
+        (Folder::ALL.into_iter())
+            .filter(|folder| {
+                *folder != Folder::Requests || self.requests > 0 || self.folder == *folder
+            })
+            .collect()
+    }
+
+    /// The folders as tabs, requests with how many wait, and which one is open.
+    pub fn tabs(&self) -> (Vec<String>, usize) {
+        let folders = self.folders();
+        let names = (folders.iter())
+            .map(|folder| match folder {
+                Folder::Requests if self.requests > 0 => format!("requests {}", self.requests),
+                folder => folder.slug().to_owned(),
+            })
+            .collect();
+        let at = (folders.iter()).position(|folder| *folder == self.folder);
+        (names, at.unwrap_or(0))
+    }
+
+    /// Opens the next folder, or the one before with `back`, keeping the find.
+    pub fn turn(&mut self, back: bool, now: Instant) {
+        let folders = self.folders();
+        let at = (folders.iter()).position(|folder| *folder == self.folder);
+        let count = folders.len();
+        let next = match (at, back) {
+            (Some(at), false) => (at + 1) % count,
+            (Some(at), true) => (at + count - 1) % count,
+            (None, _) => 0,
+        };
+        self.folder = folders[next];
+        self.restart(now);
+    }
+
+    /// Narrows the folder to `query`, or with an empty one shows all of it again.
+    pub fn find(&mut self, query: &str, now: Instant) {
+        self.query = query.trim().to_owned();
+        self.people.clear();
+        self.restart(now);
+    }
+
+    fn restart(&mut self, now: Instant) {
+        self.loaded = None;
+        self.failure = None;
+        self.selected = 0;
+        self.offset = 0;
+        self.asked_at = now;
     }
 
     pub fn reload(&mut self, now: Instant) {
@@ -130,7 +258,9 @@ impl Conversations {
         let loaded = self.loaded.as_ref()?;
         let before = loaded.next.clone()?;
         let left = loaded.rows.len().saturating_sub(self.selected + 1);
-        (left <= AHEAD && self.failure.is_none()).then_some(Call::Conversations {
+        (left <= AHEAD && self.failure.is_none()).then(|| Call::Conversations {
+            folder: self.folder,
+            query: self.query.clone(),
             before: Some(before),
         })
     }
@@ -138,9 +268,8 @@ impl Conversations {
     /// A first page replaces the list and keeps the selection on its conversation; a later one adds
     /// the conversations it brings.
     pub fn land(&mut self, before: Option<&str>, page: ConversationPage) {
-        let kept = self
-            .selected()
-            .map(|conversation| conversation.party.chat());
+        self.requests = page.requests;
+        let kept = self.kept();
         self.failure = None;
         match (before, &mut self.loaded) {
             (None, _) => {
@@ -160,13 +289,17 @@ impl Conversations {
             }
             (Some(_), _) => return,
         }
-        let Some(loaded) = &mut self.loaded else {
-            return;
-        };
-        order(&mut loaded.rows);
-        self.selected = kept
-            .and_then(|chat| (loaded.rows.iter()).position(|row| row.party.is(&chat)))
-            .unwrap_or(0);
+        if let Some(loaded) = &mut self.loaded {
+            order(&mut loaded.rows);
+        }
+        self.reselect(kept);
+    }
+
+    /// The people `query` matches, if the find on screen is still for it.
+    pub fn land_people(&mut self, query: &str, people: Vec<Candidate>) {
+        if self.query == query {
+            self.people = people;
+        }
     }
 
     pub fn fail(&mut self, failure: Failure) {
@@ -182,6 +315,52 @@ impl Conversations {
                 }
             }
         }
+    }
+
+    /// Shows `chat` kept as `filed`, which can move it out of this folder.
+    pub fn refile(&mut self, chat: &Chat, filed: Filed) {
+        let belongs = match self.folder {
+            Folder::Open => !filed.stashed,
+            Folder::Stashed => filed.stashed,
+            Folder::Requests => true,
+        };
+        let kept = self.kept();
+        let Some(loaded) = &mut self.loaded else {
+            return;
+        };
+        if belongs {
+            for row in loaded.rows.iter_mut().filter(|row| row.party.is(chat)) {
+                row.filed = filed;
+            }
+            order(&mut loaded.rows);
+        } else {
+            loaded.rows.retain(|row| !row.party.is(chat));
+        }
+        self.reselect(kept);
+    }
+
+    /// The request from `handle` was merged or dropped, so it leaves the requests.
+    pub fn answered(&mut self, handle: &str) {
+        let chat = Chat::Direct(handle.to_owned());
+        if self.folder == Folder::Requests
+            && let Some(loaded) = &mut self.loaded
+        {
+            loaded.rows.retain(|row| !row.party.is(&chat));
+        }
+        self.requests = self.requests.saturating_sub(1);
+        self.selected = self.selected.min(self.count().saturating_sub(1));
+    }
+
+    /// The selected conversation, to keep the selection on as rows move.
+    fn kept(&self) -> Option<Chat> {
+        self.selected_conversation()
+            .map(|conversation| conversation.party.chat())
+    }
+
+    /// Puts the selection back on `kept`, or where it was when that left the list.
+    fn reselect(&mut self, kept: Option<Chat>) {
+        let found = kept.and_then(|chat| (self.rows().iter()).position(|row| row.party.is(&chat)));
+        self.selected = found.unwrap_or(self.selected.min(self.count().saturating_sub(1)));
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -204,34 +383,97 @@ impl Conversations {
             frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
             return;
         };
-        if loaded.rows.is_empty() {
-            let mut lines = vec![vec![Span::styled(
-                "$ ls /dev/remotes",
-                Style::new().fg(theme::FOREGROUND),
-            )]];
-            let key = keys::key_for(Action::Commit(Act::Message)).unwrap_or_default();
-            let empty =
-                format!("No conversations yet. Press {key} on a commit or a person to start one.");
-            feed::wrap(&[(empty, theme::muted())], width, &mut lines);
-            frame.render_widget(
-                Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>()),
-                area,
-            );
+        let people = self.people();
+        if loaded.rows.is_empty() && people.is_empty() && self.query.is_empty() {
+            let lines = self.empty(width);
+            frame.render_widget(Paragraph::new(lines), area);
             return;
         }
-        let height = usize::from(area.height).max(1);
-        self.selected = self.selected.min(loaded.rows.len() - 1);
-        if self.selected < self.offset {
-            self.offset = self.selected;
-        } else if self.selected >= self.offset + height {
-            self.offset = self.selected + 1 - height;
+        let mut lines: Vec<Line> = Vec::new();
+        let mut at_line = Vec::new();
+        if !self.query.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("/{}", self.query),
+                    Style::new().fg(theme::FOREGROUND),
+                ),
+                Span::styled("  esc shows all", theme::muted()),
+            ]));
         }
-        let lines: Vec<Line> = (loaded.rows.iter().enumerate())
-            .skip(self.offset)
-            .take(height)
-            .map(|(at, conversation)| row(conversation, at == self.selected, width, me, wall))
-            .collect();
-        frame.render_widget(Paragraph::new(lines), area);
+        if loaded.rows.is_empty() && !self.query.is_empty() {
+            let none = format!("no {} conversations match", self.folder.slug());
+            lines.push(Line::styled(none, theme::muted()));
+        }
+        let selected = self.selected;
+        for (at, conversation) in loaded.rows.iter().enumerate() {
+            at_line.push(lines.len());
+            lines.push(row(conversation, at == selected, width, me, wall));
+        }
+        if !people.is_empty() {
+            lines.push(Line::styled("write to", theme::muted()));
+            for (at, candidate) in people.iter().enumerate() {
+                at_line.push(lines.len());
+                let picked = loaded.rows.len() + at == selected;
+                lines.push(person(candidate, picked, width));
+            }
+        }
+        let height = usize::from(area.height).max(1);
+        let line = at_line.get(selected).copied().unwrap_or(0);
+        if line < self.offset {
+            // Keeps the find's line in view while the selection is near the top.
+            self.offset = if selected == 0 { 0 } else { line };
+        } else if line >= self.offset + height {
+            self.offset = line + 1 - height;
+        }
+        let shown: Vec<Line> = lines.into_iter().skip(self.offset).take(height).collect();
+        frame.render_widget(Paragraph::new(shown), area);
+    }
+
+    /// What an empty folder says.
+    fn empty(&self, width: usize) -> Vec<Line<'static>> {
+        let note = match self.folder {
+            Folder::Open => {
+                let key = keys::key_for(Action::Commit(Act::Message)).unwrap_or_default();
+                format!("No conversations yet. Press {key} on a commit or a person to start one.")
+            }
+            Folder::Requests => "No requests wait on you.".to_owned(),
+            Folder::Stashed => {
+                let key = keys::key_for(Action::Keep(Keep::Stash)).unwrap_or_default();
+                format!("Nothing stashed. {key} on a conversation stashes it until someone writes.")
+            }
+        };
+        let path = match self.folder {
+            Folder::Open => "$ ls /dev/remotes".to_owned(),
+            folder => format!("$ ls /dev/remotes/{}", folder.slug()),
+        };
+        let mut lines = vec![vec![Span::styled(path, Style::new().fg(theme::FOREGROUND))]];
+        feed::wrap(&[(note, theme::muted())], width, &mut lines);
+        lines.into_iter().map(Line::from).collect()
+    }
+}
+
+/// `+ Grace Hopper @grace`, or dimmed with why they can't be messaged.
+fn person(candidate: &Candidate, selected: bool, width: usize) -> Line<'static> {
+    let user = &candidate.user;
+    let name = match candidate.reason {
+        Some(_) => theme::muted(),
+        None => Style::new().fg(theme::lane(user.lane)),
+    };
+    let mut spans = vec![
+        Span::styled("+ ", name),
+        Span::styled(user.name.clone(), name),
+        Span::styled(format!(" @{}", user.handle), theme::muted()),
+    ];
+    if let Some(reason) = &candidate.reason {
+        spans.push(Span::styled(format!("  {reason}"), theme::muted()));
+    }
+    let mut spans = feed::fit(spans, width);
+    let used: usize = spans.iter().map(Span::width).sum();
+    spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+    let line = Line::from(spans);
+    match selected {
+        true => line.style(Style::new().bg(theme::MUTED)),
+        false => line,
     }
 }
 
@@ -293,13 +535,14 @@ fn row<Tz: TimeZone>(
         };
         spans.push(Span::styled(last.preview().into_owned(), text));
     }
-    let mut age = conversation
-        .last_at
-        .map(|at| feed::relative_time(at, wall))
-        .unwrap_or_default();
-    if conversation.pinned {
-        age = format!("pinned {age}").trim_end().to_owned();
-    }
+    let filed = conversation.filed;
+    let marks = [(filed.pinned, "pinned"), (filed.muted, "muted")];
+    let age = (marks.iter())
+        .filter_map(|(on, mark)| on.then_some(*mark))
+        .map(str::to_owned)
+        .chain(conversation.last_at.map(|at| feed::relative_time(at, wall)))
+        .collect::<Vec<_>>()
+        .join(" ");
     let room = width.saturating_sub(age.width() + 1);
     let mut spans = feed::fit(spans, room);
     let used: usize = spans.iter().map(Span::width).sum();

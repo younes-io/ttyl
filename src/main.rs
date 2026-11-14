@@ -32,7 +32,7 @@ use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
-use ttyl::model::{Chat, ClientId, Conversation, Log, Message, Org, Party, Status};
+use ttyl::model::{Chat, ClientId, Conversation, Folder, Log, Message, Org, Party, Status};
 use ttyl::sched::Ticket;
 use ttyl::{body, compose, editor, headlines, locale, messages, signin, theme, viewer, welcome};
 
@@ -373,7 +373,7 @@ fn conversations(client: &Client) -> Result<Vec<Conversation>, String> {
     let mut before: Option<String> = None;
     loop {
         let page = client
-            .conversations(before.as_deref())
+            .conversations(Folder::Open, "", before.as_deref())
             .map_err(|error| refused(&error))?;
         for conversation in page.conversations {
             let chat = conversation.party.chat();

@@ -9,7 +9,9 @@ use ratatui::crossterm::event::KeyCode;
 use serde_json::{Value, json};
 use ttyl::api::{Call, Error, Paging, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{Chat, ConversationPage, Message, MessageId, MessagePage, OrgId};
+use ttyl::model::{
+    Candidate, Chat, ConversationPage, Folder, Hush, Message, MessageId, MessagePage, OrgId, Refile,
+};
 
 const ADA: &str = "0a000000-0000-4000-8000-00000000000a";
 const GRACE: &str = "0b000000-0000-4000-8000-00000000000b";
@@ -141,7 +143,11 @@ fn gm_lists_conversations_pinned_then_unread_one_line_each() {
     let mut engine = boot(at);
     let effects = press(&mut engine, "gm", at);
     assert!(
-        runs(&effects).contains(&&Call::Conversations { before: None }),
+        runs(&effects).contains(&&Call::Conversations {
+            folder: Folder::Open,
+            query: String::new(),
+            before: None
+        }),
         "{effects:#?}"
     );
     answer(&mut engine, &effects, at, dev_null);
@@ -818,4 +824,296 @@ fn a_group_keeps_a_failed_send_and_resends_it_with_the_same_id() {
         matches!(runs(&effects).as_slice(), [Call::SendMessage { chat, client_id, .. }] if *chat == unix_room() && client_id.0 == first),
         "{effects:#?}"
     );
+}
+
+/// The open folder as the fixture lists it, changed by `edit` first.
+fn remotes(edit: impl FnOnce(&mut Value)) -> ConversationPage {
+    let mut page = fixture("remotes");
+    edit(&mut page);
+    ConversationPage::parse(&page.to_string()).unwrap()
+}
+
+/// Lists the fixture's conversations, changed by `edit`, then moves down to grace's.
+fn on_grace(engine: &mut Engine, at: Instant, edit: impl FnOnce(&mut Value)) {
+    let effects = press(engine, "gm", at);
+    let page = remotes(edit);
+    answer(engine, &effects, at, |call| {
+        matches!(call, Call::Conversations { .. }).then(|| Reply::Conversations(page.clone()))
+    });
+    press(engine, "j", at);
+}
+
+fn conversations(folder: Folder, query: &str) -> Call {
+    Call::Conversations {
+        folder,
+        query: query.to_owned(),
+        before: None,
+    }
+}
+
+fn file(change: Refile) -> Call {
+    Call::File {
+        chat: grace(),
+        change,
+    }
+}
+
+/// Someone dev-null.sh offers to start a conversation with, and why they can't be, if they can't.
+fn candidate(handle: &str, reason: Option<&str>) -> Value {
+    let mut user = fixture("remotes")["data"][0]["partner"].clone();
+    user["id"] = json!(format!(
+        "0f000000-0000-4000-8000-0000000000{}",
+        handle.len()
+    ));
+    user["handle"] = json!(handle);
+    user["name"] = json!(handle.to_uppercase());
+    json!({ "user": user, "reason": reason })
+}
+
+#[test]
+fn tab_turns_the_folders_and_requests_show_only_while_some_wait() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, "open") && contains(&rows, "stashed"),
+        "{rows:#?}"
+    );
+    assert!(!contains(&rows, "requests"), "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Tab, at);
+    assert_eq!(runs(&effects), [&conversations(Folder::Stashed, "")]);
+
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |page| page["requests_count"] = json!(2));
+    assert!(contains(&screen(&mut engine, 100, 30, at), "requests 2"));
+    let effects = tap(&mut engine, KeyCode::Tab, at);
+    assert_eq!(runs(&effects), [&conversations(Folder::Requests, "")]);
+    let effects = tap(&mut engine, KeyCode::BackTab, at);
+    assert_eq!(runs(&effects), [&conversations(Folder::Open, "")]);
+}
+
+#[test]
+fn caret_pins_to_the_top_at_once_and_a_second_press_waits_for_the_first() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let first = press(&mut engine, "^", at);
+    assert_eq!(runs(&first), [&file(Refile::Pin(true))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    let (grace, pinned) = row(&rows, "@grace");
+    assert!(grace < row(&rows, "@linus").0, "{rows:#?}");
+    assert!(pinned.contains("pinned"), "{pinned}");
+    assert!(
+        contains(&rows, "pinned @grace"),
+        "the toast says so: {rows:#?}"
+    );
+
+    let second = press(&mut engine, "^", at);
+    assert!(runs(&second).is_empty(), "{second:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    let (_, unpinned) = row(&rows, "@grace");
+    assert!(!unpinned.contains("pinned"), "{unpinned}");
+    let next = answer(&mut engine, &first, at, |_| Some(Reply::Done));
+    assert_eq!(runs(&next), [&file(Refile::Pin(false))]);
+}
+
+#[test]
+fn s_stashes_the_conversation_out_of_open() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let effects = press(&mut engine, "s", at);
+    assert_eq!(runs(&effects), [&file(Refile::Stash(true))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "Grace @grace"), "{rows:#?}");
+    assert!(contains(&rows, "stashed @grace"), "{rows:#?}");
+}
+
+#[test]
+fn m_asks_how_long_to_mute_and_unmutes_a_muted_one_at_once() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let effects = press(&mut engine, "m", at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    let (_, prompt) = row(&rows, "mute @grace");
+    for choice in [
+        "h for an hour",
+        "t till tomorrow",
+        "w for a week",
+        "f forever",
+    ] {
+        assert!(prompt.contains(choice), "{prompt}");
+    }
+    let effects = press(&mut engine, "x", at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    let effects = press(&mut engine, "t", at);
+    assert_eq!(runs(&effects), [&file(Refile::Mute(Some(Hush::Tomorrow)))]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(row(&rows, "@grace").1.contains("muted"), "{rows:#?}");
+    assert!(contains(&rows, "muted @grace till tomorrow"), "{rows:#?}");
+
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |page| {
+        page["data"][2]["muted_until_at"] = json!("2999-01-01T00:00:00Z");
+    });
+    let effects = press(&mut engine, "m", at);
+    assert_eq!(runs(&effects), [&file(Refile::Mute(None))]);
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "unmuted @grace"
+    ));
+}
+
+#[test]
+fn a_merges_a_request_and_shift_d_drops_one_after_asking() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |page| page["requests_count"] = json!(2));
+    let effects = tap(&mut engine, KeyCode::Tab, at);
+    let requests = remotes(|page| {
+        let rows = page["data"].as_array().unwrap();
+        page["data"] = json!([rows[1], rows[2]]);
+        page["requests_count"] = json!(2);
+    });
+    answer(&mut engine, &effects, at, |_| {
+        Some(Reply::Conversations(requests.clone()))
+    });
+    let merge = press(&mut engine, "a", at);
+    let merged = Call::Answer {
+        handle: "grace".to_owned(),
+        merge: true,
+    };
+    assert_eq!(runs(&merge), [&merged]);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(!contains(&rows, "Grace @grace"), "{rows:#?}");
+    assert!(contains(&rows, "requests 1"), "{rows:#?}");
+
+    let effects = press(&mut engine, "Dn", at);
+    assert!(runs(&effects).is_empty(), "n keeps it: {effects:#?}");
+    let effects = press(&mut engine, "D", at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, "drop @linus's request? they aren't told [y/N]"),
+        "{rows:#?}"
+    );
+    let effects = press(&mut engine, "y", at);
+    let dropped = Call::Answer {
+        handle: "linus".to_owned(),
+        merge: false,
+    };
+    assert_eq!(runs(&effects), [&dropped]);
+
+    let effects = answer(&mut engine, &merge, at, |_| Some(Reply::Done));
+    assert!(
+        runs(&effects).contains(&&conversations(Folder::Requests, "")),
+        "{effects:#?}"
+    );
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "merged @grace's request"
+    ));
+}
+
+#[test]
+fn slash_finds_conversations_and_people_and_typing_it_fires_no_key() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    press(&mut engine, "/", at);
+    let effects = press(&mut engine, "gras^m", at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    for _ in 0..3 {
+        tap(&mut engine, KeyCode::Backspace, at);
+    }
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "/gra█"), "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    let people = Call::Candidates("gra".to_owned());
+    assert_eq!(
+        runs(&effects),
+        [&conversations(Folder::Open, "gra"), &people]
+    );
+    let found = remotes(|page| {
+        let rows = page["data"].as_array().unwrap();
+        page["data"] = json!([rows[2]]);
+    });
+    let candidates = json!({ "candidates": [
+        candidate("grace", None),
+        candidate("graham", None),
+        candidate("gravity", Some("has remotes off")),
+    ] });
+    let candidates = Candidate::parse_list(&candidates.to_string()).unwrap();
+    answer(&mut engine, &effects, at, |call| match call {
+        Call::Conversations { .. } => Some(Reply::Conversations(found.clone())),
+        Call::Candidates(_) => Some(Reply::Candidates(candidates.clone())),
+        _ => None,
+    });
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "/gra"), "{rows:#?}");
+    assert!(!contains(&rows, "@linus"), "{rows:#?}");
+    let (start, _) = row(&rows, "write to");
+    let (graham, _) = row(&rows, "@graham");
+    let (gravity, off) = row(&rows, "@gravity");
+    assert!(start < graham && graham < gravity, "{rows:#?}");
+    assert!(off.contains("has remotes off"), "{off}");
+    assert_eq!(
+        rows.iter().filter(|row| row.contains("@grace")).count(),
+        1,
+        "{rows:#?}"
+    );
+
+    press(&mut engine, "jj", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(runs(&effects).is_empty(), "{effects:#?}");
+    assert!(contains(
+        &screen(&mut engine, 100, 30, at),
+        "can't message @gravity: has remotes off"
+    ));
+    press(&mut engine, "k", at);
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    assert!(
+        runs(&effects).iter().any(|call| matches!(call, Call::Messages { chat: Chat::Direct(handle), .. } if handle == "graham")),
+        "{effects:#?}"
+    );
+
+    tap(&mut engine, KeyCode::Esc, at);
+    let effects = tap(&mut engine, KeyCode::Esc, at);
+    assert_eq!(
+        runs(&effects),
+        [&conversations(Folder::Open, "")],
+        "esc drops the find before leaving"
+    );
+}
+
+#[test]
+fn a_pin_dev_null_refuses_says_why_and_lists_the_folder_again() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    on_grace(&mut engine, at, |_| {});
+    let effects = press(&mut engine, "^", at);
+    let mut next = Vec::new();
+    for effect in &effects {
+        if let Effect::Run(ticket, Call::File { .. }) = effect {
+            let refused = Error::Api {
+                status: 403,
+                code: None,
+                message: "You can't pin this conversation.".to_owned(),
+                retry_after: None,
+            };
+            next.extend(engine.update(Event::Reply(*ticket, Err(refused)), at));
+        }
+    }
+    next.extend(engine.pump(at));
+    assert_eq!(runs(&next), [&conversations(Folder::Open, "")]);
+    answer(&mut engine, &next, at, dev_null);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, "You can't pin this conversation."),
+        "{rows:#?}"
+    );
+    assert!(!row(&rows, "@grace").1.contains("pinned"), "{rows:#?}");
 }
