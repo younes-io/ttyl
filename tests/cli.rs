@@ -108,6 +108,7 @@ fn against(name: &str, base: &str, args: &[&str], stdin: Option<&str>) -> Output
         .args(args)
         .env("XDG_CONFIG_HOME", scratch(name))
         .env("DEVNULL_URL", base)
+        .env("TZ", "UTC")
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -221,5 +222,67 @@ fn a_first_commit_points_to_the_rules_on_the_web() {
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         "ttyl: Your first commit has to come from the web, so you can read the commit rules first.\n"
+    );
+}
+
+fn latest() -> String {
+    std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/log-latest.json"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn log_prints_commits_the_way_git_log_does() {
+    let (base, _server) = serve("200 OK", &latest());
+    let output = against("cli-log", &base, &["log", "latest"], None);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.starts_with(
+            "commit 9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61\n\
+             Author: Ada <@ada>\n\
+             Date:   Wed Oct 21 09:42:00 2026 +0000\n\
+             \n    switched the feed to `cursorPaginate(20)`. offsets fall over once the table grows.\n\
+             \ncommit 9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a62 (in review)\n"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains('\x1b'), "no color into a pipe: {stdout:?}");
+}
+
+#[test]
+fn log_oneline_prints_a_line_per_commit_for_grep_and_fzf() {
+    let (base, _server) = serve("200 OK", &latest());
+    let output = against(
+        "cli-log-oneline",
+        &base,
+        &["log", "--oneline", "latest"],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 11, "{stdout}");
+    assert_eq!(
+        lines[0],
+        "e4f5a61 @ada switched the feed to `cursorPaginate(20)`. offsets fall over once the table grows."
+    );
+    assert!(
+        lines[1].starts_with("e4f5a62 (in review) @ada "),
+        "{}",
+        lines[1]
+    );
+}
+
+#[test]
+fn log_refuses_a_log_it_does_not_know() {
+    let output = ttyl(&["log", "popular"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unknown argument 'popular'")
     );
 }

@@ -14,6 +14,7 @@ pub mod emoji;
 pub mod engine;
 pub mod fatal;
 pub mod feed;
+pub mod gitlog;
 pub mod inbox;
 pub mod keys;
 pub mod log;

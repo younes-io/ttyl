@@ -53,6 +53,20 @@ Inside tmux, copying needs a tmux setting. See [Settings](settings.html#tmux).
 - `↩ 5` counts replies, and `★ 27` counts stars.
 - `fatal: bad object` stands where a deleted reply used to be.
 
+## Read a log from the shell
+
+Run `ttyl log` to print your following log the way `git log` prints commits,
+then exit. Name another log with `ttyl log latest` or `ttyl log trending`. In
+a terminal the log goes through `$PAGER`, or `less` if it is not set. Piped
+into another program, it prints plain text.
+
+Add `--oneline` for one line per commit: its short hash, its author and its
+first line. That suits `grep` and `fzf`:
+
+```sh
+ttyl log latest --oneline | grep -i rust
+```
+
 ## Reload and rest
 
 Press <kbd>ctrl-r</kbd> to reload everything on screen. Press <kbd>z</kbd>

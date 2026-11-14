@@ -29,7 +29,8 @@ use ttyl::desktop::{self, Clipped};
 use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
-use ttyl::model::Status;
+use ttyl::gitlog::{self, Format};
+use ttyl::model::{Log, Status};
 use ttyl::sched::Ticket;
 use ttyl::{body, compose, editor, signin, theme, viewer, welcome};
 
@@ -43,6 +44,8 @@ enum Command<'a> {
     Status,
     /// A commit from the shell, with its text from `-m` or else from stdin.
     Commit(Option<&'a str>),
+    /// A log printed the way `git log` prints commits.
+    Log(Log, Format),
     Version,
     Help,
     Unknown(&'a str),
@@ -56,10 +59,25 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         ["commit"] => Command::Commit(None),
         ["commit", "-m", text] => Command::Commit(Some(text)),
         ["status" | "commit", arg, ..] => Command::Unknown(arg),
+        ["log", rest @ ..] => log_command(rest),
         ["--version" | "-V"] => Command::Version,
         ["--help" | "-h"] => Command::Help,
         ["--version" | "-V" | "--help" | "-h", arg, ..] | [arg, ..] => Command::Unknown(arg),
     }
+}
+
+fn log_command<'a>(args: &[&'a str]) -> Command<'a> {
+    let (mut log, mut format) = (Log::Following, Format::Medium);
+    for &arg in args {
+        match arg {
+            "--oneline" => format = Format::Oneline,
+            _ => match ttyl::log::LOGS.into_iter().find(|log| log.slug() == arg) {
+                Some(named) => log = named,
+                None => return Command::Unknown(arg),
+            },
+        }
+    }
+    Command::Log(log, format)
 }
 
 fn main() -> ExitCode {
@@ -70,13 +88,14 @@ fn main() -> ExitCode {
         Command::Redirect(url) => report(signin::forward(url).map_err(|error| error.to_string())),
         Command::Status => report(status()),
         Command::Commit(text) => report(commit(text)),
+        Command::Log(log, format) => report(print_log(log, format)),
         Command::Version => {
             println!("ttyl {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n\nCommands:\n  status  print how many notifications are unread\n  commit  send a commit, with its text from -m or from stdin\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n       ttyl log [following | latest | trending] [--oneline]\n\nCommands:\n  status  print how many notifications are unread\n  commit  send a commit, with its text from -m or from stdin\n  log     print a log the way git log prints commits, through $PAGER in a terminal\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -152,6 +171,42 @@ fn status() -> Result<(), String> {
     let me = client()?.me().map_err(|error| refused(&error))?;
     println!("{}", me.unread);
     Ok(())
+}
+
+fn print_log(log: Log, format: Format) -> Result<(), String> {
+    let page = client()?.page(log, None).map_err(|error| refused(&error))?;
+    let tty = io::stdout().is_terminal();
+    let text = gitlog::print(&page.rows, format, &Local, tty);
+    let shown = match tty {
+        true => through_pager(&text),
+        false => io::stdout().write_all(text.as_bytes()),
+    };
+    match shown {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// Shows `text` through `$PAGER`, or `less` as git does, which quits at once when it fits the screen.
+fn through_pager(text: &str) -> io::Result<()> {
+    let pager = env::var("PAGER")
+        .ok()
+        .filter(|pager| !pager.trim().is_empty())
+        .unwrap_or_else(|| "less".to_owned());
+    let spawned = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&pager)
+        .env("LESS", env::var_os("LESS").unwrap_or_else(|| "FRX".into()))
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+    let Ok(mut child) = spawned else {
+        return io::stdout().write_all(text.as_bytes());
+    };
+    let written = (child.stdin.take())
+        .expect("stdin is piped")
+        .write_all(text.as_bytes());
+    child.wait()?;
+    written
 }
 
 fn commit(text: Option<&str>) -> Result<(), String> {
