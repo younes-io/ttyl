@@ -121,12 +121,11 @@ fn against(name: &str, base: &str, args: &[&str], stdin: Option<&str>) -> Output
         .spawn()
         .unwrap();
     if let Some(text) = stdin {
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(text.as_bytes())
-            .unwrap();
+        let written = child.stdin.take().unwrap().write_all(text.as_bytes());
+        // ttyl may refuse its arguments and exit before reading stdin, closing the pipe first.
+        if let Err(error) = written {
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+        }
     }
     child.wait_with_output().unwrap()
 }
