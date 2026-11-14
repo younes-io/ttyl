@@ -2,13 +2,13 @@ mod common;
 
 use std::time::Instant;
 
-use common::{boot_as, contains, log_of, press, runs, screen, tap};
+use common::{boot_as, contains, log_of, marked, press, runs, screen, tap};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::json;
-use ttyl::api::{Account, Call, Reply};
+use ttyl::api::{Account, Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::model::{
-    Lane, Log, LogPage, OrganizationList, OrganizationPage, PeoplePage, RowPage, Who,
+    Circle, Lane, Log, LogPage, OrganizationList, OrganizationPage, PeoplePage, RowPage, Who,
 };
 use ttyl::sched::Ticket;
 
@@ -272,6 +272,56 @@ fn an_organizations_author_cannot_be_muted_blocked_or_messaged() {
     }
 }
 
+/// The usual log, with the open poll asked by @acme.
+fn acme_polls(log: Log) -> LogPage {
+    let mut page = common::page(log);
+    let acme = by_acme(log).rows[0].commit.author.clone();
+    for row in &mut page.rows {
+        if row.media.poll.is_some() {
+            row.commit.author = acme.clone();
+        }
+    }
+    page
+}
+
+#[test]
+fn an_organizations_commit_is_its_members_own_to_delete_but_not_to_star_report_or_vote_on() {
+    let at = Instant::now();
+    let mut engine = boot_as(at, member(), by_acme);
+    assert!(runs(&press(&mut engine, "2D", at)).is_empty());
+    assert!(
+        footer(&mut engine, at).starts_with(" delete "),
+        "{}",
+        footer(&mut engine, at)
+    );
+    for keys in ["2s", "2!"] {
+        let mut engine = boot_as(at, member(), by_acme);
+        let effects = press(&mut engine, keys, at);
+        assert!(runs(&effects).is_empty(), "{keys}: {:#?}", runs(&effects));
+        assert!(
+            !footer(&mut engine, at).contains("1-4 pick"),
+            "{keys}: no report dialog"
+        );
+    }
+    let mut engine = boot_as(at, member(), acme_polls);
+    press(&mut engine, "2jjjjjjj", at);
+    assert!(runs(&press(&mut engine, "v", at)).is_empty());
+    assert_eq!(marked(&mut engine, 100, 40, at), None, "no picker opens");
+}
+
+#[test]
+fn no_pastel_goes_to_an_organizations_commit() {
+    let at = Instant::now();
+    let giver: Account = serde_json::from_value(json!({
+        "data": { "handle": "ada", "name": "Ada", "pasteis_mode": true },
+        "unread_notifications_count": 0,
+    }))
+    .unwrap();
+    let mut engine = boot_as(at, giver, by_acme);
+    let effects = press(&mut engine, "2P", at);
+    assert!(runs(&effects).is_empty(), "{:#?}", runs(&effects));
+}
+
 #[test]
 fn following_lists_the_organizations_they_follow_above_the_people() {
     let at = Instant::now();
@@ -294,9 +344,9 @@ fn following_lists_the_organizations_they_follow_above_the_people() {
     );
 }
 
-/// Opens a person's profile from a commit of theirs, then their following tab, answering both
-/// of its lists: the people and, on two pages fetched back to back, the organizations.
-fn on_person_following(at: Instant) -> Engine {
+/// Opens a person's profile from a commit of theirs, then their following tab, which asks for
+/// the people they follow and the organizations they follow as two calls.
+fn to_following(at: Instant) -> (Engine, String, Ticket, Ticket) {
     let mut engine = boot_as(at, member(), common::page);
     let other = common::page(Log::Latest)
         .rows
@@ -331,6 +381,13 @@ fn on_person_following(at: Instant) -> Engine {
     let organizations = ticket(&following, |call| {
         matches!(call, Call::FollowedOrganizations { .. })
     });
+    (engine, handle, people, organizations)
+}
+
+/// Opens a person's following tab and answers both of its lists: the people and, on two pages
+/// fetched back to back, the organizations.
+fn on_person_following(at: Instant) -> Engine {
+    let (mut engine, handle, people, organizations) = to_following(at);
     let Reply::User(linus) = common::profile("linus", false) else {
         unreachable!("profile builds a user reply");
     };
@@ -378,6 +435,41 @@ fn on_person_following(at: Instant) -> Engine {
         at,
     );
     engine
+}
+
+#[test]
+fn a_failed_organizations_list_leaves_the_people_below_paging() {
+    let at = Instant::now();
+    let (mut engine, handle, people, organizations) = to_following(at);
+    let crowd = (0..30)
+        .map(|n| {
+            let Reply::User(user) = common::profile(&format!("dev{n}"), false) else {
+                unreachable!("profile builds a user reply");
+            };
+            user.person
+        })
+        .collect();
+    let page = Reply::People(PeoplePage {
+        people: crowd,
+        next_cursor: Some("p2".to_owned()),
+    });
+    engine.update(Event::Reply(people, Ok(page)), at);
+    let failed = Error::Api {
+        status: 500,
+        code: None,
+        message: "Server Error".to_owned(),
+        retry_after: None,
+    };
+    engine.update(Event::Reply(organizations, Err(failed)), at);
+    let effects = press(&mut engine, "G", at);
+    assert_eq!(
+        runs(&effects),
+        [&Call::People {
+            handle,
+            circle: Circle::Following,
+            cursor: Some("p2".to_owned()),
+        }]
+    );
 }
 
 #[test]

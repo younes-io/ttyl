@@ -503,17 +503,24 @@ impl Session {
         match self.selected() {
             Some(Selected::Row(row)) if row.fold == Some(Fold::Blocked) => act == Act::Block,
             Some(Selected::Row(row)) => {
-                let own = row.commit.author.handle == *me;
+                let author = &row.commit.author.handle;
+                let mine = author == me;
+                // dev-null.sh counts an organization's commit as each member's own, except that
+                // a pin takes only a commit you wrote as yourself.
+                let own = mine
+                    || (self.store.me.organizations.iter())
+                        .any(|organization| organization.handle.eq_ignore_ascii_case(author));
                 let person = row.commit.author.profile_type == ProfileType::User;
                 row.deletion.is_none()
                     && match act {
-                        Act::Star | Act::Follow => !own,
-                        Act::Mute | Act::Block | Act::Message => !own && person,
-                        Act::Pastel => !own && self.store.me.pasteis_mode,
+                        Act::Follow => !mine,
+                        Act::Star | Act::Report => !own,
+                        Act::Mute | Act::Block | Act::Message => !mine && person,
+                        // A pastel goes to a person, never to an organization.
+                        Act::Pastel => !mine && person && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
-                        Act::Pin => own && row.commit.parent_id.is_none(),
-                        Act::Report => !own,
+                        Act::Pin => mine && row.commit.parent_id.is_none(),
                         Act::Reply | Act::Quote => true,
                         Act::Vote => {
                             !own && (row.media.poll.as_ref())
@@ -564,7 +571,10 @@ impl Session {
             }
             Some(Selected::Organization(_)) => act == Act::Follow,
             None => {
-                act == Act::Follow && (self.follow_target()).is_some_and(|who| who.handle() != *me)
+                act == Act::Follow
+                    && (self.follow_target()).is_some_and(|who| {
+                        who.handle() != *me && !self.store.blocking(who.handle())
+                    })
             }
         }
     }
@@ -3029,12 +3039,8 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::FollowedOrganizations { handle, .. } => {
-                        for profile in session.profiles_mut(&handle) {
-                            profile.fail_tab(Tab::Following, failure.clone());
-                        }
-                        offline
-                    }
+                    // The people below still page without them, and a reload asks again.
+                    Call::FollowedOrganizations { .. } => offline,
                     Call::Starred { .. }
                     | Call::SearchCommits(_)
                     | Call::SearchPeople(_)

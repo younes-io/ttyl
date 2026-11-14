@@ -121,6 +121,10 @@ switch to each of your organizations in turn, then back to you. The next
 commit, reply or quote starts as whoever you picked last. ttyl forgets your
 choice when it quits, so it never posts as an organization by surprise.
 
+A commit from any of your organizations counts as yours. You can delete it
+with <kbd>D</kbd>, and you can't star, report or vote on it. You can pin only
+a commit you posted as yourself.
+
 ## If ttyl stops before sending
 
 - If the text looks like it holds a secret, such as an API key, ttyl asks
