@@ -17,6 +17,48 @@ first, then the ones with unread messages, then the rest, newest first.
 - Press <kbd>enter</kbd> to open the selected conversation.
 - Press <kbd>esc</kbd> to go back.
 
+## Folders
+
+The list sits in one of three folders, named along its top the way mutt
+names a mailbox:
+
+- **open** holds the conversations you're in.
+- **requests** holds messages from people you haven't written back to yet,
+  with how many wait. It shows only while some do.
+- **stashed** holds the conversations you put away.
+
+Press <kbd>tab</kbd> for the next folder and <kbd>shift-tab</kbd> for the one
+before.
+
+## Keep your conversations
+
+These keys act on the selected conversation at once and say what they did on
+the bottom line. Press one again to undo it.
+
+- Press <kbd>^</kbd> to pin it to the top, or to unpin it.
+- Press <kbd>s</kbd> to stash it. A stashed conversation comes back to open
+  as soon as anyone writes in it. In stashed, <kbd>s</kbd> puts it back.
+- Press <kbd>m</kbd> to mute it. The bottom line asks how long, and one key
+  answers: <kbd>h</kbd> for an hour, <kbd>t</kbd> till tomorrow,
+  <kbd>w</kbd> for a week or <kbd>f</kbd> forever. <kbd>esc</kbd> leaves it
+  as it was. On a muted conversation, <kbd>m</kbd> unmutes it.
+
+In requests, two keys answer the selected one:
+
+- Press <kbd>a</kbd> to merge it. It moves to open and you can write back.
+- Press <kbd>D</kbd> to drop it. ttyl asks first, since it can't be undone,
+  and the person isn't told.
+
+## Find a conversation
+
+Press <kbd>/</kbd> and type a name or a handle, then <kbd>enter</kbd>. The
+folder shows only the conversations that match, and under them, the people
+who match that you could write to. A person you can't write to shows why,
+dimmed. Press <kbd>enter</kbd> on a person to open a conversation with them.
+
+The find stays while you change folders. Press <kbd>esc</kbd> to show
+everything again, or <kbd>/</kbd> then <kbd>enter</kbd> on nothing.
+
 ## Talk in a conversation
 
 A conversation reads oldest at the top and newest at the bottom, where the
@@ -56,8 +98,9 @@ renamed the group.
 ## Start a conversation
 
 Press <kbd>M</kbd> on a commit to message its author, or on a person in a
-profile or in search results to message them. If they don't take messages
-from you yet, the line at the bottom says why instead of taking text.
+profile or in search results to message them. In your conversations,
+<kbd>/</kbd> finds anyone by name. If they don't take messages from you yet,
+the line at the bottom says why instead of taking text.
 
 ## Message from the shell
 
@@ -81,7 +124,7 @@ ttyl msg '#unix-room' -m "reviewing now"
 
 ## What ttyl leaves to the web
 
-ttyl reads and sends text. Calls, reactions, typing, pins, mentions, replies,
-archiving and running a group (adding people, renaming it) stay on
-dev-null.sh. <kbd>M</kbd> starts a conversation with one person; start a
+ttyl reads and sends text. Calls, reactions, typing, mentions, replies and
+running a group (adding people, renaming it) stay on dev-null.sh.
+<kbd>M</kbd> and <kbd>/</kbd> start a conversation with one person; start a
 group on the web.

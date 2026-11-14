@@ -257,6 +257,9 @@ impl ThreadScreen {
             | Action::Later
             | Action::Unschedule
             | Action::SendNow
+            | Action::Find
+            | Action::Keep(_)
+            | Action::Hush(_)
             | Action::Messages
             | Action::PageUp
             | Action::PageDown => false,

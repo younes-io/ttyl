@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::api::{Call, Paging};
 use crate::draft::Target;
 use crate::model::{
-    Chat, Circle, ClientId, CommitId, Filter, HeadlineId, Log, NotificationId, ScheduledId,
+    Chat, Circle, ClientId, CommitId, Filter, Folder, HeadlineId, Log, NotificationId, ScheduledId,
 };
 
 /// The server's signed throttle: this many requests in any sliding window.
@@ -71,8 +71,14 @@ pub enum CallKey {
     OlderNotifications(Filter),
     Group(NotificationId),
     Conversations {
+        folder: Folder,
+        query: String,
         older: bool,
     },
+    /// One change to a conversation at a time, so a second press waits for the first.
+    File(Chat),
+    Answer(String),
+    Candidates(String),
     /// A conversation's latest page or a poll for new messages, which one call covers at a time.
     Messages {
         chat: Chat,
@@ -143,9 +149,18 @@ impl Call {
             } => CallKey::Notifications(*filter),
             Call::Notifications { filter, .. } => CallKey::OlderNotifications(*filter),
             Call::Group { id, .. } => CallKey::Group(id.clone()),
-            Call::Conversations { before } => CallKey::Conversations {
+            Call::Conversations {
+                folder,
+                query,
+                before,
+            } => CallKey::Conversations {
+                folder: *folder,
+                query: query.clone(),
                 older: before.is_some(),
             },
+            Call::File { chat, .. } => CallKey::File(chat.clone()),
+            Call::Answer { handle, .. } => CallKey::Answer(handle.clone()),
+            Call::Candidates(query) => CallKey::Candidates(query.clone()),
             Call::Messages { chat, paging } => CallKey::Messages {
                 chat: chat.clone(),
                 older: matches!(paging, Paging::Before(_)),

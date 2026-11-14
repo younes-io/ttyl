@@ -14,8 +14,8 @@ use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Chat, Circle, ClientId, CommitId, Filter, HeadlineId, Log, MessageId, Notice, NotificationId,
-    OrgId, Party, Reason, ScheduledId, Translation, Untranslated,
+    Chat, Circle, ClientId, CommitId, Filter, Folder, HeadlineId, Hush, Log, MessageId, Notice,
+    NotificationId, OrgId, Party, Reason, Refile, ScheduledId, Translation, Untranslated,
 };
 
 struct Seen {
@@ -1126,7 +1126,11 @@ fn a_failed_translation_says_what_dev_null_said() {
 
 #[test]
 fn conversations_are_read_from_remotes_and_paged_by_conversation() {
-    let call = Call::Conversations { before: None };
+    let call = Call::Conversations {
+        folder: Folder::Open,
+        query: String::new(),
+        before: None,
+    };
     let (reply, seen) = exchange(&call, &fixture("remotes"));
     assert_eq!(request_line(&seen), "GET /api/v1/remotes HTTP/1.1");
     let Reply::Conversations(page) = reply else {
@@ -1151,8 +1155,12 @@ fn conversations_are_read_from_remotes_and_paged_by_conversation() {
         Some("grace")
     );
     assert_eq!(page.next, None);
+    assert_eq!(page.requests, 0);
+    assert!(page.conversations[0].filed.pinned);
 
     let call = Call::Conversations {
+        folder: Folder::Open,
+        query: String::new(),
         before: Some("c1000000-0000-4000-8000-00000000000e".to_owned()),
     };
     let (_, seen) = exchange(&call, &fixture("remotes"));
@@ -1160,6 +1168,121 @@ fn conversations_are_read_from_remotes_and_paged_by_conversation() {
         request_line(&seen),
         "GET /api/v1/remotes?before=c1000000-0000-4000-8000-00000000000e HTTP/1.1"
     );
+}
+
+#[test]
+fn a_folder_and_a_find_go_to_the_server_as_its_tab_and_q() {
+    for (folder, query, path) in [
+        (Folder::Requests, "", "/api/v1/remotes?tab=fetched"),
+        (Folder::Stashed, "gra", "/api/v1/remotes?tab=stashed&q=gra"),
+        (
+            Folder::Open,
+            "@grace hopper",
+            "/api/v1/remotes?q=%40grace%20hopper",
+        ),
+    ] {
+        let call = Call::Conversations {
+            folder,
+            query: query.to_owned(),
+            before: None,
+        };
+        let (_, seen) = exchange(&call, &fixture("remotes"));
+        assert_eq!(request_line(&seen), format!("GET {path} HTTP/1.1"));
+    }
+}
+
+#[test]
+fn pin_stash_and_mute_go_to_the_conversation_they_file() {
+    let grace = Chat::Direct("grace".to_owned());
+    let room = Chat::Org(OrgId(UNIX_ROOM.to_owned()));
+    let room_path = format!("/api/v1/remotes/orgs/{UNIX_ROOM}");
+    for (chat, change, method, path, body) in [
+        (
+            &grace,
+            Refile::Pin(true),
+            "PUT",
+            "/api/v1/remotes/@grace/pin".to_owned(),
+            r#"{"pinned":true}"#,
+        ),
+        (
+            &room,
+            Refile::Pin(false),
+            "PUT",
+            format!("{room_path}/pin"),
+            r#"{"pinned":false}"#,
+        ),
+        (
+            &grace,
+            Refile::Stash(true),
+            "POST",
+            "/api/v1/remotes/@grace/archive".to_owned(),
+            "",
+        ),
+        (
+            &room,
+            Refile::Stash(false),
+            "DELETE",
+            format!("{room_path}/archive"),
+            "",
+        ),
+        (
+            &grace,
+            Refile::Mute(Some(Hush::Tomorrow)),
+            "PUT",
+            "/api/v1/remotes/@grace/mute".to_owned(),
+            r#"{"duration":"tomorrow"}"#,
+        ),
+        (
+            &room,
+            Refile::Mute(None),
+            "PUT",
+            format!("{room_path}/mute"),
+            r#"{"duration":"off"}"#,
+        ),
+    ] {
+        let call = Call::File {
+            chat: chat.clone(),
+            change,
+        };
+        let (reply, seen) = exchange(&call, &serde_json::json!({}));
+        assert!(matches!(reply, Reply::Done), "{change:?}: {reply:?}");
+        assert_eq!(request_line(&seen), format!("{method} {path} HTTP/1.1"));
+        assert_eq!(seen.body, body, "{change:?}");
+    }
+}
+
+#[test]
+fn a_request_is_merged_or_dropped_by_posting_to_its_verb() {
+    for (merge, verb) in [(true, "merge"), (false, "drop")] {
+        let call = Call::Answer {
+            handle: "grace".to_owned(),
+            merge,
+        };
+        let (reply, seen) = exchange(&call, &serde_json::json!({}));
+        assert!(matches!(reply, Reply::Done));
+        assert_eq!(
+            request_line(&seen),
+            format!("POST /api/v1/remotes/@grace/{verb} HTTP/1.1")
+        );
+    }
+}
+
+#[test]
+fn people_to_start_a_conversation_with_come_with_why_they_cannot_be() {
+    let answer = serde_json::json!({ "candidates": [
+        { "user": person(), "reason": null },
+        { "user": person(), "reason": "doesn't follow you" },
+    ] });
+    let (reply, seen) = exchange(&Call::Candidates("gr ace".to_owned()), &answer);
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/remotes/candidates?q=gr%20ace HTTP/1.1"
+    );
+    let Reply::Candidates(people) = reply else {
+        panic!("{reply:?}")
+    };
+    let reasons: Vec<Option<&str>> = people.iter().map(|p| p.reason.as_deref()).collect();
+    assert_eq!(reasons, [None, Some("doesn't follow you")]);
 }
 
 #[test]

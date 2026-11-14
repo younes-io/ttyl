@@ -27,18 +27,18 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, CONVERSATION_SCOPES,
-    DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap,
-    LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES,
-    PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, QUEUE_SCOPES, REPORT_SCOPES,
-    RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
-    VIEWER_SCOPES, VOTE_SCOPES,
+    DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keep, Keymap,
+    LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, MUTE_SCOPES, PEOPLE_SCOPES,
+    PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, QUEUE_SCOPES,
+    REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope,
+    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
-use crate::messages::{self, ConversationScreen, Conversations, Unsent};
+use crate::messages::{self, ConversationScreen, Conversations, Picked, Unsent};
 use crate::model::{
-    self, Chat, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Party, Reason, Row,
-    ScheduledId, Shown, Status, Translation, Untranslated, User,
+    self, Chat, Commit, CommitId, Filed, Filter, Fold, Kind, Log, NotificationId, Party, Reason,
+    Refile, Row, ScheduledId, Shown, Status, Translation, Untranslated, User,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -206,6 +206,18 @@ enum Overlay {
         id: ScheduledId,
         first: String,
     },
+    /// Typing a name to narrow the conversations to, and to find people to write to.
+    Find {
+        query: String,
+    },
+    /// Asking how long to mute a conversation, which shows as `shown` until one key answers.
+    Mute {
+        chat: Chat,
+        title: String,
+        shown: Filed,
+    },
+    /// Asking before dropping the request from this handle for good.
+    Drop(String),
 }
 
 const SERVER_DETAILS_MAX: usize = 500;
@@ -411,10 +423,9 @@ impl Session {
         if action == Action::Profile {
             return self.profile_target().is_some();
         }
-        matches!(
-            action,
-            Action::Quit | Action::Help | Action::Saver | Action::Search
-        ) || (action == Action::Undo && self.undoable.is_some())
+        matches!(action, Action::Quit | Action::Help | Action::Saver)
+            || (action == Action::Search && self.messages().is_none())
+            || (action == Action::Undo && self.undoable.is_some())
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
             || (action == Action::Starred && !self.on_list(&Source::Starred))
             || (action == Action::Headlines && !self.on_list(&Source::Headlines))
@@ -605,15 +616,16 @@ impl Session {
     fn scopes(&self) -> &'static [Scope] {
         match self.overlay {
             Some(Overlay::Help { .. }) => HELP_SCOPES,
-            Some(Overlay::Delete(_) | Overlay::Block(_)) => CONFIRM_SCOPES,
+            Some(Overlay::Delete(_) | Overlay::Block(_) | Overlay::Drop(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
             Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             Some(Overlay::Pipe { .. }) => PIPE_SCOPES,
-            Some(Overlay::Search { .. }) => SEARCH_SCOPES,
+            Some(Overlay::Search { .. } | Overlay::Find { .. }) => SEARCH_SCOPES,
             Some(Overlay::At { .. }) => AT_SCOPES,
             Some(Overlay::Unschedule { .. }) => CONFIRM_SCOPES,
+            Some(Overlay::Mute { .. }) => MUTE_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
                 Some(Some(Prompt::Rules)) => RULES_SCOPES,
@@ -631,9 +643,11 @@ impl Session {
             Some(
                 Overlay::Delete(_)
                 | Overlay::Block(_)
+                | Overlay::Drop(_)
                 | Overlay::Details { .. }
                 | Overlay::Pipe { .. }
                 | Overlay::Search { .. }
+                | Overlay::Find { .. }
                 | Overlay::At { .. }
                 | Overlay::Unschedule { .. },
             ) => InputMode::Text,
@@ -652,7 +666,8 @@ impl Session {
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
                 | Overlay::Vote { .. }
-                | Overlay::Viewer { .. },
+                | Overlay::Viewer { .. }
+                | Overlay::Mute { .. },
             )
             | None => InputMode::Commands,
         }
@@ -664,6 +679,7 @@ impl Session {
             Some(
                 Overlay::Pipe { command: text, .. }
                 | Overlay::Search { query: text }
+                | Overlay::Find { query: text }
                 | Overlay::At { text },
             ) => (text, usize::MAX),
             None => {
@@ -683,9 +699,12 @@ impl Session {
 
     fn typed(&mut self, event: KeyEvent) {
         match &mut self.overlay {
-            Some(Overlay::Delete(_) | Overlay::Unschedule { .. } | Overlay::Block(_)) => {
-                self.overlay = None
-            }
+            Some(
+                Overlay::Delete(_)
+                | Overlay::Unschedule { .. }
+                | Overlay::Block(_)
+                | Overlay::Drop(_),
+            ) => self.overlay = None,
             Some(Overlay::Details { text, .. }) => match event.code {
                 KeyCode::Backspace => {
                     text.pop();
@@ -703,6 +722,7 @@ impl Session {
             Some(
                 Overlay::Pipe { command: text, .. }
                 | Overlay::Search { query: text }
+                | Overlay::Find { query: text }
                 | Overlay::At { text },
             ) => match event.code {
                 KeyCode::Backspace => {
@@ -721,7 +741,8 @@ impl Session {
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
                 | Overlay::Vote { .. }
-                | Overlay::Viewer { .. },
+                | Overlay::Viewer { .. }
+                | Overlay::Mute { .. },
             ) => {}
             None => {
                 if let Some(conversation) = self.conversation_mut() {
@@ -886,6 +907,39 @@ impl Session {
                 "/█  words to find commits, or @name for people".to_owned(),
             )]),
             Some(Overlay::Search { query }) => Some(vec![typed(format!("/{query}█"))]),
+            Some(Overlay::Find { query }) if query.is_empty() => Some(vec![typed(
+                "/█  a name or @handle, enter on nothing shows all".to_owned(),
+            )]),
+            Some(Overlay::Find { query }) => Some(vec![typed(format!("/{query}█"))]),
+            Some(Overlay::Drop(handle)) => {
+                let warned = format!("drop @{handle}'s request? they aren't told [y/N]");
+                let prompt = if warned.width() <= room {
+                    warned
+                } else {
+                    format!("drop @{handle}'s request? [y/N]")
+                };
+                Some(vec![Span::styled(
+                    prompt,
+                    Style::new().fg(theme::DESTRUCTIVE),
+                )])
+            }
+            Some(Overlay::Mute { title, .. }) => {
+                let choices = (keys::bindings(MUTE_SCOPES, &|_| true))
+                    .filter_map(|binding| match binding.action {
+                        Action::Hush(hush) => Some(format!(
+                            "{} {}",
+                            keys::label(binding.chords[0]),
+                            hush.label()
+                        )),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                Some(vec![
+                    typed(format!("mute {title}: ")),
+                    Span::styled(choices, Style::new().fg(theme::PRIMARY)),
+                ])
+            }
             Some(Overlay::At { text }) => {
                 let landing = match at::resolve(text, wall) {
                     Ok(when) => Span::styled(
@@ -1013,6 +1067,49 @@ fn open_conversation(
     session
         .stack
         .push(Screen::Conversation(Box::new(conversation)));
+}
+
+/// Asks for a list's folder, and for the people its find matches.
+fn ask_messages(sched: &mut Scheduler, messages: &Conversations) {
+    sched.send(messages.call(), Priority::Now);
+    if let Some(call) = messages.people_call() {
+        sched.send(call, Priority::Now);
+    }
+}
+
+/// Keeps `chat`, which shows as `shown`, the way `change` says, on every list at once. The store
+/// sends it on to dev-null.sh.
+fn refile(session: &mut Session, chat: &Chat, shown: Filed, change: Refile) {
+    let want = session.store.refile(chat, shown, change);
+    for messages in session.messages_mut() {
+        messages.refile(chat, want);
+    }
+}
+
+fn refiled(title: &str, change: Refile) -> String {
+    match change {
+        Refile::Pin(true) => format!("pinned {title}"),
+        Refile::Pin(false) => format!("unpinned {title}"),
+        Refile::Stash(true) => format!("stashed {title} · it comes back when someone writes"),
+        Refile::Stash(false) => format!("unstashed {title}"),
+        Refile::Mute(Some(hush)) => format!("muted {title} {}", hush.label()),
+        Refile::Mute(None) => format!("unmuted {title}"),
+    }
+}
+
+/// Merges or drops the request from `handle`, which leaves the requests at once.
+fn answer(sched: &mut Scheduler, session: &mut Session, handle: String, merge: bool) {
+    for messages in session.messages_mut() {
+        messages.answered(&handle);
+    }
+    sched.send(Call::Answer { handle, merge }, Priority::Now);
+}
+
+/// Asks again for every open list of conversations, to show what dev-null.sh kept.
+fn reask_messages(sched: &mut Scheduler, session: &mut Session) {
+    for messages in session.messages_mut() {
+        ask_messages(sched, messages);
+    }
 }
 
 fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
@@ -1786,6 +1883,32 @@ impl Engine {
                     self.toast(blocked(&handle, true), now);
                 }
             }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Find { .. })) =>
+            {
+                if let Some(Overlay::Find { query }) = session.overlay.take()
+                    && let Some(Screen::Messages(messages)) = session.stack.last_mut()
+                {
+                    messages.find(&query, now);
+                    ask_messages(&mut self.sched, messages);
+                }
+            }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Drop(_))) =>
+            {
+                if let Some(Overlay::Drop(handle)) = session.overlay.take() {
+                    answer(&mut self.sched, session, handle, false);
+                }
+            }
+            (Phase::Ready(session), Action::Hush(hush))
+                if matches!(session.overlay, Some(Overlay::Mute { .. })) =>
+            {
+                if let Some(Overlay::Mute { chat, title, shown }) = session.overlay.take() {
+                    let change = Refile::Mute(Some(hush));
+                    refile(session, &chat, shown, change);
+                    self.toast(refiled(&title, change), now);
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1910,17 +2033,52 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Messages) => {
                 let messages = Conversations::new(now);
-                self.sched.send(messages.call(), Priority::Now);
+                ask_messages(&mut self.sched, &messages);
                 session.stack.push(Screen::Messages(Box::new(messages)));
             }
             (Phase::Ready(session), Action::Open) if session.messages().is_some() => {
-                let party = (session.messages())
+                let picked = (session.messages())
                     .and_then(Conversations::selected)
-                    .map(|conversation| conversation.party.clone());
-                if let Some(party) = party {
-                    open_conversation(&mut self.sched, &mut self.timers, session, party, now);
+                    .map(|picked| match picked {
+                        Picked::Conversation(conversation) => Ok(conversation.party.clone()),
+                        Picked::Person(candidate) => match &candidate.reason {
+                            Some(reason) => Err(format!(
+                                "can't message @{}: {reason}",
+                                candidate.user.handle
+                            )),
+                            None => Ok(Party::Person(candidate.user.clone())),
+                        },
+                    });
+                match picked {
+                    Some(Ok(party)) => {
+                        open_conversation(&mut self.sched, &mut self.timers, session, party, now);
+                    }
+                    Some(Err(why)) => self.toast(why, now),
+                    None => {}
                 }
             }
+            (Phase::Ready(session), Action::Find) => {
+                let query = (session.messages())
+                    .map_or_else(String::new, |messages| messages.query().to_owned());
+                session.overlay = Some(Overlay::Find { query });
+            }
+            (Phase::Ready(session), Action::Back)
+                if (session.messages()).is_some_and(|messages| !messages.query().is_empty()) =>
+            {
+                if let Some(Screen::Messages(messages)) = session.stack.last_mut() {
+                    messages.find("", now);
+                    ask_messages(&mut self.sched, messages);
+                }
+            }
+            (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
+                if session.messages().is_some() =>
+            {
+                if let Some(Screen::Messages(messages)) = session.stack.last_mut() {
+                    messages.turn(action == Action::PreviousFilter, now);
+                    self.sched.send(messages.call(), Priority::Now);
+                }
+            }
+            (Phase::Ready(_), Action::Keep(keep)) => self.keep(keep, now),
             (Phase::Ready(session), Action::Commit(Act::Message)) => {
                 let partner = match session.selected() {
                     Some(Selected::Row(row)) => row.commit.author.clone(),
@@ -2080,7 +2238,7 @@ impl Engine {
                 }
                 Screen::Messages(messages) => {
                     messages.reload(now);
-                    self.sched.send(messages.call(), Priority::Now);
+                    ask_messages(&mut self.sched, messages);
                 }
                 Screen::Conversation(conversation) => {
                     self.sched.send(conversation.poll(), Priority::Now);
@@ -2113,6 +2271,44 @@ impl Engine {
             }
             None => {}
         }
+    }
+
+    /// Pins, stashes or mutes the selected conversation, asking first where a key needs to, or
+    /// merges or drops the selected request.
+    fn keep(&mut self, keep: Keep, now: Instant) {
+        let Phase::Ready(session) = &mut self.phase else {
+            return;
+        };
+        let Some(Picked::Conversation(conversation)) =
+            session.messages().and_then(Conversations::selected)
+        else {
+            return;
+        };
+        let (chat, title, shown) = (
+            conversation.party.chat(),
+            conversation.party.title(),
+            conversation.filed,
+        );
+        let change = match keep {
+            Keep::Pin => Refile::Pin(!shown.pinned),
+            Keep::Stash => Refile::Stash(!shown.stashed),
+            Keep::Mute if shown.muted => Refile::Mute(None),
+            Keep::Mute => {
+                session.overlay = Some(Overlay::Mute { chat, title, shown });
+                return;
+            }
+            Keep::Merge | Keep::Drop => {
+                if let Chat::Direct(handle) = chat {
+                    match keep {
+                        Keep::Merge => answer(&mut self.sched, session, handle, true),
+                        _ => session.overlay = Some(Overlay::Drop(handle)),
+                    }
+                }
+                return;
+            }
+        };
+        refile(session, &chat, shown, change);
+        self.toast(refiled(&title, change), now);
     }
 
     fn on_commit(&mut self, act: Act, now: Instant) -> Vec<Effect> {
@@ -2299,6 +2495,15 @@ impl Engine {
             }
             return Vec::new();
         }
+        if let Call::Answer { handle, merge } = call {
+            let toast = match merge {
+                true => format!("merged @{handle}'s request · it's in open now"),
+                false => format!("dropped @{handle}'s request"),
+            };
+            reask_messages(&mut self.sched, session);
+            self.toast(toast, now);
+            return Vec::new();
+        }
         if let Call::Unschedule(id) | Call::SendNow(id) = call {
             for queue in session.queues_mut() {
                 queue.remove(id);
@@ -2370,10 +2575,31 @@ impl Engine {
                 }
                 return Vec::new();
             }
-            Call::Conversations { before } => {
+            Call::Conversations {
+                folder,
+                query,
+                before,
+            } => {
                 if let Reply::Conversations(page) = reply {
+                    let filings: Vec<(Chat, Filed)> = (session.store.filings())
+                        .map(|(chat, filed)| (chat.clone(), filed))
+                        .collect();
                     for messages in session.messages_mut() {
-                        messages.land(before.as_deref(), page.clone());
+                        if messages.shows(*folder, query) {
+                            messages.land(before.as_deref(), page.clone());
+                            // A change dev-null.sh hasn't confirmed yet still shows as made.
+                            for (chat, filed) in &filings {
+                                messages.refile(chat, *filed);
+                            }
+                        }
+                    }
+                }
+                return Vec::new();
+            }
+            Call::Candidates(query) => {
+                if let Reply::Candidates(people) = reply {
+                    for messages in session.messages_mut() {
+                        messages.land_people(query, people.clone());
                     }
                 }
                 return Vec::new();
@@ -2737,10 +2963,21 @@ impl Engine {
                         self.sched.send(Call::Queue, Priority::Now);
                         offline
                     }
-                    Call::Conversations { .. } => {
+                    Call::Conversations { folder, query, .. } => {
                         for messages in session.messages_mut() {
-                            messages.fail(failure.clone());
+                            if messages.shows(folder, &query) {
+                                messages.fail(failure.clone());
+                            }
                         }
+                        offline
+                    }
+                    Call::Candidates(_) => offline,
+                    Call::File { .. } if !matches!(failure, Failure::Refused(_)) => true,
+                    Call::File { .. } | Call::Answer { .. } => {
+                        session.store.refused(&call);
+                        reask_messages(&mut self.sched, session);
+                        self.toast = Some(error.to_string());
+                        self.timers.set(Timer::Toast, now + TOAST);
                         offline
                     }
                     Call::Messages { chat, paging } => {
@@ -3049,6 +3286,14 @@ impl Engine {
                     let banner = inset(banner);
                     frame.render_widget(session.inbox.filter_bar(banner.width), banner);
                 }
+                if let Some(messages) = session.messages()
+                    && !framed
+                {
+                    let (names, at) = messages.tabs();
+                    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                    let banner = inset(banner);
+                    frame.render_widget(log::tab_bar(&names, at, banner.width), banner);
+                }
                 if let Some(group) = session.group() {
                     frame.render_widget(group.banner(), banner);
                 }
@@ -3198,7 +3443,13 @@ impl Engine {
                         queue.draw(frame, area, wall)
                     }
                     Some(Screen::Messages(messages)) => {
-                        let area = framed_as(frame, body, framed, "");
+                        let area = if framed {
+                            let (names, at) = messages.tabs();
+                            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                            log::draw_tabbed(frame, log::column(inset(body)), &names, at, true)
+                        } else {
+                            inset(body)
+                        };
                         messages.draw(frame, area, &session.store.me.handle, now, wall)
                     }
                     Some(Screen::Conversation(conversation)) => {
@@ -3273,7 +3524,10 @@ impl Engine {
                         | Overlay::Pipe { .. }
                         | Overlay::Search { .. }
                         | Overlay::At { .. }
-                        | Overlay::Unschedule { .. },
+                        | Overlay::Unschedule { .. }
+                        | Overlay::Find { .. }
+                        | Overlay::Mute { .. }
+                        | Overlay::Drop(_),
                     )
                     | None => {}
                 }

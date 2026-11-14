@@ -36,8 +36,9 @@ developers where a post is called a commit.
 - **Catch up** on who replied, quoted, starred, mentioned or followed you.
   Open anyone's profile and follow them.
 - **Message** anyone one to one, or your groups like IRC channels: `gm`
-  lists your conversations, `M` on a commit or a person starts one, and
-  `ttyl msg` sends from the shell.
+  lists your conversations in folders like mutt's, where `^` pins, `s`
+  stashes, `m` mutes and `/` finds anyone to write to. `M` on a commit or a
+  person starts one, and `ttyl msg` sends from the shell.
 - **Search** commits by meaning with `/`, or people with `/@`, and list
   the commits like the selected one with `gr`. See the hot topics with
   `gt`, or print them from the shell with `ttyl headlines`.

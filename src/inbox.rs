@@ -165,44 +165,9 @@ impl Inbox {
             .unwrap_or(0)
     }
 
-    /// The filters as tabs along a rule, like the log's. When the names don't fit they stay as words,
-    /// with single gaps when narrow, because no key picks a filter by number.
+    /// The filters as tabs along a rule, like the log's.
     pub fn filter_bar(&self, width: u16) -> Line<'static> {
-        let names = Filter::ALL.map(Filter::slug);
-        let active = self.at();
-        let width = usize::from(width);
-        if let Some(mut rule) = log::named_tabs(&names, active, true, width) {
-            let fill = width.saturating_sub(rule.width());
-            rule.push_span(Span::styled(
-                "─".repeat(fill),
-                Style::new().fg(log::edge(true)),
-            ));
-            return rule;
-        }
-        let wide: usize = names.iter().map(|name| name.len() + 2).sum();
-        let gap = if wide <= width { "  " } else { " " };
-        let spans = names.iter().enumerate().flat_map(|(at, name)| {
-            let lead = if at == 0 { "" } else { gap };
-            let (slash, style) = if at == active {
-                (
-                    "/",
-                    Style::new()
-                        .fg(theme::FOREGROUND)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                ("", theme::muted())
-            };
-            [
-                Span::raw(lead),
-                Span::styled(
-                    slash,
-                    Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(*name, style),
-            ]
-        });
-        Line::from(spans.collect::<Vec<_>>())
+        log::tab_bar(&Filter::ALL.map(Filter::slug), self.at(), width)
     }
 }
 

@@ -1304,6 +1304,87 @@ struct Member {
     user: User,
 }
 
+/// Which of the user's conversations a list shows, as dev-null.sh files them, like mutt's folders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Folder {
+    #[default]
+    Open,
+    /// Conversations someone started with the user, waiting to be merged or dropped.
+    Requests,
+    Stashed,
+}
+
+impl Folder {
+    pub const ALL: [Folder; 3] = [Folder::Open, Folder::Requests, Folder::Stashed];
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Folder::Open => "open",
+            Folder::Requests => "requests",
+            Folder::Stashed => "stashed",
+        }
+    }
+
+    /// The tab dev-null.sh's inbox calls it.
+    pub fn tab(self) -> &'static str {
+        match self {
+            Folder::Open => "open",
+            Folder::Requests => "fetched",
+            Folder::Stashed => "stashed",
+        }
+    }
+}
+
+/// How the user keeps a conversation: pinned to the top, stashed out of the open ones, muted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Filed {
+    pub pinned: bool,
+    pub stashed: bool,
+    pub muted: bool,
+}
+
+/// How long a conversation stays muted, as dev-null.sh offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hush {
+    Hour,
+    /// Until the day turns.
+    Tomorrow,
+    Week,
+    Forever,
+}
+
+impl Hush {
+    pub const ALL: [Hush; 4] = [Hush::Hour, Hush::Tomorrow, Hush::Week, Hush::Forever];
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Hush::Hour => "hour",
+            Hush::Tomorrow => "tomorrow",
+            Hush::Week => "week",
+            Hush::Forever => "forever",
+        }
+    }
+
+    /// How long, as `muted @grace for an hour` says it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Hush::Hour => "for an hour",
+            Hush::Tomorrow => "till tomorrow",
+            Hush::Week => "for a week",
+            Hush::Forever => "forever",
+        }
+    }
+}
+
+/// One change to how the user keeps a conversation, each its own route on dev-null.sh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refile {
+    Pin(bool),
+    Stash(bool),
+    /// Mutes it for that long, or with none unmutes it.
+    Mute(Option<Hush>),
+}
+
 /// A conversation as the list of them shows it.
 #[derive(Debug, Clone)]
 pub struct Conversation {
@@ -1312,7 +1393,7 @@ pub struct Conversation {
     pub last_at: Option<DateTime<Utc>>,
     /// Messages from the others the user hasn't read.
     pub unread: u32,
-    pub pinned: bool,
+    pub filed: Filed,
 }
 
 #[derive(Debug, Clone)]
@@ -1320,6 +1401,8 @@ pub struct ConversationPage {
     pub conversations: Vec<Conversation>,
     /// The conversation the next page continues before.
     pub next: Option<String>,
+    /// How many requests wait on the user, whichever folder the page is from.
+    pub requests: u32,
 }
 
 impl ConversationPage {
@@ -1328,6 +1411,7 @@ impl ConversationPage {
         struct Wire {
             data: Vec<Row>,
             has_more: bool,
+            requests_count: u32,
         }
 
         #[derive(Deserialize)]
@@ -1340,6 +1424,9 @@ impl ConversationPage {
             last_message_at: Option<DateTime<Utc>>,
             ahead: u32,
             pinned_at: Option<String>,
+            /// Null once the mute is over.
+            muted_until_at: Option<String>,
+            is_archived: bool,
         }
 
         let wire: Wire = serde_json::from_str(json)?;
@@ -1362,14 +1449,38 @@ impl ConversationPage {
                     last: row.last_message,
                     last_at: row.last_message_at,
                     unread: row.ahead,
-                    pinned: row.pinned_at.is_some(),
+                    filed: Filed {
+                        pinned: row.pinned_at.is_some(),
+                        stashed: row.is_archived,
+                        muted: row.muted_until_at.is_some(),
+                    },
                 })
             })
             .collect();
         Ok(ConversationPage {
             conversations,
             next,
+            requests: wire.requests_count,
         })
+    }
+}
+
+/// Someone a search found to start a conversation with, and dev-null.sh's reason they can't be
+/// messaged, if there is one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Candidate {
+    pub user: User,
+    pub reason: Option<String>,
+}
+
+impl Candidate {
+    pub fn parse_list(json: &str) -> serde_json::Result<Vec<Self>> {
+        #[derive(Deserialize)]
+        struct Wire {
+            candidates: Vec<Candidate>,
+        }
+
+        Ok(serde_json::from_str::<Wire>(json)?.candidates)
     }
 }
 
@@ -1392,7 +1503,7 @@ impl Access {
         match self {
             Access::Open => None,
             Access::Request => Some(format!(
-                "merge @{handle}'s request on dev-null.sh before replying."
+                "merge @{handle}'s request before replying, with a in gm's requests."
             )),
             Access::Waiting => Some(format!("@{handle} hasn't merged your request yet.")),
             Access::Restricted => Some(format!(

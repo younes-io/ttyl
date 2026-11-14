@@ -16,10 +16,10 @@ use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
-    Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus, GroupPage,
-    Headline, HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId, MessagePage,
-    NotificationId, NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Scheduled,
-    ScheduledId, Segment, Settings, Translation,
+    Candidate, Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Filter, Focus,
+    Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Log, LogPage, Message, MessageId,
+    MessagePage, NotificationId, NotificationPage, PeoplePage, Profile, Reason, Refile,
+    RepliesPage, RowPage, Scheduled, ScheduledId, Segment, Settings, Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -170,11 +170,26 @@ pub enum Call {
         filter: Filter,
         cursor: Option<String>,
     },
-    /// The user's conversations with people and orgs, pinned first then newest, continuing before
-    /// a conversation.
+    /// A folder of the user's conversations, pinned first then newest, those matching `query`
+    /// when it isn't empty, continuing before a conversation.
     Conversations {
+        folder: Folder,
+        query: String,
         before: Option<String>,
     },
+    /// Pins, stashes or mutes a conversation for the user alone, or undoes it.
+    File {
+        chat: Chat,
+        change: Refile,
+    },
+    /// Merges the request from `handle` into the open conversations, or drops it without telling
+    /// them.
+    Answer {
+        handle: String,
+        merge: bool,
+    },
+    /// The people matching a search, with why each one can't be messaged, if they can't.
+    Candidates(String),
     /// A page of a conversation.
     Messages {
         chat: Chat,
@@ -231,6 +246,7 @@ pub enum Reply {
         pending: bool,
     },
     Conversations(ConversationPage),
+    Candidates(Vec<Candidate>),
     Messages(Box<MessagePage>),
     Message(Box<Message>),
     Done,
@@ -536,9 +552,46 @@ impl Client {
             Call::Group { id, filter, cursor } => {
                 self.group(id, *filter, cursor.as_deref()).map(Reply::Group)
             }
-            Call::Conversations { before } => self
-                .conversations(before.as_deref())
+            Call::Conversations {
+                folder,
+                query,
+                before,
+            } => self
+                .conversations(*folder, query, before.as_deref())
                 .map(Reply::Conversations),
+            Call::File { chat, change } => {
+                let base = remote(chat);
+                let (method, path, body) = match change {
+                    Refile::Pin(on) => (
+                        "PUT",
+                        format!("{base}/pin"),
+                        serde_json::json!({ "pinned": on }).to_string(),
+                    ),
+                    Refile::Stash(on) => (
+                        if *on { "POST" } else { "DELETE" },
+                        format!("{base}/archive"),
+                        String::new(),
+                    ),
+                    Refile::Mute(hush) => {
+                        let duration = hush.map_or("off", |hush| hush.wire());
+                        let body = serde_json::json!({ "duration": duration }).to_string();
+                        ("PUT", format!("{base}/mute"), body)
+                    }
+                };
+                self.send(method, &path, body).map(|_| Reply::Done)
+            }
+            Call::Answer { handle, merge } => {
+                let verb = if *merge { "merge" } else { "drop" };
+                let path = format!("{}/{verb}", remote(&Chat::Direct(handle.clone())));
+                self.send("POST", &path, String::new()).map(|_| Reply::Done)
+            }
+            Call::Candidates(query) => {
+                let path = format!("/api/v1/remotes/candidates?q={}", escape(query));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                Candidate::parse_list(&text)
+                    .map(Reply::Candidates)
+                    .map_err(|error| unreadable(status, error))
+            }
             Call::Messages { chat, paging } => {
                 let mut path = format!("{}/messages", remote(chat));
                 match paging {
@@ -566,10 +619,26 @@ impl Client {
         }
     }
 
-    pub fn conversations(&self, before: Option<&str>) -> Result<ConversationPage, Error> {
+    pub fn conversations(
+        &self,
+        folder: Folder,
+        query: &str,
+        before: Option<&str>,
+    ) -> Result<ConversationPage, Error> {
         let mut path = String::from("/api/v1/remotes");
+        let mut params = Vec::new();
+        if folder != Folder::Open {
+            params.push(format!("tab={}", folder.tab()));
+        }
+        if !query.is_empty() {
+            params.push(format!("q={}", escape(query)));
+        }
         if let Some(before) = before {
-            path.push_str(&format!("?before={}", escape(before)));
+            params.push(format!("before={}", escape(before)));
+        }
+        if !params.is_empty() {
+            path.push('?');
+            path.push_str(&params.join("&"));
         }
         let (status, text) = self.send("GET", &path, String::new())?;
         ConversationPage::parse(&text).map_err(|error| unreadable(status, error))

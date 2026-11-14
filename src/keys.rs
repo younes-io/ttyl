@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
-use crate::model::{Log, Reason};
+use crate::model::{Hush, Log, Reason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -60,6 +60,26 @@ pub enum Action {
     Unschedule,
     /// Commits the selected scheduled commit now.
     SendNow,
+    /// Asks for a name to narrow the list of conversations to, which also finds people to start
+    /// one with.
+    Find,
+    /// Acts on the selected conversation in the list.
+    Keep(Keep),
+    /// Mutes the conversation asked about for this long.
+    Hush(Hush),
+}
+
+/// What a key does to the selected conversation, as mutt's keys flag and save a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keep {
+    Pin,
+    Stash,
+    /// Asks how long to mute it for, or unmutes it.
+    Mute,
+    /// Merges a request, so the user can reply.
+    Merge,
+    /// Asks before dropping a request for good.
+    Drop,
 }
 
 /// A place of the person a profile is about, out in the browser.
@@ -162,6 +182,7 @@ impl Action {
             | Action::Headlines
             | Action::Later
             | Action::Search
+            | Action::Find
             | Action::Refresh
             | Action::Help
             | Action::Close
@@ -176,6 +197,8 @@ impl Action {
             | Action::Icons
             | Action::Unschedule
             | Action::SendNow
+            | Action::Keep(_)
+            | Action::Hush(_)
             | Action::Undo => Group::Act,
         }
     }
@@ -222,6 +245,8 @@ pub enum Scope {
     Queue,
     Messages,
     Conversation,
+    /// Asking how long to mute a conversation for.
+    Mute,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -240,6 +265,7 @@ pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
 pub const AT_SCOPES: &[Scope] = &[Scope::At];
 pub const CONVERSATION_SCOPES: &[Scope] = &[Scope::Conversation];
+pub const MUTE_SCOPES: &[Scope] = &[Scope::Mute, Scope::Always];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -333,6 +359,7 @@ pub const UNIONS: &[&[Scope]] = &[
     QUEUE_SCOPES,
     MESSAGES_SCOPES,
     CONVERSATION_SCOPES,
+    MUTE_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1202,14 +1229,70 @@ pub const TABLE: &[Binding] = &[
         chords: &[&[Key::code(KeyCode::Enter)], &[Key::ch('o')]],
         action: Action::Open,
         hint: Some("enter open"),
-        help: "open the conversation",
+        help: "open the conversation, or one with the person",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('a')]],
+        action: Action::Keep(Keep::Merge),
+        hint: Some("a merge"),
+        help: "merge the request, so you can reply",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('D')]],
+        action: Action::Keep(Keep::Drop),
+        hint: Some("D drop"),
+        help: "drop the request, without telling them",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('s')]],
+        action: Action::Keep(Keep::Stash),
+        hint: Some("s stash"),
+        help: "stash it until someone writes, or unstash it",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('m')]],
+        action: Action::Keep(Keep::Mute),
+        hint: Some("m mute"),
+        help: "mute it for a while, or unmute it",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('^')]],
+        action: Action::Keep(Keep::Pin),
+        hint: None,
+        help: "pin it to the top, or unpin it",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::code(KeyCode::Tab)]],
+        action: Action::NextFilter,
+        hint: Some("tab folder"),
+        help: "next folder: open, requests, stashed",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::code(KeyCode::BackTab)]],
+        action: Action::PreviousFilter,
+        hint: None,
+        help: "previous folder",
+    },
+    Binding {
+        scope: Scope::Messages,
+        chords: &[&[Key::ch('/')]],
+        action: Action::Find,
+        hint: Some("/ find"),
+        help: "find a conversation, or someone to write to",
     },
     Binding {
         scope: Scope::Messages,
         chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
         action: Action::Back,
         hint: Some("esc back"),
-        help: "back",
+        help: "back, or out of a find",
     },
     Binding {
         scope: Scope::Conversation,
@@ -1252,6 +1335,41 @@ pub const TABLE: &[Binding] = &[
         action: Action::Quit,
         hint: None,
         help: "quit",
+    },
+    Binding {
+        scope: Scope::Mute,
+        chords: &[&[Key::ch('h')]],
+        action: Action::Hush(Hush::Hour),
+        hint: None,
+        help: "mute for an hour",
+    },
+    Binding {
+        scope: Scope::Mute,
+        chords: &[&[Key::ch('t')]],
+        action: Action::Hush(Hush::Tomorrow),
+        hint: None,
+        help: "mute till tomorrow",
+    },
+    Binding {
+        scope: Scope::Mute,
+        chords: &[&[Key::ch('w')]],
+        action: Action::Hush(Hush::Week),
+        hint: None,
+        help: "mute for a week",
+    },
+    Binding {
+        scope: Scope::Mute,
+        chords: &[&[Key::ch('f')]],
+        action: Action::Hush(Hush::Forever),
+        hint: None,
+        help: "mute until you unmute it",
+    },
+    Binding {
+        scope: Scope::Mute,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
     },
     Binding {
         scope: Scope::Secret,
