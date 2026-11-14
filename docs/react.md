@@ -10,7 +10,8 @@ star back. Your starred commits are listed under <kbd>gs</kbd>, as
 
 When pastéis mode is on for your dev-null.sh account, press <kbd>P</kbd> to
 give a pastel to the author of the selected commit. You cannot give one to
-yourself. After you give one, ttyl tells you how many you have left today.
+yourself or to an organization. After you give one, ttyl tells you how many
+you have left today.
 
 ## Vote in a poll
 

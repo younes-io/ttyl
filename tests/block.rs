@@ -6,7 +6,7 @@ use common::{boot, contains, press, runs, screen, tap};
 use ratatui::crossterm::event::KeyCode;
 use ttyl::api::{Call, Error, Reply};
 use ttyl::engine::{Effect, Engine, Event};
-use ttyl::model::{Filter, NotificationPage, PeoplePage, Person};
+use ttyl::model::{Filter, NotificationPage, PeoplePage, Person, RowPage};
 use ttyl::sched::Ticket;
 
 fn block(on: bool) -> Call {
@@ -133,6 +133,34 @@ fn you_cannot_block_yourself() {
     assert!(press(&mut engine, "B", at).is_empty());
     let rows = screen(&mut engine, 100, 40, at);
     assert!(!contains(&rows, "block @ada?"), "{rows:#?}");
+}
+
+#[test]
+fn f_on_an_empty_profile_of_someone_you_blocked_sends_nothing() {
+    let at = Instant::now();
+    let mut engine = on_grace(at);
+    press(&mut engine, "B", at);
+    let ticket = one_run(&press(&mut engine, "y", at));
+    reply(&mut engine, ticket, Ok(Reply::Done), at);
+    let effects = press(&mut engine, "p", at);
+    for (ticket, call) in effects.iter().filter_map(|effect| match effect {
+        Effect::Run(ticket, call) => Some((*ticket, call)),
+        _ => None,
+    }) {
+        let answer = match call {
+            Call::User(handle) => common::profile(handle, false),
+            Call::Commits { .. } => Reply::Rows(RowPage {
+                rows: Vec::new(),
+                next_cursor: None,
+            }),
+            other => panic!("opening a profile asks for nothing else: {other:#?}"),
+        };
+        reply(&mut engine, ticket, Ok(answer), at);
+    }
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(contains(&rows, "@grace"), "on her profile: {rows:#?}");
+    let effects = press(&mut engine, "f", at);
+    assert!(runs(&effects).is_empty(), "{:#?}", runs(&effects));
 }
 
 fn grace(is_followed: bool) -> Person {
