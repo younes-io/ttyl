@@ -26,9 +26,9 @@ use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
     self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PREVIEW_SCOPES,
-    PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SECRET_SCOPES,
-    SPLASH_SCOPES, STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LOG_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES,
+    PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve,
+    SECRET_SCOPES, SPLASH_SCOPES, STARRED_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
@@ -79,6 +79,8 @@ pub enum Event {
     Fetched(String, Result<image::DynamicImage, String>),
     /// The terminal came back into focus.
     Focused,
+    /// A pipe to `command` ended, or why it failed.
+    Piped(String, Result<(), String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -99,6 +101,11 @@ pub enum Effect {
     Fetch(String),
     /// Remembers whether the viewer picked plain symbols over Nerd Font icons.
     Icons(bool),
+    /// Hands the terminal to `command` with `input` on its stdin.
+    Pipe {
+        command: String,
+        input: String,
+    },
 }
 
 pub enum Phase {
@@ -117,6 +124,8 @@ pub struct Session {
     asked_to_refresh: HashSet<Refresh>,
     /// Polls whose bars have filled in once.
     filled: HashSet<CommitId>,
+    /// The shell command the last pipe ran, which the next one starts from.
+    piped: String,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -161,6 +170,11 @@ enum Overlay {
     Viewer {
         id: CommitId,
         at: usize,
+    },
+    /// Typing the shell command that a commit's text is piped to.
+    Pipe {
+        input: String,
+        command: String,
     },
 }
 
@@ -314,7 +328,7 @@ impl Session {
                     && match act {
                         Act::Star | Act::Follow => !own,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
-                        Act::Copy | Act::Browse => true,
+                        Act::Copy | Act::Browse | Act::Pipe => true,
                         Act::Delete => own,
                         Act::Report => !own,
                         Act::Reply | Act::Quote => true,
@@ -329,7 +343,7 @@ impl Session {
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
                 Act::Follow => commit.author.handle != *me,
-                Act::Copy | Act::Browse | Act::Reply | Act::Quote => true,
+                Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe => true,
                 Act::Star
                 | Act::Pastel
                 | Act::Delete
@@ -410,6 +424,7 @@ impl Session {
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
             Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
+            Some(Overlay::Pipe { .. }) => PIPE_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
                 Some(Some(Prompt::Rules)) => RULES_SCOPES,
@@ -424,7 +439,9 @@ impl Session {
 
     fn input_mode(&self) -> InputMode {
         match self.overlay {
-            Some(Overlay::Delete(_) | Overlay::Details { .. }) => InputMode::Text,
+            Some(Overlay::Delete(_) | Overlay::Details { .. } | Overlay::Pipe { .. }) => {
+                InputMode::Text
+            }
             None if self
                 .composer
                 .as_ref()
@@ -446,13 +463,16 @@ impl Session {
     }
 
     fn pasted(&mut self, pasted: &str) {
-        if let Some(Overlay::Details { text, .. }) = &mut self.overlay {
-            let room = SERVER_DETAILS_MAX.saturating_sub(text.chars().count());
-            let flat = pasted
-                .chars()
-                .map(|ch| if ch.is_control() { ' ' } else { ch });
-            text.extend(flat.take(room));
-        }
+        let (text, max) = match &mut self.overlay {
+            Some(Overlay::Details { text, .. }) => (text, SERVER_DETAILS_MAX),
+            Some(Overlay::Pipe { command, .. }) => (command, usize::MAX),
+            _ => return,
+        };
+        let room = max.saturating_sub(text.chars().count());
+        let flat = pasted
+            .chars()
+            .map(|ch| if ch.is_control() { ' ' } else { ch });
+        text.extend(flat.take(room));
     }
 
     fn typed(&mut self, event: KeyEvent) {
@@ -469,6 +489,19 @@ impl Session {
                         && text.chars().count() < SERVER_DETAILS_MAX =>
                 {
                     text.push(ch);
+                }
+                _ => {}
+            },
+            Some(Overlay::Pipe { command, .. }) => match event.code {
+                KeyCode::Backspace => {
+                    command.pop();
+                }
+                KeyCode::Char(ch)
+                    if !event
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    command.push(ch);
                 }
                 _ => {}
             },
@@ -586,16 +619,21 @@ impl Session {
         call
     }
 
-    fn prompt(&self, room: usize) -> Option<String> {
+    /// The question or the typing that takes the bottom row, and how it looks.
+    fn prompt(&self, room: usize) -> Option<(String, Style)> {
         match &self.overlay {
             Some(Overlay::Delete(id)) => {
                 let short = id.short_hash();
                 let warned = format!("delete {short}? this can't be undone [y/N]");
-                Some(if warned.len() <= room {
+                let prompt = if warned.len() <= room {
                     warned
                 } else {
                     format!("delete {short}? [y/N]")
-                })
+                };
+                Some((prompt, Style::new().fg(theme::DESTRUCTIVE)))
+            }
+            Some(Overlay::Pipe { command, .. }) => {
+                Some((format!("| {command}█"), Style::new().fg(theme::FOREGROUND)))
             }
             Some(
                 Overlay::Help { .. }
@@ -941,6 +979,14 @@ impl Engine {
                 }
                 Vec::new()
             }
+            Event::Piped(command, outcome) => {
+                let toast = match outcome {
+                    Ok(()) => format!("piped to {command}"),
+                    Err(why) => format!("fatal: {command}: {why}"),
+                };
+                self.toast(toast, now);
+                Vec::new()
+            }
         }
     }
 
@@ -1266,6 +1312,17 @@ impl Engine {
                 let url = session.images(id).get(*at).map(|image| image.url.clone());
                 return url.map(Effect::Open).into_iter().collect();
             }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Pipe { .. })) =>
+            {
+                if let Some(Overlay::Pipe { input, command }) = session.overlay.take() {
+                    let command = command.trim().to_owned();
+                    if !command.is_empty() {
+                        session.piped = command.clone();
+                        return vec![Effect::Pipe { command, input }];
+                    }
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1584,6 +1641,13 @@ impl Engine {
                 session.overlay = Some(Overlay::Delete(id));
                 (None, Vec::new())
             }
+            Act::Pipe => {
+                session.overlay = Some(Overlay::Pipe {
+                    input: commit.body,
+                    command: session.piped.clone(),
+                });
+                (None, Vec::new())
+            }
             Act::Report => {
                 session.overlay = Some(Overlay::Reason { id, at: 0 });
                 (None, Vec::new())
@@ -1821,6 +1885,7 @@ impl Engine {
             composer: None,
             asked_to_refresh: HashSet::new(),
             filled: HashSet::new(),
+            piped: String::new(),
         }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
@@ -2258,10 +2323,9 @@ impl Engine {
                         fatal::hint(failure, wait, room.saturating_sub(help.len()))
                     });
                 let hint = match (session.prompt(room), error) {
-                    (Some(prompt), _) => Line::styled(
-                        format!("{HINT_INDENT}{prompt}"),
-                        Style::new().fg(theme::DESTRUCTIVE),
-                    ),
+                    (Some((prompt, style)), _) => {
+                        Line::styled(format!("{HINT_INDENT}{prompt}"), style)
+                    }
                     (None, Some(error)) => Line::from(vec![
                         Span::styled(
                             format!("{HINT_INDENT}{error}"),
@@ -2395,7 +2459,8 @@ impl Engine {
                         popup::dim(frame.buffer_mut(), screen, None);
                         (self.gallery).draw(frame, screen, id, session.images(id), *at);
                     }
-                    Some(Overlay::Delete(_) | Overlay::Vote { .. }) | None => {}
+                    Some(Overlay::Delete(_) | Overlay::Vote { .. } | Overlay::Pipe { .. })
+                    | None => {}
                 }
             }
         }

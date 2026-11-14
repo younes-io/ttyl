@@ -15,10 +15,10 @@ use chrono::Local;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
     self as input, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste,
-    EnableFocusChange, Event as Input,
+    EnableFocusChange, Event as Input, KeyEventKind,
 };
-use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::crossterm::{cursor, execute};
 use ratatui::layout::Size;
 use ratatui_image::FontSize;
 use ratatui_image::picker::Picker;
@@ -389,11 +389,22 @@ impl Runtime {
                     });
                 }
                 Effect::Edit(text) => {
-                    let event = match self.edit(terminal, &text) {
+                    let edited =
+                        self.hand_over(terminal, || editor::edit(&editor::chosen(), &text));
+                    let event = match edited.flatten() {
                         Some(edited) => Event::Edited(edited),
                         None => Event::EditorFailed,
                     };
                     let effects = self.engine.update(event, Instant::now());
+                    self.perform(terminal, effects)?;
+                }
+                Effect::Pipe { command, input } => {
+                    let outcome = self
+                        .hand_over(terminal, || pipe(&command, &input))
+                        .unwrap_or_else(|| Err("can't hand it the terminal".to_owned()));
+                    let effects = self
+                        .engine
+                        .update(Event::Piped(command, outcome), Instant::now());
                     self.perform(terminal, effects)?;
                 }
                 Effect::Read(paths, pasted) => {
@@ -470,7 +481,12 @@ impl Runtime {
         }
     }
 
-    fn edit(&mut self, terminal: &mut DefaultTerminal, text: &str) -> Option<String> {
+    /// Gives the terminal to `run`, as a shell would to a program, and takes it back after.
+    fn hand_over<T>(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        run: impl FnOnce() -> T,
+    ) -> Option<T> {
         let (parked, is_parked) = mpsc::channel();
         let (resume, until_resumed) = mpsc::channel();
         let pause = Pause {
@@ -488,7 +504,7 @@ impl Runtime {
             LeaveAlternateScreen
         );
         let _ = terminal::disable_raw_mode();
-        let edited = editor::edit(&editor::chosen(), text);
+        let ran = run();
         let _ = terminal::enable_raw_mode();
         let _ = execute!(
             out,
@@ -498,8 +514,49 @@ impl Runtime {
         );
         let _ = terminal.clear();
         drop(resume);
-        edited
+        Some(ran)
     }
+}
+
+/// Runs `command` through `sh` with `input` on its stdin. When it printed something, ttyl waits
+/// for a key so it can be read; a command that printed nothing, such as `wl-copy`, returns at once.
+fn pipe(command: &str, input: &str) -> Result<(), String> {
+    let before = cursor::position().ok();
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("can't run sh: {error}"))?;
+    let written = (child.stdin.take())
+        .expect("stdin is piped")
+        .write_all(input.as_bytes());
+    let status = child.wait().map_err(|error| error.to_string())?;
+    let outcome = match (status.code(), written) {
+        (Some(0), Ok(())) => Ok(()),
+        (Some(0), Err(error)) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        (Some(0), Err(error)) => Err(format!("can't write to it: {error}")),
+        (Some(code), _) => Err(format!("exited with {code}")),
+        (None, _) => Err("killed by a signal".to_owned()),
+    };
+    if cursor::position().ok() != before {
+        let said = match &outcome {
+            Ok(()) => "done".to_owned(),
+            Err(why) => why.clone(),
+        };
+        print!("\r\n[{command}: {said}] press any key to go back to ttyl");
+        let _ = io::stdout().flush();
+        let _ = terminal::enable_raw_mode();
+        loop {
+            match input::read() {
+                Ok(Input::Key(key)) if key.kind == KeyEventKind::Press => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        print!("\r\n");
+    }
+    outcome
 }
 
 struct Pause {
