@@ -1051,3 +1051,94 @@ impl HeadlinePage {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct ScheduledId(pub String);
+
+/// A commit queued to go out later, which only its author sees until then.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scheduled {
+    pub id: ScheduledId,
+    pub at: DateTime<Utc>,
+    pub body: String,
+    /// The organization it goes out as, when not as the user.
+    pub author: Option<String>,
+    pub poll: bool,
+    pub images: usize,
+}
+
+/// A scheduled commit as the API sends it. Once it went out, its body is gone and only the status
+/// says what became of it.
+#[derive(Deserialize)]
+struct ScheduledWire {
+    id: ScheduledId,
+    author: Option<Handle>,
+    body: Option<String>,
+    poll_options: Option<Vec<String>>,
+    image_count: usize,
+    scheduled_at: DateTime<Utc>,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct Handle {
+    handle: String,
+}
+
+impl ScheduledWire {
+    /// The commit while it still waits to go out.
+    fn waiting(self) -> Option<Scheduled> {
+        let body = self.body.filter(|_| self.status == "scheduled")?;
+        Some(Scheduled {
+            id: self.id,
+            at: self.scheduled_at,
+            body,
+            author: self.author.map(|author| author.handle),
+            poll: self.poll_options.is_some(),
+            images: self.image_count,
+        })
+    }
+}
+
+impl Scheduled {
+    /// The one the server just queued.
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: ScheduledWire,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        wire.data
+            .waiting()
+            .ok_or_else(|| de::Error::custom("a commit just scheduled has gone out"))
+    }
+
+    /// The ones still waiting, soonest first. The queue lists those already sent after them,
+    /// and at most 10 wait, so the first page holds them all.
+    pub fn parse_queue(json: &str) -> serde_json::Result<Vec<Self>> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<ScheduledWire>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(wire
+            .data
+            .into_iter()
+            .filter_map(ScheduledWire::waiting)
+            .collect())
+    }
+
+    /// Whether a scheduled commit sent early waits for review, from the queue entry the server answers with.
+    pub fn parse_pending(json: &str) -> serde_json::Result<bool> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: ScheduledWire,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(wire.data.status == "pending")
+    }
+}

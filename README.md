@@ -29,6 +29,7 @@ developers where a post is called a commit.
   commit in place with `t`.
 - **Write** commits, replies and quotes. Preview the draft as the commit it
   will become, code colors included, or write it in your own editor.
+  Schedule one with <kbd>ctrl-t</kbd> or `ttyl commit --at 'fri 14:00'`.
 - **Attach** a poll or up to three images to a commit. Vote in a
   keystroke, and view images inside the terminal.
 - **Star** a commit, or give its author a pastel.

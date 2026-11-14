@@ -14,7 +14,8 @@ use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Circle, CommitId, Filter, HeadlineId, Log, NotificationId, Reason, Translation, Untranslated,
+    Circle, CommitId, Filter, HeadlineId, Log, NotificationId, Reason, ScheduledId, Translation,
+    Untranslated,
 };
 
 struct Seen {
@@ -1119,4 +1120,110 @@ fn a_headline_reads_its_commits_name_and_recap_from_its_route() {
         request_line(&seen),
         "GET /api/v1/headlines/0199a000-0000-7000-8000-000000000001 HTTP/1.1"
     );
+}
+
+/// A scheduled commit as the API sends it, with the `status` it has reached.
+fn scheduled(id: &str, body: Option<&str>, status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "author": null,
+        "body": body,
+        "body_segments": [],
+        "preview_segments": null,
+        "poll_options": null,
+        "image_count": 0,
+        "scheduled_at": "2026-10-23T12:00:00+00:00",
+        "submitted_at": null,
+        "status": status,
+    })
+}
+
+#[test]
+fn scheduling_posts_the_body_and_its_time_with_the_offset_it_was_read_in() {
+    let call = Call::Schedule {
+        body: "shipped it".to_owned(),
+        attachment: Attachment::None,
+        at: chrono::DateTime::parse_from_rfc3339("2026-10-23T14:00:00+02:00").unwrap(),
+    };
+    let answer = serde_json::json!({ "data": scheduled("s1", Some("shipped it"), "scheduled") });
+    let (reply, seen) = exchange(&call, &answer);
+    assert_eq!(
+        request_line(&seen),
+        "POST /api/v1/scheduled-commits HTTP/1.1"
+    );
+    assert_eq!(
+        sent(&seen),
+        serde_json::json!({ "body": "shipped it", "scheduled_at": "2026-10-23T14:00:00+02:00" })
+    );
+    let Reply::Scheduled(scheduled) = reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(scheduled.id, ScheduledId("s1".to_owned()));
+    assert_eq!(scheduled.at.to_rfc3339(), "2026-10-23T12:00:00+00:00");
+}
+
+#[test]
+fn the_queue_keeps_only_what_still_waits() {
+    let page = serde_json::json!({
+        "data": [
+            scheduled("s1", Some("standup notes"), "scheduled"),
+            scheduled("s2", None, "approved"),
+            scheduled("s3", None, "deleted"),
+        ],
+        "links": {},
+        "meta": {},
+    });
+    let (reply, seen) = exchange(&Call::Queue, &page);
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/scheduled-commits HTTP/1.1"
+    );
+    let Reply::Queue(items) = reply else {
+        panic!("{reply:?}");
+    };
+    let ids: Vec<&str> = items.iter().map(|item| item.id.0.as_str()).collect();
+    assert_eq!(ids, ["s1"]);
+    assert_eq!(items[0].body, "standup notes");
+}
+
+#[test]
+fn canceling_deletes_and_sending_now_posts_a_submission() {
+    let id = ScheduledId("9b000000-0000-4000-8000-000000000001".to_owned());
+    let (base, server) = serve("204 No Content", "");
+    let reply = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&Call::Unschedule(id.clone()))
+        .unwrap();
+    assert!(matches!(reply, Reply::Done), "{reply:?}");
+    assert_eq!(
+        request_line(&server.join().unwrap()),
+        "DELETE /api/v1/scheduled-commits/9b000000-0000-4000-8000-000000000001 HTTP/1.1"
+    );
+
+    for (status, pending) in [("approved", false), ("pending", true)] {
+        let answer = serde_json::json!({ "data": scheduled(&id.0, None, status) });
+        let (reply, seen) = exchange(&Call::SendNow(id.clone()), &answer);
+        assert!(
+            matches!(reply, Reply::Submitted { pending: was } if was == pending),
+            "{status}: {reply:?}"
+        );
+        assert_eq!(
+            request_line(&seen),
+            "POST /api/v1/scheduled-commits/9b000000-0000-4000-8000-000000000001/submission HTTP/1.1"
+        );
+    }
+}
+
+#[test]
+fn one_already_gone_is_a_refusal_with_the_server_reason() {
+    let gone = "This commit was already submitted or canceled. Refresh to see its status.";
+    let (base, server) = serve(
+        "409 Conflict",
+        &serde_json::json!({ "message": gone }).to_string(),
+    );
+    let error = Client::new(base, DeviceKey::generate().unwrap())
+        .call(&Call::SendNow(ScheduledId("s1".to_owned())))
+        .unwrap_err();
+    server.join().unwrap();
+    assert_eq!(error.to_string(), gone);
+    assert!(!error.may_have_landed());
 }

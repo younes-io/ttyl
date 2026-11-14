@@ -3,13 +3,14 @@ use std::fmt::{self, Write as _};
 use std::time::Duration;
 use std::{fs, io};
 
-use chrono::Utc;
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use ssh_key::sha2::{Digest, Sha256};
 use ureq::Agent;
 use ureq::http::Request;
 
+use crate::at;
 use crate::attach::{self, Attachment, Image};
 use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
@@ -17,7 +18,7 @@ use crate::draft::Target;
 use crate::model::{
     Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Headline, HeadlineId, HeadlinePage,
     Log, LogPage, NotificationId, NotificationPage, PeoplePage, Profile, Reason, RepliesPage,
-    RowPage, Segment, Settings, Translation,
+    RowPage, Scheduled, ScheduledId, Segment, Settings, Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -135,6 +136,18 @@ pub enum Call {
         body: String,
         attachment: Attachment,
     },
+    /// Queues a new commit to go out at `at`. Only the user sees it until then.
+    Schedule {
+        body: String,
+        attachment: Attachment,
+        at: DateTime<FixedOffset>,
+    },
+    /// The user's scheduled commits still waiting, soonest first.
+    Queue,
+    /// Cancels a scheduled commit before it goes out.
+    Unschedule(ScheduledId),
+    /// Commits a scheduled one now, ahead of its time.
+    SendNow(ScheduledId),
     /// A draft rendered as the commit it would become. Nothing is kept.
     Preview(String),
     Notifications {
@@ -155,7 +168,10 @@ pub enum Reply {
     Thread(Box<CommitPage>),
     Replies(RepliesPage),
     Commit(Box<Focus>),
-    Pastel { commit: Box<Focus>, remaining: u32 },
+    Pastel {
+        commit: Box<Focus>,
+        remaining: u32,
+    },
     User(Box<Profile>),
     Rows(RowPage),
     People(PeoplePage),
@@ -166,6 +182,12 @@ pub enum Reply {
     Preview(Vec<Segment>),
     Settings(Settings),
     Translation(Box<Translation>),
+    Scheduled(Box<Scheduled>),
+    Queue(Vec<Scheduled>),
+    /// A scheduled commit went out early, and whether it waits for review.
+    Submitted {
+        pending: bool,
+    },
     Done,
 }
 
@@ -426,6 +448,32 @@ impl Client {
             } => self
                 .post(target, body, attachment)
                 .map(|focus| Reply::Commit(Box::new(focus))),
+            Call::Schedule {
+                body,
+                attachment,
+                at,
+            } => self
+                .schedule(body, attachment, at)
+                .map(|scheduled| Reply::Scheduled(Box::new(scheduled))),
+            Call::Queue => {
+                let (status, text) =
+                    self.send("GET", "/api/v1/scheduled-commits", String::new())?;
+                (Scheduled::parse_queue(&text))
+                    .map(Reply::Queue)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Unschedule(id) => {
+                let path = format!("/api/v1/scheduled-commits/{}", escape(&id.0));
+                self.send("DELETE", &path, String::new())
+                    .map(|_| Reply::Done)
+            }
+            Call::SendNow(id) => {
+                let path = format!("/api/v1/scheduled-commits/{}/submission", escape(&id.0));
+                let (status, text) = self.send("POST", &path, String::new())?;
+                (Scheduled::parse_pending(&text))
+                    .map(|pending| Reply::Submitted { pending })
+                    .map_err(|error| unreadable(status, error))
+            }
             Call::Preview(body) => self.preview(body).map(Reply::Preview),
             Call::Notifications { filter, cursor } => self
                 .notifications(*filter, cursor.as_deref())
@@ -447,13 +495,35 @@ impl Client {
             Target::Reply(id) => (Some(&id.0), None),
             Target::Quote(id) => (None, Some(&id.0)),
         };
-        let mut json =
+        let json =
             serde_json::json!({ "body": body, "parent_id": parent, "quoted_commit_id": quoted });
-        let (status, text) = match attachment {
-            Attachment::None => self.send("POST", "/api/v1/commits", json.to_string())?,
+        let (status, text) = self.attached("/api/v1/commits", json, attachment)?;
+        parse::<Wire>(status, &text).map(|wire| wire.data)
+    }
+
+    fn schedule(
+        &self,
+        body: &str,
+        attachment: &Attachment,
+        when: &DateTime<FixedOffset>,
+    ) -> Result<Scheduled, Error> {
+        let json = serde_json::json!({ "body": body, "scheduled_at": at::wire(when) });
+        let (status, text) = self.attached("/api/v1/scheduled-commits", json, attachment)?;
+        Scheduled::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    /// Posts a new commit's `json` with what it carries: a poll inside the JSON, or images as multipart.
+    fn attached(
+        &self,
+        path: &str,
+        mut json: serde_json::Value,
+        attachment: &Attachment,
+    ) -> Result<(u16, String), Error> {
+        match attachment {
+            Attachment::None => self.send("POST", path, json.to_string()),
             Attachment::Poll(poll) => {
                 json["poll"] = serde_json::json!({ "options": poll.options, "duration": poll.duration.minutes() });
-                self.send("POST", "/api/v1/commits", json.to_string())?
+                self.send("POST", path, json.to_string())
             }
             Attachment::Images(images) => {
                 let descriptions: Vec<&str> = images
@@ -461,10 +531,9 @@ impl Client {
                     .map(|image| image.description.as_str())
                     .collect();
                 json["image_descriptions"] = serde_json::json!(descriptions);
-                self.send_images("POST", "/api/v1/commits", json.to_string(), images)?
+                self.send_images("POST", path, json.to_string(), images)
             }
-        };
-        parse::<Wire>(status, &text).map(|wire| wire.data)
+        }
     }
 
     fn preview(&self, body: &str) -> Result<Vec<Segment>, Error> {

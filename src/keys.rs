@@ -47,6 +47,14 @@ pub enum Action {
     Link(Link),
     /// Brings back the commit deleted moments ago.
     Undo,
+    /// Asks when the commit being written goes out.
+    Schedule,
+    /// Lists the commits scheduled to go out later.
+    Later,
+    /// Cancels the selected scheduled commit.
+    Unschedule,
+    /// Commits the selected scheduled commit now.
+    SendNow,
 }
 
 /// A place of the person a profile is about, out in the browser.
@@ -131,12 +139,14 @@ impl Action {
             | Action::Editor
             | Action::Poll
             | Action::Attach
+            | Action::Schedule
             | Action::Commit(Act::Reply | Act::Quote) => Group::Write,
             Action::Show(_)
             | Action::NextLog
             | Action::Inbox
             | Action::Starred
             | Action::Headlines
+            | Action::Later
             | Action::Search
             | Action::Refresh
             | Action::Help
@@ -150,6 +160,8 @@ impl Action {
             | Action::SignIn
             | Action::StartOver
             | Action::Icons
+            | Action::Unschedule
+            | Action::SendNow
             | Action::Undo => Group::Act,
         }
     }
@@ -192,6 +204,8 @@ pub enum Scope {
     Rules,
     Pipe,
     Search,
+    At,
+    Queue,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -208,6 +222,7 @@ pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
 pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
 pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
+pub const AT_SCOPES: &[Scope] = &[Scope::At];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -271,6 +286,7 @@ pub const LIST_PEOPLE_SCOPES: &[Scope] = &[
     Scope::Global,
     Scope::Always,
 ];
+pub const QUEUE_SCOPES: &[Scope] = &[Scope::List, Scope::Queue, Scope::Global, Scope::Always];
 pub const UNIONS: &[&[Scope]] = &[
     SPLASH_SCOPES,
     GATE_SCOPES,
@@ -295,6 +311,8 @@ pub const UNIONS: &[&[Scope]] = &[
     PROFILE_PEOPLE_SCOPES,
     LIST_SCOPES,
     LIST_PEOPLE_SCOPES,
+    AT_SCOPES,
+    QUEUE_SCOPES,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -607,6 +625,27 @@ pub const TABLE: &[Binding] = &[
         help: "back",
     },
     Binding {
+        scope: Scope::Queue,
+        chords: &[&[Key::ch('S')]],
+        action: Action::SendNow,
+        hint: Some("S commit now"),
+        help: "commit it now",
+    },
+    Binding {
+        scope: Scope::Queue,
+        chords: &[&[Key::ch('D')]],
+        action: Action::Unschedule,
+        hint: Some("D cancel"),
+        help: "cancel it",
+    },
+    Binding {
+        scope: Scope::Queue,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back",
+    },
+    Binding {
         scope: Scope::Person,
         chords: &[&[Key::ch('f')]],
         action: Action::Commit(Act::Follow),
@@ -734,6 +773,27 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Search,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::At,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter schedule"),
+        help: "schedule it",
+    },
+    Binding {
+        scope: Scope::At,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc back"),
+        help: "back to the draft",
+    },
+    Binding {
+        scope: Scope::At,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,
@@ -1006,6 +1066,13 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Composer,
+        chords: &[&[Key::ctrl('t')]],
+        action: Action::Schedule,
+        hint: Some("ctrl-t later"),
+        help: "send it later, at a time you type",
+    },
+    Binding {
+        scope: Scope::Composer,
         chords: &[&[Key::ctrl('v')]],
         action: Action::Attach,
         hint: Some("ctrl-v image"),
@@ -1114,6 +1181,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Headlines,
         hint: None,
         help: "hot topics",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch('l')]],
+        action: Action::Later,
+        hint: None,
+        help: "scheduled commits",
     },
     Binding {
         scope: Scope::Global,

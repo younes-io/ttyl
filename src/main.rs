@@ -42,8 +42,11 @@ enum Command<'a> {
     Run,
     Redirect(&'a str),
     Status,
-    /// A commit from the shell, with its text from `-m` or else from stdin.
-    Commit(Option<&'a str>),
+    /// A commit from the shell, with its text from `-m` or else from stdin, sent now or `at` a time.
+    Commit {
+        text: Option<&'a str>,
+        at: Option<&'a str>,
+    },
     /// A log printed the way `git log` prints commits.
     Log(Log, Format),
     /// What dev-null.sh is talking about right now, for a motd or a status bar.
@@ -58,15 +61,26 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         [] => Command::Run,
         ["--redirect", url] => Command::Redirect(url),
         ["status"] => Command::Status,
-        ["commit"] => Command::Commit(None),
-        ["commit", "-m", text] => Command::Commit(Some(text)),
-        ["status" | "commit", arg, ..] => Command::Unknown(arg),
+        ["commit", rest @ ..] => commit_command(rest),
+        ["status", arg, ..] => Command::Unknown(arg),
         ["log", rest @ ..] => log_command(rest),
         ["headlines"] => Command::Headlines,
         ["headlines", arg, ..] => Command::Unknown(arg),
         ["--version" | "-V"] => Command::Version,
         ["--help" | "-h"] => Command::Help,
         ["--version" | "-V" | "--help" | "-h", arg, ..] | [arg, ..] => Command::Unknown(arg),
+    }
+}
+
+fn commit_command<'a>(mut args: &[&'a str]) -> Command<'a> {
+    let (mut text, mut at) = (None, None);
+    loop {
+        match args {
+            [] => return Command::Commit { text, at },
+            ["-m", value, rest @ ..] => (text, args) = (Some(*value), rest),
+            ["--at", value, rest @ ..] => (at, args) = (Some(*value), rest),
+            [arg, ..] => return Command::Unknown(arg),
+        }
     }
 }
 
@@ -91,7 +105,7 @@ fn main() -> ExitCode {
         Command::Run => report(start()),
         Command::Redirect(url) => report(signin::forward(url).map_err(|error| error.to_string())),
         Command::Status => report(status()),
-        Command::Commit(text) => report(commit(text)),
+        Command::Commit { text, at } => report(commit(text, at)),
         Command::Log(log, format) => report(print_log(log, format)),
         Command::Headlines => report(print_headlines()),
         Command::Version => {
@@ -100,7 +114,7 @@ fn main() -> ExitCode {
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n\nCommands:\n  status     print how many notifications are unread\n  commit     send a commit, with its text from -m or from stdin\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -173,8 +187,16 @@ fn refused(error: &api::Error) -> String {
 }
 
 fn status() -> Result<(), String> {
-    let me = client()?.me().map_err(|error| refused(&error))?;
+    let client = client()?;
+    let me = client.me().map_err(|error| refused(&error))?;
     println!("{}", me.unread);
+    // A script or status bar reads the bare count, so only a person at a terminal pays for this.
+    if io::stdout().is_terminal()
+        && let Ok(Reply::Queue(queue)) = client.call(&Call::Queue)
+        && !queue.is_empty()
+    {
+        println!("{} scheduled", queue.len());
+    }
     Ok(())
 }
 
@@ -228,7 +250,13 @@ fn through_pager(text: &str) -> io::Result<()> {
     written
 }
 
-fn commit(text: Option<&str>) -> Result<(), String> {
+fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
+    // Read before stdin, so a time that won't do fails before the text is typed.
+    let at = at
+        .map(|at| {
+            ttyl::at::resolve(at, &Local::now()).map_err(|refusal| format!("fatal: {refusal}"))
+        })
+        .transpose()?;
     let text = match text {
         Some(text) => text.to_owned(),
         None if io::stdin().is_terminal() => {
@@ -245,20 +273,33 @@ fn commit(text: Option<&str>) -> Result<(), String> {
     if let Some(refusal) = body::refusal(&text) {
         return Err(refusal);
     }
-    let post = Call::Post {
-        target: Target::New,
-        body: text,
-        attachment: Attachment::None,
+    let call = match at {
+        Some(at) => Call::Schedule {
+            body: text,
+            attachment: Attachment::None,
+            at: at.fixed_offset(),
+        },
+        None => Call::Post {
+            target: Target::New,
+            body: text,
+            attachment: Attachment::None,
+        },
     };
-    let reply = client()?.call(&post).map_err(|error| {
+    let reply = client()?.call(&call).map_err(|error| {
         if error.may_have_landed() {
             engine::NO_ANSWER.to_owned()
         } else {
             refused(&error)
         }
     })?;
-    let Reply::Commit(focus) = reply else {
-        unreachable!("a post answers with its commit")
+    let focus = match reply {
+        Reply::Scheduled(scheduled) => {
+            let at = scheduled.at.with_timezone(&Local);
+            println!("scheduled for {}", ttyl::at::shown(&at));
+            return Ok(());
+        }
+        Reply::Commit(focus) => focus,
+        _ => unreachable!("a post answers with its commit"),
     };
     let commit = &focus.card.commit;
     match commit.status {

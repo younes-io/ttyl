@@ -424,6 +424,10 @@ impl Store {
             | Call::Restore(_)
             | Call::Report { .. }
             | Call::Post { .. }
+            | Call::Schedule { .. }
+            | Call::Queue
+            | Call::Unschedule(_)
+            | Call::SendNow(_)
             | Call::Preview(_)
             | Call::Notifications { .. }
             | Call::Group { .. }
@@ -561,7 +565,10 @@ impl Store {
                 | Reply::Preview(_)
                 | Reply::Settings(_)
                 | Reply::Translation(_)
-                | Reply::Done,
+                | Reply::Done
+                | Reply::Scheduled(_)
+                | Reply::Queue(_)
+                | Reply::Submitted { .. },
             ) => {}
         }
     }

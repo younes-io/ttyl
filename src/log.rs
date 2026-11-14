@@ -198,7 +198,11 @@ impl LogScreen {
             | Action::Headlines
             | Action::Search
             | Action::NextFilter
-            | Action::PreviousFilter => false,
+            | Action::PreviousFilter
+            | Action::Schedule
+            | Action::Later
+            | Action::Unschedule
+            | Action::SendNow => false,
         }
     }
 

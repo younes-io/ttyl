@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, FixedOffset};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -28,6 +29,7 @@ const TITLE: usize = 1;
 const RESTORED: &str = "stash@{0}: restored your unsent draft";
 const FOLDS: &str = "the feed folds your commit here";
 const SENDING: &str = "committing…";
+const SCHEDULING: &str = "scheduling…";
 const COUNT_FROM: isize = 200;
 const ASK: &str = "possible secret detected. commit anyway? [y/N]";
 const ASK_SHORT: &str = "possible secret. commit anyway? [y/N]";
@@ -242,6 +244,8 @@ pub struct Composer {
     scroll: usize,
     preview: Option<Preview>,
     previewing: bool,
+    /// When the commit goes out, once `send at:` named a time. It goes out now otherwise.
+    when: Option<DateTime<FixedOffset>>,
 }
 
 impl Composer {
@@ -279,11 +283,20 @@ impl Composer {
             scroll: 0,
             preview: None,
             previewing: false,
+            when: None,
         }
     }
 
     pub fn target(&self) -> &Target {
         &self.target
+    }
+
+    pub fn send_at(&mut self, when: Option<DateTime<FixedOffset>>) {
+        self.when = when;
+    }
+
+    pub fn when(&self) -> Option<DateTime<FixedOffset>> {
+        self.when
     }
 
     pub fn text(&self) -> &str {
@@ -758,7 +771,11 @@ impl Composer {
 
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, sending: bool) {
         self.width = layout_width(area.width);
-        let title = if sending { SENDING } else { &self.title };
+        let title = match (sending, self.when) {
+            (true, None) => SENDING,
+            (true, Some(_)) => SCHEDULING,
+            (false, _) => &self.title,
+        };
         let block = Block::new()
             .borders(Borders::TOP)
             .border_style(theme::muted())
