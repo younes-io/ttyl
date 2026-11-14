@@ -95,6 +95,8 @@ pub enum Call {
         cursor: Option<String>,
     },
     Delete(CommitId),
+    /// Undoes deleting the user's commit, within the server's 30-second window.
+    Restore(CommitId),
     Pastel(CommitId),
     Vote {
         id: CommitId,
@@ -318,6 +320,11 @@ impl Client {
                 self.send("DELETE", &path, String::new())
                     .map(|_| Reply::Done)
             }
+            Call::Restore(id) => {
+                let path = format!("/api/v1/commits/{}/restoration", escape(&id.0));
+                self.focus("POST", &path, String::new())
+                    .map(|focus| Reply::Commit(Box::new(focus)))
+            }
             Call::Pastel(id) => self.pastel(id),
             Call::Vote { id, option } => self
                 .vote(id, option)
@@ -397,25 +404,24 @@ impl Client {
     }
 
     fn star(&self, id: &CommitId, on: bool) -> Result<Focus, Error> {
-        #[derive(Deserialize)]
-        struct Wire {
-            data: Focus,
-        }
-
         let path = format!("/api/v1/commits/{}/star", escape(&id.0));
-        let (status, text) = self.send(if on { "POST" } else { "DELETE" }, &path, String::new())?;
-        parse::<Wire>(status, &text).map(|wire| wire.data)
+        self.focus(if on { "POST" } else { "DELETE" }, &path, String::new())
     }
 
     fn vote(&self, id: &CommitId, option: &str) -> Result<Focus, Error> {
+        let path = format!("/api/v1/commits/{}/poll/votes", escape(&id.0));
+        let body = serde_json::json!({ "option": option }).to_string();
+        self.focus("POST", &path, body)
+    }
+
+    /// A request answered with the commit as its page shows it.
+    fn focus(&self, method: &str, path: &str, body: String) -> Result<Focus, Error> {
         #[derive(Deserialize)]
         struct Wire {
             data: Focus,
         }
 
-        let path = format!("/api/v1/commits/{}/poll/votes", escape(&id.0));
-        let body = serde_json::json!({ "option": option }).to_string();
-        let (status, text) = self.send("POST", &path, body)?;
+        let (status, text) = self.send(method, path, body)?;
         parse::<Wire>(status, &text).map(|wire| wire.data)
     }
 

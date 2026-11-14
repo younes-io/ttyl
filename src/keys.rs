@@ -41,6 +41,8 @@ pub enum Action {
     Site,
     Saver,
     Link(Link),
+    /// Brings back the commit deleted moments ago.
+    Undo,
 }
 
 /// A place of the person a profile is about, out in the browser.
@@ -133,7 +135,8 @@ impl Action {
             | Action::Site
             | Action::SignIn
             | Action::StartOver
-            | Action::Icons => Group::Act,
+            | Action::Icons
+            | Action::Undo => Group::Act,
         }
     }
 }
@@ -626,6 +629,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Compose,
         hint: Some("c commit"),
         help: "write a commit",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('u')]],
+        action: Action::Undo,
+        hint: Some("u undo"),
+        help: "undo the delete, for 30 seconds",
     },
     Binding {
         scope: Scope::Commit,

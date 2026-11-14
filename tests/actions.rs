@@ -548,11 +548,11 @@ fn delete_is_offered_only_on_your_own_commit() {
     press(&mut engine, "D", at);
     assert_eq!(
         footer(&mut engine, at),
-        " delete e4f5a61? this can't be undone [y/N]"
+        " delete e4f5a61? u undoes it for 30s [y/N]"
     );
 }
 
-const PROMPT: &str = " delete e4f5a61? this can't be undone [y/N]";
+const PROMPT: &str = " delete e4f5a61? u undoes it for 30s [y/N]";
 
 #[test]
 fn any_key_but_y_on_the_delete_prompt_sends_nothing_and_closes_it() {
@@ -596,13 +596,79 @@ fn y_deletes_shows_deleting_then_the_bad_object_row() {
 
     let (ticket, _) = one_run(&effects);
     assert!(reply(&mut engine, ticket, Ok(Reply::Done), at).is_empty());
-    assert_eq!(footer(&mut engine, at), " deleted e4f5a61");
+    assert_eq!(footer(&mut engine, at), " deleted e4f5a61 · u to undo");
     for width in [100, 44] {
         let rows = screen(&mut engine, width, 30, at);
         assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
         assert!(!contains(&rows, "deleting…"), "{rows:#?}");
     }
     assert!(press(&mut engine, "Dsy", at).is_empty());
+}
+
+fn deleted(at: Instant) -> Engine {
+    let mut engine = boot(at);
+    let (ticket, _) = one_run(&press(&mut engine, "Dy", at));
+    reply(&mut engine, ticket, Ok(Reply::Done), at);
+    engine
+}
+
+fn restored() -> Reply {
+    let page = commit(&ada()).unwrap();
+    Reply::Commit(Box::new(Focus {
+        card: page.commit,
+        replies_count: page.replies_count,
+    }))
+}
+
+#[test]
+fn u_brings_a_deleted_commit_back_in_place() {
+    let at = Instant::now();
+    let mut engine = deleted(at);
+    let later = at + secs(29);
+    let effects = press(&mut engine, "u", later);
+    assert_eq!(runs(&effects), [&Call::Restore(ada())]);
+    let (ticket, _) = one_run(&effects);
+    assert!(reply(&mut engine, ticket, Ok(restored()), later).is_empty());
+    assert_eq!(footer(&mut engine, later), " restored e4f5a61");
+    let rows = screen(&mut engine, 100, 30, later);
+    assert!(!contains(&rows, "bad object"), "{rows:#?}");
+    assert!(contains(&rows, "switched the feed"), "{rows:#?}");
+    assert!(
+        press(&mut engine, "u", later).is_empty(),
+        "one delete undoes once"
+    );
+}
+
+#[test]
+fn u_does_nothing_once_the_undo_window_closes() {
+    let at = Instant::now();
+    let mut engine = deleted(at);
+    let late = at + secs(30);
+    engine.pump(late);
+    assert!(press(&mut engine, "u", late).is_empty());
+    let rows = screen(&mut engine, 100, 30, late);
+    assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
+    assert!(!footer(&mut engine, late).contains("u undo"));
+}
+
+#[test]
+fn a_refused_undo_says_why_and_leaves_the_commit_gone() {
+    let at = Instant::now();
+    let mut engine = deleted(at);
+    let (ticket, _) = one_run(&press(&mut engine, "u", at));
+    let expired = Err(Error::Api {
+        status: 422,
+        code: None,
+        message: "The 30-second undo window has expired.".to_owned(),
+        retry_after: None,
+    });
+    reply(&mut engine, ticket, expired, at);
+    assert_eq!(
+        footer(&mut engine, at),
+        " The 30-second undo window has expired."
+    );
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, "fatal: bad object e4f5a61"), "{rows:#?}");
 }
 
 #[test]
@@ -650,9 +716,9 @@ fn the_delete_prompt_leaves_the_spinner_room_on_a_narrow_terminal() {
     let at = Instant::now();
     let mut engine = boot(at);
     press(&mut engine, "D", at);
-    let rows = screen(&mut engine, 44, 30, at);
+    let rows = screen(&mut engine, 40, 30, at);
     assert_eq!(rows[29].trim_end(), " delete e4f5a61? [y/N]", "{rows:#?}");
-    let buffer = buffer(&mut engine, 44, 30, at);
+    let buffer = buffer(&mut engine, 40, 30, at);
     assert_eq!(buffer[(1, 29)].fg, theme::DESTRUCTIVE);
 }
 

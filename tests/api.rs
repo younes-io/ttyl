@@ -757,6 +757,13 @@ fn acting_on_a_commit_sends_what_the_server_needs() {
     assert_eq!(request_line(&seen), format!("DELETE {route} HTTP/1.1"));
     assert_eq!(seen.body, "");
 
+    let (reply, seen) = exchange(&Call::Restore(id.clone()), &focus());
+    assert!(matches!(reply, Reply::Commit(focus) if focus.card.commit.id == id));
+    assert_eq!(
+        request_line(&seen),
+        format!("POST {route}/restoration HTTP/1.1")
+    );
+
     let mut pastel = focus();
     pastel["pasteis_remaining"] = serde_json::json!(2);
     let (reply, seen) = exchange(&Call::Pastel(id.clone()), &pastel);

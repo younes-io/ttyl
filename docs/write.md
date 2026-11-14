@@ -85,3 +85,6 @@ commit still has to come from the web, so you can read the commit rules.
 
 Select one of your own commits and press <kbd>D</kbd>. ttyl asks you to
 confirm first.
+
+Changed your mind? Press <kbd>u</kbd> within 30 seconds to bring the commit
+back where it was, replies and stars included.

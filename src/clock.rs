@@ -15,6 +15,8 @@ pub const SPARK_FRAME: Duration = Duration::from_millis(33);
 pub const FADE: Duration = Duration::from_millis(120);
 /// How long after a reload coming back to the terminal reloads again, so flicking between windows doesn't.
 pub const FOCUS_RELOAD: Duration = Duration::from_secs(10);
+/// How long dev-null.sh lets a deleted commit come back.
+pub const UNDO: Duration = Duration::from_secs(30);
 
 /// A short animation on the selected card after the user stars it or gives it a pastel, or the first
 /// time it lands on a poll whose results show.
@@ -50,6 +52,8 @@ pub enum Timer {
     Inbox(Filter),
     OlderInbox(Filter),
     Spark(Spark, CommitId),
+    /// When the last delete can no longer be undone.
+    Undo,
 }
 
 #[derive(Default)]

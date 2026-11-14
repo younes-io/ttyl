@@ -18,7 +18,7 @@ use crate::attach::{self, Look};
 use crate::cache::Start;
 use crate::clock::{
     FADE, FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
-    Timers,
+    Timers, UNDO,
 };
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
@@ -126,6 +126,8 @@ pub struct Session {
     filled: HashSet<CommitId>,
     /// The shell command the last pipe ran, which the next one starts from.
     piped: String,
+    /// The commit deleted moments ago, which `u` can still bring back.
+    undoable: Option<CommitId>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -286,6 +288,7 @@ impl Session {
             return self.profile_target().is_some();
         }
         matches!(action, Action::Quit | Action::Help | Action::Saver)
+            || (action == Action::Undo && self.undoable.is_some())
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
             || (action == Action::Starred && !matches!(self.stack.last(), Some(Screen::Starred(_))))
             || match self.stack.last() {
@@ -624,7 +627,7 @@ impl Session {
         match &self.overlay {
             Some(Overlay::Delete(id)) => {
                 let short = id.short_hash();
-                let warned = format!("delete {short}? this can't be undone [y/N]");
+                let warned = format!("delete {short}? u undoes it for 30s [y/N]");
                 let prompt = if warned.len() <= room {
                     warned
                 } else {
@@ -1002,6 +1005,11 @@ impl Engine {
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Glow | Timer::Spark(..) | Timer::Lift => {}
+                Timer::Undo => {
+                    if let Phase::Ready(session) = &mut self.phase {
+                        session.undoable = None;
+                    }
+                }
                 Timer::Reload(log) => self.sched.send(Call::Page(log), Priority::Later),
                 Timer::Inbox(filter) => {
                     if let Phase::Ready(session) = &mut self.phase
@@ -1344,6 +1352,12 @@ impl Engine {
                         None if secret::detected(composer.text()) => composer.ask(Prompt::Secret),
                         None => post(&mut self.sched, composer),
                     }
+                }
+            }
+            (Phase::Ready(session), Action::Undo) => {
+                if let Some(id) = session.undoable.take() {
+                    self.timers.clear(&Timer::Undo);
+                    self.sched.send(Call::Restore(id), Priority::Now);
                 }
             }
             (Phase::Ready(session), Action::Editor) => {
@@ -1816,7 +1830,14 @@ impl Engine {
                     "gave a pastel to @{} · {remaining} left today",
                     commit.card.commit.author.handle
                 )),
-                (Call::Delete(id), Reply::Done) => Some(format!("deleted {}", id.short_hash())),
+                (Call::Delete(id), Reply::Done) => {
+                    session.undoable = Some(id.clone());
+                    self.timers.set(Timer::Undo, now + UNDO);
+                    Some(format!("deleted {} · u to undo", id.short_hash()))
+                }
+                (Call::Restore(id), Reply::Commit(_)) => {
+                    Some(format!("restored {}", id.short_hash()))
+                }
                 (Call::Report { id, .. }, Reply::Done) => {
                     Some(format!("reported {}. thanks.", id.short_hash()))
                 }
@@ -1886,6 +1907,7 @@ impl Engine {
             asked_to_refresh: HashSet::new(),
             filled: HashSet::new(),
             piped: String::new(),
+            undoable: None,
         }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
@@ -2024,6 +2046,7 @@ impl Engine {
                     | Call::Follow { .. }
                     | Call::User(_)
                     | Call::Delete(_)
+                    | Call::Restore(_)
                     | Call::Pastel(_)
                     | Call::Vote { .. }
                     | Call::Report { .. } => {
