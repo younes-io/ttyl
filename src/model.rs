@@ -370,7 +370,17 @@ pub fn markdown(segments: &[Segment]) -> String {
                 if !out.is_empty() {
                     out.push('\n');
                 }
-                out.push_str("```");
+                let longest = (lines.iter())
+                    .map(|line| {
+                        let text: String = line.iter().map(|span| span.text.as_str()).collect();
+                        let text = text.trim_start_matches(' ');
+                        text.len() - text.trim_start_matches('`').len()
+                    })
+                    .max()
+                    .unwrap_or(0);
+                // A fence closes on a line of as many backticks, so it outruns any the code starts a line with.
+                let fence = "`".repeat((longest + 1).max(3));
+                out.push_str(&fence);
                 out.push_str(language.as_deref().unwrap_or(""));
                 for line in lines {
                     out.push('\n');
@@ -378,31 +388,52 @@ pub fn markdown(segments: &[Segment]) -> String {
                         out.push_str(&span.text);
                     }
                 }
-                out.push_str("\n```\n");
+                out.push('\n');
+                out.push_str(&fence);
+                out.push('\n');
             }
         }
     }
-    if out.ends_with("```\n") {
+    if matches!(segments.last(), Some(Segment::Block { .. })) {
         out.pop();
     }
     out
 }
 
 /// What the user set on dev-null.sh that ttyl reads.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Settings {
     /// The language commits translate into, or `None` to follow the device.
     pub translation_language: Option<String>,
+    /// The codes of the languages dev-null.sh translates into.
+    pub languages: Vec<String>,
 }
 
 impl Settings {
     pub fn parse(json: &str) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Wire {
-            data: Settings,
+            data: Data,
         }
 
-        serde_json::from_str::<Wire>(json).map(|wire| wire.data)
+        #[derive(Deserialize)]
+        struct Data {
+            translation_language: Option<String>,
+            translation_languages: Vec<Language>,
+        }
+
+        #[derive(Deserialize)]
+        struct Language {
+            code: String,
+        }
+
+        let data = serde_json::from_str::<Wire>(json)?.data;
+        Ok(Settings {
+            translation_language: data.translation_language,
+            languages: (data.translation_languages.into_iter())
+                .map(|language| language.code)
+                .collect(),
+        })
     }
 }
 

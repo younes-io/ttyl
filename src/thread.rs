@@ -219,9 +219,10 @@ impl ThreadScreen {
                 pieces
                     .iter()
                     .any(|piece| matches!(piece, Piece::Reply { id, .. } if *id == self.selected))
-                    && store
-                        .row(&self.selected)
-                        .is_some_and(|row| row.commit.preview_segments.is_some())
+                    && matches!(
+                        store.node(&self.selected),
+                        Some(Node::Live(row)) if row.commit.preview_segments.is_some()
+                    )
             }
             Action::Quit
             | Action::Help
