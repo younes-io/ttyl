@@ -719,11 +719,12 @@ impl Event {
         }
     }
 
-    /// Whom the person keys act on in a row about this event: whoever followed, when they
-    /// followed alone, or the commit's author.
+    /// The one person a row about this event is about, whom it folds under once blocked:
+    /// whoever followed, or the commit's author. A group of several people has none.
     pub fn subject(&self, alone: bool) -> Option<&str> {
         match (&self.kind, &self.commit) {
-            (Kind::Followed, _) => alone.then_some(self.actor.handle.as_str()),
+            _ if !alone => None,
+            (Kind::Followed, _) => Some(&self.actor.handle),
             (_, Some(Shown::Live(commit))) => Some(&commit.author.handle),
             _ => None,
         }
