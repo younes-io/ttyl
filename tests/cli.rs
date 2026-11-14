@@ -226,6 +226,68 @@ fn a_first_commit_points_to_the_rules_on_the_web() {
     );
 }
 
+const SCHEDULED: &str = r#"{"data":{"id":"s1","author":null,"body":"standup notes","body_segments":[],"preview_segments":null,"poll_options":null,"image_count":0,"scheduled_at":"2026-10-23T12:00:00+00:00","submitted_at":null,"status":"scheduled"}}"#;
+
+#[test]
+fn commit_at_schedules_it_and_prints_when_it_goes_out() {
+    for (name, args, stdin) in [
+        (
+            "cli-at",
+            &["commit", "--at", "in 2h", "-m", "standup notes"][..],
+            None,
+        ),
+        (
+            "cli-at-stdin",
+            &["commit", "--at", "in 2h"],
+            Some("standup notes"),
+        ),
+    ] {
+        let (base, server) = serve("201 Created", SCHEDULED);
+        let before = chrono::Utc::now();
+        let output = against(name, &base, args, stdin);
+        let sent: serde_json::Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+        assert_eq!(sent["body"], "standup notes", "{name}");
+        let at = sent["scheduled_at"].as_str().unwrap();
+        assert!(at.ends_with("+00:00"), "{name}: {at}");
+        let ahead = chrono::DateTime::parse_from_rfc3339(at).unwrap().to_utc() - before;
+        assert!(
+            (chrono::TimeDelta::minutes(119)..=chrono::TimeDelta::minutes(121)).contains(&ahead),
+            "{name}: {at} is two hours on"
+        );
+        assert_eq!(output.status.code(), Some(0), "{name}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "scheduled for Fri 23 Oct 12:00\n",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_time_that_wont_do_is_fatal_before_anything_is_read_or_sent() {
+    for (when, why) in [
+        (
+            "soon",
+            "can't read 'soon' as a time. try 14:30, tomorrow 9:00, fri 14:00, in 2h, or 2026-10-24T09:00:00+02:00",
+        ),
+        ("2020-01-01T00:00:00Z", "that time has passed"),
+        ("in 40d", "dev-null.sh schedules up to 30 days ahead"),
+    ] {
+        let output = against(
+            "cli-at-refused",
+            "http://127.0.0.1:9",
+            &["commit", "--at", when],
+            Some("standup notes"),
+        );
+        assert_eq!(output.status.code(), Some(1), "{when}");
+        assert!(output.stdout.is_empty(), "{when}");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("ttyl: fatal: {why}\n")
+        );
+    }
+}
+
 fn latest() -> String {
     std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

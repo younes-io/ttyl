@@ -16,7 +16,9 @@ arrive, the count lights up and a note at the bottom says how many came in.
 - Press <kbd>esc</kbd> to go back.
 
 Run `ttyl status` to print the unread count and exit. It prints only the
-number, so a status line can show it. For example, add this to `~/.tmux.conf`:
+number, so a status line can show it. In a terminal, it also prints how many
+commits you have scheduled, when there are any. For example, add this to
+`~/.tmux.conf`:
 
 ```
 set -g status-right '#(ttyl status)'

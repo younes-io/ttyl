@@ -79,17 +79,17 @@ fn c_r_and_q_open_the_panel_on_their_target_with_its_title() {
                 "{key} at {width} keeps the target above the panel: {rows:#?}"
             );
             let roomy = width > 52;
-            let poll = if target == Target::New && roomy {
-                "  ctrl-p poll"
+            let (later, poll) = if target == Target::New && roomy {
+                ("  ctrl-t later", "  ctrl-p poll")
             } else {
-                ""
+                ("", "")
             };
             let image = if roomy { "  ctrl-v image" } else { "" };
             let preview = if roomy { "  ctrl-r preview" } else { "" };
             assert_eq!(
                 rows[usize::from(HEIGHT) - 1],
-                format!(" ctrl-s commit  ctrl-e editor{poll}{image}{preview}  esc close"),
-                "only a new commit can carry a poll, and a narrow row drops its hint: {rows:#?}"
+                format!(" ctrl-s commit  ctrl-e editor{poll}{later}{image}{preview}  esc close"),
+                "only a new commit can carry a poll or go out later, and a narrow row drops its hint: {rows:#?}"
             );
         }
         assert_eq!(

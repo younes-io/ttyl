@@ -4,7 +4,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, FixedOffset, TimeDelta, TimeZone, Utc};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::api::{self, Account, Call, Error, Failure, Reply};
+use crate::at;
 use crate::attach::{self, Look};
 use crate::cache::Start;
 use crate::clock::{
@@ -25,20 +26,21 @@ use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
-    self, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES,
-    HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES,
-    PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
-    REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope,
-    THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES,
+    GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES,
+    LOG_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
+    QUEUE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES,
+    SPLASH_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, Shown, Status,
-    Translation, Untranslated, User,
+    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, ScheduledId, Shown,
+    Status, Translation, Untranslated, User,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
+use crate::queue::{self, QueueScreen};
 use crate::saver;
 use crate::sched::{CallKey, Priority, Scheduler, Ticket};
 use crate::secret;
@@ -148,6 +150,7 @@ enum Screen {
     Group(Box<GroupList>),
     Profile(Box<ProfileScreen>),
     List(Box<ListScreen>),
+    Queue(Box<QueueScreen>),
 }
 
 enum Overlay {
@@ -186,6 +189,15 @@ enum Overlay {
     Search {
         query: String,
     },
+    /// Typing when the commit being written goes out, which shows as a time while it's typed.
+    At {
+        text: String,
+    },
+    /// Asking whether to cancel a scheduled commit, named by its first line.
+    Unschedule {
+        id: ScheduledId,
+        first: String,
+    },
 }
 
 const SERVER_DETAILS_MAX: usize = 500;
@@ -197,7 +209,7 @@ impl Session {
             Some(Screen::Thread(thread)) => thread.card(),
             Some(Screen::Profile(profile)) => profile.card(),
             Some(Screen::List(list)) => list.card(),
-            Some(Screen::Inbox | Screen::Group(_)) => None,
+            Some(Screen::Inbox | Screen::Group(_) | Screen::Queue(_)) => None,
             None => self.log.card(),
         }
     }
@@ -205,7 +217,13 @@ impl Session {
     fn thread(&self) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::List(_))
+            Some(
+                Screen::Inbox
+                | Screen::Group(_)
+                | Screen::Profile(_)
+                | Screen::List(_)
+                | Screen::Queue(_),
+            )
             | None => None,
         }
     }
@@ -214,7 +232,13 @@ impl Session {
     fn shown_thread(&self, now: Instant) -> Option<&ThreadScreen> {
         match self.stack.last() {
             Some(Screen::Thread(thread)) => Some(thread),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Profile(_) | Screen::List(_)) => None,
+            Some(
+                Screen::Inbox
+                | Screen::Group(_)
+                | Screen::Profile(_)
+                | Screen::List(_)
+                | Screen::Queue(_),
+            ) => None,
             None => self.log.peek(&self.store, now),
         }
     }
@@ -286,6 +310,25 @@ impl Session {
         self.list().is_some_and(|list| list.source() == source)
     }
 
+    fn on_queue(&self) -> bool {
+        matches!(self.stack.last(), Some(Screen::Queue(_)))
+    }
+
+    fn queue(&self) -> Option<&QueueScreen> {
+        match self.stack.last() {
+            Some(Screen::Queue(queue)) => Some(queue),
+            _ => None,
+        }
+    }
+
+    /// Every open queue, wherever it sits in the stack.
+    fn queues_mut(&mut self) -> impl Iterator<Item = &mut QueueScreen> {
+        self.stack.iter_mut().filter_map(|screen| match screen {
+            Screen::Queue(queue) => Some(queue.as_mut()),
+            _ => None,
+        })
+    }
+
     fn screen_scopes(&self) -> &'static [Scope] {
         match self.stack.last() {
             None => LOG_SCOPES,
@@ -297,6 +340,7 @@ impl Session {
             Some(Screen::Profile(_)) => PROFILE_SCOPES,
             Some(Screen::List(list)) if list.people() => LIST_PEOPLE_SCOPES,
             Some(Screen::List(_)) => LIST_SCOPES,
+            Some(Screen::Queue(_)) => QUEUE_SCOPES,
         }
     }
 
@@ -314,12 +358,14 @@ impl Session {
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
             || (action == Action::Starred && !self.on_list(&Source::Starred))
             || (action == Action::Headlines && !self.on_list(&Source::Headlines))
+            || (action == Action::Later && !self.on_queue())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
                 Some(Screen::Group(group)) => group.can(action),
                 Some(Screen::Profile(profile)) => profile.can(action),
                 Some(Screen::List(list)) => list.can(action),
+                Some(Screen::Queue(queue)) => queue.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -342,6 +388,7 @@ impl Session {
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
                 Item::Headline(_) => return None,
             },
+            Some(Screen::Queue(_)) => return None,
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
         match self.store.node(id)? {
@@ -410,6 +457,7 @@ impl Session {
             }
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
             (Some(Screen::List(list)), action) => list.act(action),
+            (Some(Screen::Queue(queue)), action) => queue.act(action),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
             (Some(Screen::Profile(profile)), action) => {
@@ -428,6 +476,11 @@ impl Session {
         if action == Action::Poll {
             return self.overlay.is_none()
                 && self.composer.as_ref().is_some_and(Composer::can_poll);
+        }
+        if action == Action::Schedule {
+            return self.overlay.is_none()
+                && (self.composer.as_ref())
+                    .is_some_and(|composer| *composer.target() == Target::New);
         }
         if let Some(Overlay::Help { last, .. }) = self.overlay {
             return match action {
@@ -454,6 +507,8 @@ impl Session {
             Some(Overlay::Details { .. }) => DETAILS_SCOPES,
             Some(Overlay::Pipe { .. }) => PIPE_SCOPES,
             Some(Overlay::Search { .. }) => SEARCH_SCOPES,
+            Some(Overlay::At { .. }) => AT_SCOPES,
+            Some(Overlay::Unschedule { .. }) => CONFIRM_SCOPES,
             None => match self.composer.as_ref().map(Composer::prompt) {
                 Some(Some(Prompt::Secret)) => SECRET_SCOPES,
                 Some(Some(Prompt::Rules)) => RULES_SCOPES,
@@ -472,7 +527,9 @@ impl Session {
                 Overlay::Delete(_)
                 | Overlay::Details { .. }
                 | Overlay::Pipe { .. }
-                | Overlay::Search { .. },
+                | Overlay::Search { .. }
+                | Overlay::At { .. }
+                | Overlay::Unschedule { .. },
             ) => InputMode::Text,
             None if self
                 .composer
@@ -497,9 +554,11 @@ impl Session {
     fn pasted(&mut self, pasted: &str) {
         let (text, max) = match &mut self.overlay {
             Some(Overlay::Details { text, .. }) => (text, SERVER_DETAILS_MAX),
-            Some(Overlay::Pipe { command: text, .. } | Overlay::Search { query: text }) => {
-                (text, usize::MAX)
-            }
+            Some(
+                Overlay::Pipe { command: text, .. }
+                | Overlay::Search { query: text }
+                | Overlay::At { text },
+            ) => (text, usize::MAX),
             _ => return,
         };
         let room = max.saturating_sub(text.chars().count());
@@ -511,7 +570,7 @@ impl Session {
 
     fn typed(&mut self, event: KeyEvent) {
         match &mut self.overlay {
-            Some(Overlay::Delete(_)) => self.overlay = None,
+            Some(Overlay::Delete(_) | Overlay::Unschedule { .. }) => self.overlay = None,
             Some(Overlay::Details { text, .. }) => match event.code {
                 KeyCode::Backspace => {
                     text.pop();
@@ -526,21 +585,23 @@ impl Session {
                 }
                 _ => {}
             },
-            Some(Overlay::Pipe { command: text, .. } | Overlay::Search { query: text }) => {
-                match event.code {
-                    KeyCode::Backspace => {
-                        text.pop();
-                    }
-                    KeyCode::Char(ch)
-                        if !event
-                            .modifiers
-                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                    {
-                        text.push(ch);
-                    }
-                    _ => {}
+            Some(
+                Overlay::Pipe { command: text, .. }
+                | Overlay::Search { query: text }
+                | Overlay::At { text },
+            ) => match event.code {
+                KeyCode::Backspace => {
+                    text.pop();
                 }
-            }
+                KeyCode::Char(ch)
+                    if !event
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    text.push(ch);
+                }
+                _ => {}
+            },
             Some(
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
@@ -574,6 +635,7 @@ impl Session {
                 self.store.start_delete(&id);
                 (None, Some(Call::Delete(id)))
             }
+            (Overlay::Unschedule { id, .. }, Action::Confirm) => (None, Some(Call::Unschedule(id))),
             (Overlay::Reason { id, at }, Action::Down) => (
                 Some(Overlay::Reason {
                     id,
@@ -655,8 +717,13 @@ impl Session {
         call
     }
 
-    /// The question or the typing that takes the bottom row, and how it looks.
-    fn prompt(&self, room: usize) -> Option<(String, Style)> {
+    /// The question or the typing that takes the bottom row. A time typed for `send at:` shows
+    /// where it lands on `wall`'s calendar.
+    fn prompt<Tz: TimeZone>(&self, room: usize, wall: &DateTime<Tz>) -> Option<Vec<Span<'static>>>
+    where
+        Tz::Offset: std::fmt::Display,
+    {
+        let typed = |text: String| Span::styled(text, Style::new().fg(theme::FOREGROUND));
         match &self.overlay {
             Some(Overlay::Delete(id)) => {
                 let short = id.short_hash();
@@ -666,17 +733,42 @@ impl Session {
                 } else {
                     format!("delete {short}? [y/N]")
                 };
-                Some((prompt, Style::new().fg(theme::DESTRUCTIVE)))
+                Some(vec![Span::styled(
+                    prompt,
+                    Style::new().fg(theme::DESTRUCTIVE),
+                )])
             }
-            Some(Overlay::Pipe { command, .. }) => {
-                Some((format!("| {command}█"), Style::new().fg(theme::FOREGROUND)))
+            Some(Overlay::Unschedule { first, .. }) => {
+                let ask = |first: &str| format!("cancel \"{first}\"? [y/N]");
+                let prompt = if first.is_empty() {
+                    "cancel it? [y/N]".to_owned()
+                } else {
+                    ask(&fatal::cut(first, room.saturating_sub(ask("").width())))
+                };
+                Some(vec![Span::styled(
+                    prompt,
+                    Style::new().fg(theme::DESTRUCTIVE),
+                )])
             }
-            Some(Overlay::Search { query }) if query.is_empty() => Some((
+            Some(Overlay::Pipe { command, .. }) => Some(vec![typed(format!("| {command}█"))]),
+            Some(Overlay::Search { query }) if query.is_empty() => Some(vec![typed(
                 "/█  words to find commits, or @name for people".to_owned(),
-                Style::new().fg(theme::FOREGROUND),
-            )),
-            Some(Overlay::Search { query }) => {
-                Some((format!("/{query}█"), Style::new().fg(theme::FOREGROUND)))
+            )]),
+            Some(Overlay::Search { query }) => Some(vec![typed(format!("/{query}█"))]),
+            Some(Overlay::At { text }) => {
+                let landing = match at::resolve(text, wall) {
+                    Ok(when) => Span::styled(
+                        format!("  → {} · {}", at::shown(&when), at::until(&when, wall)),
+                        Style::new().fg(theme::PRIMARY),
+                    ),
+                    Err(at::Refusal::Unreadable(_)) => {
+                        Span::styled(format!("  {}", at::FORMS), theme::muted())
+                    }
+                    Err(refusal) => {
+                        Span::styled(format!("  {refusal}"), Style::new().fg(theme::AMBER))
+                    }
+                };
+                Some(vec![typed(format!("send at: {text}█")), landing])
             }
             Some(
                 Overlay::Help { .. }
@@ -690,11 +782,30 @@ impl Session {
     }
 }
 
+/// Sends the draft now, or at `when`, unless the server would refuse it or it seems to hold a
+/// secret, which asks first.
+fn send(sched: &mut Scheduler, composer: &mut Composer, when: Option<DateTime<FixedOffset>>) {
+    composer.send_at(when);
+    match composer.refusal() {
+        Some(refusal) => composer.note(refusal, theme::muted()),
+        None if secret::detected(composer.text()) => composer.ask(Prompt::Secret),
+        None => post(sched, composer),
+    }
+}
+
 fn post(sched: &mut Scheduler, composer: &Composer) {
-    let call = Call::Post {
-        target: composer.target().clone(),
-        body: composer.text().to_owned(),
-        attachment: composer.attachment(),
+    let (body, attachment) = (composer.text().to_owned(), composer.attachment());
+    let call = match composer.when() {
+        Some(at) => Call::Schedule {
+            body,
+            attachment,
+            at,
+        },
+        None => Call::Post {
+            target: composer.target().clone(),
+            body,
+            attachment,
+        },
     };
     sched.send(call, Priority::Now);
 }
@@ -824,11 +935,15 @@ fn notified(new: u32) -> String {
 fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -> bool {
     match (phase, action) {
         (_, Action::Quit) => true,
-        (_, Action::Send | Action::Editor | Action::Poll | Action::Attach | Action::Preview)
-            if sending =>
-        {
-            false
-        }
+        (
+            _,
+            Action::Send
+            | Action::Editor
+            | Action::Poll
+            | Action::Attach
+            | Action::Preview
+            | Action::Schedule,
+        ) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
         (Phase::SignIn(step), Action::SignIn) => matches!(step, Step::Ready(_)),
@@ -856,6 +971,39 @@ pub struct Engine {
     lifted: Option<String>,
     /// The language the device reads in, which commits translate into unless the user picked one.
     device_language: Option<String>,
+    wall: Wall,
+}
+
+/// Reads a time typed for `send at:` at a moment on the wall clock, in the viewer's zone.
+type Reader = Box<dyn Fn(&str, DateTime<Utc>) -> Result<DateTime<FixedOffset>, at::Refusal>>;
+
+/// The wall clock and zone the frames are drawn with, so a time typed between frames resolves
+/// where the preview showed it.
+#[derive(Default)]
+struct Wall {
+    /// When the last frame was drawn, and the wall clock then.
+    drawn: Option<(Instant, DateTime<Utc>)>,
+    /// Set by the first frame, as the zone stays put.
+    reader: Option<Reader>,
+}
+
+impl Wall {
+    fn saw<Tz: TimeZone + 'static>(&mut self, now: Instant, wall: &DateTime<Tz>) {
+        self.drawn = Some((now, wall.with_timezone(&Utc)));
+        if self.reader.is_none() {
+            let zone = wall.timezone();
+            self.reader = Some(Box::new(move |text, utc| {
+                at::resolve(text, &utc.with_timezone(&zone)).map(|at| at.fixed_offset())
+            }));
+        }
+    }
+
+    /// Where `text` lands at `now`, once a frame has been drawn.
+    fn read(&self, text: &str, now: Instant) -> Option<Result<DateTime<FixedOffset>, at::Refusal>> {
+        let (drawn, wall) = self.drawn?;
+        let since = TimeDelta::from_std(now.saturating_duration_since(drawn)).ok()?;
+        Some((self.reader.as_ref()?)(text, wall + since))
+    }
 }
 
 impl Engine {
@@ -877,6 +1025,7 @@ impl Engine {
             reloaded_at: None,
             lifted: None,
             device_language: None,
+            wall: Wall::default(),
         }
     }
 
@@ -964,10 +1113,12 @@ impl Engine {
         match event {
             Event::Key(key) => self.key(key, now),
             Event::Paste(text) => {
+                // A prompt such as `send at:` can sit over the composer, and takes the paste first.
                 if let Phase::Ready(session) = &mut self.phase
-                    && session.composer.is_none()
+                    && session.overlay.is_some()
                 {
                     session.pasted(&text);
+                    return Vec::new();
                 }
                 // A file dropped on the terminal arrives as a pasted path.
                 if let Some(paths) = attach::dropped(&text)
@@ -1248,6 +1399,7 @@ impl Engine {
             Some(Screen::Group(group)) => group.placeholder_at(),
             Some(Screen::Profile(profile)) => profile.placeholder_at(),
             Some(Screen::List(list)) => list.placeholder_at(),
+            Some(Screen::Queue(_)) => None,
             None => session.log.peek_due(),
         }
     }
@@ -1313,8 +1465,11 @@ impl Engine {
             return false;
         };
         session.composer.as_ref().is_some_and(|composer| {
-            self.sched
-                .pending(&CallKey::Post(composer.target().clone()))
+            let key = match composer.when() {
+                Some(_) => CallKey::Schedule,
+                None => CallKey::Post(composer.target().clone()),
+            };
+            self.sched.pending(&key)
         })
     }
 
@@ -1336,13 +1491,16 @@ impl Engine {
             Resolve::Act(action) => self.act(action, now),
             Resolve::Text(event) => {
                 if let Phase::Ready(session) = &mut self.phase {
-                    match &mut session.composer {
-                        None => session.typed(event),
-                        Some(composer) if composer.prompt() == Some(Prompt::Secret) => {
-                            composer.answered();
-                            return Vec::new();
-                        }
-                        Some(_) => {}
+                    // A prompt such as `send at:` can sit over the composer, and takes the typing first.
+                    if session.overlay.is_some() {
+                        session.typed(event);
+                        return Vec::new();
+                    }
+                    if let Some(composer) = &mut session.composer
+                        && composer.prompt() == Some(Prompt::Secret)
+                    {
+                        composer.answered();
+                        return Vec::new();
                     }
                 }
                 self.edit(|composer| composer.typed(event))
@@ -1416,6 +1574,17 @@ impl Engine {
                     }
                 }
             }
+            (Phase::Ready(session), Action::Confirm)
+                if let Some(Overlay::At { text }) = &session.overlay =>
+            {
+                // The preview already says why a time won't do, so enter waits for one that will.
+                if let Some(Ok(when)) = self.wall.read(text, now) {
+                    session.overlay = None;
+                    if let Some(composer) = &mut session.composer {
+                        send(&mut self.sched, composer, Some(when));
+                    }
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1432,12 +1601,13 @@ impl Engine {
             }
             (Phase::Ready(session), Action::Send) => {
                 if let Some(composer) = &mut session.composer {
-                    match composer.refusal() {
-                        Some(refusal) => composer.note(refusal, theme::muted()),
-                        None if secret::detected(composer.text()) => composer.ask(Prompt::Secret),
-                        None => post(&mut self.sched, composer),
-                    }
+                    send(&mut self.sched, composer, None);
                 }
+            }
+            (Phase::Ready(session), Action::Schedule) => {
+                session.overlay = Some(Overlay::At {
+                    text: String::new(),
+                });
             }
             (Phase::Ready(session), Action::Undo) => {
                 if let Some(id) = session.undoable.take() {
@@ -1531,6 +1701,26 @@ impl Engine {
                 session.overlay = Some(Overlay::Search {
                     query: session.searched.clone(),
                 });
+            }
+            (Phase::Ready(session), Action::Later) => {
+                if !session.on_queue() {
+                    session.stack.push(Screen::Queue(Box::default()));
+                    self.sched.send(Call::Queue, Priority::Now);
+                }
+            }
+            (Phase::Ready(session), Action::Unschedule) => {
+                if let Some(item) = session.queue().and_then(QueueScreen::selected) {
+                    session.overlay = Some(Overlay::Unschedule {
+                        id: item.id.clone(),
+                        first: item.body.lines().next().unwrap_or("").to_owned(),
+                    });
+                }
+            }
+            (Phase::Ready(session), Action::SendNow) => {
+                if let Some(item) = session.queue().and_then(QueueScreen::selected) {
+                    self.sched
+                        .send(Call::SendNow(item.id.clone()), Priority::Now);
+                }
             }
             (Phase::Ready(_), Action::Refresh) => self.reload(true, now),
             (Phase::Ready(session), Action::NextFilter | Action::PreviousFilter)
@@ -1655,6 +1845,7 @@ impl Engine {
                     self.sched.send(list.call(), Priority::Now);
                 }
                 Screen::Inbox => {}
+                Screen::Queue(_) => self.sched.send(Call::Queue, Priority::Now),
             }
         }
     }
@@ -1823,6 +2014,45 @@ impl Engine {
             if let Some(composer) = &mut session.composer {
                 composer.rendered(text, Some(segments.clone()));
             }
+            return Vec::new();
+        }
+        if let (Call::Schedule { at: when, .. }, Reply::Scheduled(_)) = (call, &reply) {
+            if (session.composer.as_ref()).is_some_and(|composer| *composer.target() == Target::New)
+            {
+                session.composer = None;
+            }
+            if (session.stack.iter()).any(|screen| matches!(screen, Screen::Queue(_))) {
+                self.sched.send(Call::Queue, Priority::Now);
+            }
+            let listed = keys::key_for(Action::Later)
+                .map(|key| format!(" · {key} lists it"))
+                .unwrap_or_default();
+            self.toast(format!("scheduled for {}{listed}", at::shown(when)), now);
+            return self
+                .drafts
+                .discard(&Target::New)
+                .map(Effect::Draft)
+                .into_iter()
+                .collect();
+        }
+        if let Call::Queue = call {
+            if let Reply::Queue(items) = reply {
+                for queue in session.queues_mut() {
+                    queue.land(items.clone());
+                }
+            }
+            return Vec::new();
+        }
+        if let Call::Unschedule(id) | Call::SendNow(id) = call {
+            for queue in session.queues_mut() {
+                queue.remove(id);
+            }
+            let toast = match reply {
+                Reply::Submitted { pending: true } => PENDING,
+                Reply::Submitted { pending: false } => "committed it now",
+                _ => "canceled. it won't go out.",
+            };
+            self.toast(toast.to_owned(), now);
             return Vec::new();
         }
         if let (Call::Post { target, .. }, Reply::Commit(focus)) = (call, &reply) {
@@ -2059,10 +2289,15 @@ impl Engine {
     }
 
     fn failed(&mut self, call: Call, priority: Priority, error: Error, now: Instant) {
-        if let Call::Post { target, .. } = &call
+        let posted = match &call {
+            Call::Post { target, .. } => Some(target.clone()),
+            Call::Schedule { .. } => Some(Target::New),
+            _ => None,
+        };
+        if let Some(target) = posted
             && !error.needs_sign_in()
         {
-            self.refused_post(target, &error, now);
+            self.refused_post(&target, &error, now);
             return;
         }
         if let Call::Preview(text) = &call
@@ -2185,6 +2420,19 @@ impl Engine {
                         }
                         offline
                     }
+                    Call::Queue => {
+                        for queue in session.queues_mut() {
+                            queue.fail(failure.clone());
+                        }
+                        offline
+                    }
+                    Call::Unschedule(_) | Call::SendNow(_) => {
+                        self.toast = Some(error.to_string());
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        // It may have gone out or been canceled elsewhere, so the queue shows what's true.
+                        self.sched.send(Call::Queue, Priority::Now);
+                        offline
+                    }
                     Call::Star { .. } | Call::Follow { .. } | Call::Mute { .. } | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
@@ -2240,7 +2488,7 @@ impl Engine {
                         offline
                     }
                     Call::Me | Call::Redeem { .. } | Call::Since { .. } => true,
-                    Call::Post { .. } | Call::Preview(_) => false,
+                    Call::Post { .. } | Call::Schedule { .. } | Call::Preview(_) => false,
                 };
                 if connection {
                     self.health = Some(failure);
@@ -2333,7 +2581,15 @@ impl Engine {
         }
     }
 
-    pub fn draw<Tz: TimeZone>(&mut self, frame: &mut Frame, now: Instant, wall: &DateTime<Tz>) {
+    pub fn draw<Tz: TimeZone + 'static>(
+        &mut self,
+        frame: &mut Frame,
+        now: Instant,
+        wall: &DateTime<Tz>,
+    ) where
+        Tz::Offset: std::fmt::Display,
+    {
+        self.wall.saw(now, wall);
         let selected = match &self.phase {
             Phase::Ready(session) => {
                 theme::set_pasteis(session.store.me.pasteis_mode);
@@ -2426,6 +2682,7 @@ impl Engine {
                 let title = match session.stack.last() {
                     Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
                     Some(Screen::List(list)) => Some(list.title()),
+                    Some(Screen::Queue(_)) => Some(queue::TITLE),
                     _ => handle.as_deref(),
                 };
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
@@ -2511,9 +2768,9 @@ impl Engine {
                     .and_then(|(failure, wait)| {
                         fatal::hint(failure, wait, room.saturating_sub(help.len()))
                     });
-                let hint = match (session.prompt(room), error) {
-                    (Some((prompt, style)), _) => {
-                        Line::styled(format!("{HINT_INDENT}{prompt}"), style)
+                let hint = match (session.prompt(room, wall), error) {
+                    (Some(prompt), _) => {
+                        Line::from([vec![Span::raw(HINT_INDENT)], prompt].concat())
                     }
                     (None, Some(error)) => Line::from(vec![
                         Span::styled(
@@ -2587,6 +2844,10 @@ impl Engine {
                         let area = framed_as(frame, body, framed, "");
                         list.draw(frame, area, &session.store, &self.timers, now, wall)
                     }
+                    Some(Screen::Queue(queue)) => {
+                        let area = framed_as(frame, body, framed, "");
+                        queue.draw(frame, area, wall)
+                    }
                     None => {
                         let pane = session.log.draw(
                             frame,
@@ -2652,7 +2913,9 @@ impl Engine {
                         Overlay::Delete(_)
                         | Overlay::Vote { .. }
                         | Overlay::Pipe { .. }
-                        | Overlay::Search { .. },
+                        | Overlay::Search { .. }
+                        | Overlay::At { .. }
+                        | Overlay::Unschedule { .. },
                     )
                     | None => {}
                 }

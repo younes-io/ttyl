@@ -25,6 +25,7 @@ pub mod log;
 pub mod model;
 pub mod popup;
 pub mod profile;
+pub mod queue;
 pub mod saver;
 pub mod sched;
 pub mod secret;

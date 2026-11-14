@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ttyl::keys::{
     Act, Action, GATE_SCOPES, HELP_SCOPES, InputMode, Keymap, LOG_SCOPES, Resolve, Scope, TABLE,
-    UNIONS, help, hints,
+    UNIONS, fit_chords, help, hints,
 };
 use ttyl::model::Log;
 
@@ -54,7 +54,12 @@ fn g_then_g_goes_to_the_top_and_g_then_another_key_cancels() {
     );
     assert_eq!(
         hints(LOG_SCOPES, keymap.pending(), &all),
-        "g-  g top · q open the quoted commit · r commits like this one · n notifications · s starred commits · t hot topics"
+        "g-  g top · q open the quoted commit · r commits like this one · n notifications · s starred commits · t hot topics · l scheduled commits"
+    );
+    assert_eq!(
+        fit_chords(&hints(LOG_SCOPES, keymap.pending(), &all), 70),
+        "g-  g top · q open the quoted commit · r commits like this one",
+        "a chord too long for the row drops whole follow-ups from the end"
     );
     assert_eq!(
         keymap.resolve(

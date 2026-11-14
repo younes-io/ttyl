@@ -62,6 +62,30 @@ read instead. Press <kbd>tab</kbd> to move to it and type the description.
 
 Press <kbd>backspace</kbd> on an empty description to remove its image.
 
+## Send it later
+
+A new commit can wait and go out at a time you pick, up to 30 days ahead.
+
+1. Write the commit, then press <kbd>ctrl-t</kbd> in the composer.
+2. Type when it goes out after `send at:`. ttyl shows the date and time it
+   reads as you type.
+3. Press <kbd>enter</kbd> to schedule it, or <kbd>esc</kbd> to go back to the draft.
+
+ttyl reads times the way `at` does, in your time zone:
+
+| You type | It goes out |
+| --- | --- |
+| `14:30` or `2:30pm` | the next 14:30, today or tomorrow |
+| `tomorrow 9:00` | tomorrow at 9:00 |
+| `fri 14:00` | the coming Friday at 14:00 |
+| `in 2h`, `in 30m`, `in 1h30m` | that long from now |
+| `2026-10-24T09:00:00+02:00` | that moment |
+
+Press <kbd>g</kbd> <kbd>l</kbd> to see what is scheduled, soonest first.
+Select one and press <kbd>S</kbd> to commit it now, or <kbd>D</kbd> to cancel
+it. ttyl asks before it cancels. A scheduled commit can't be edited, so to
+change one, cancel it and write it again.
+
 ## Commit from the shell
 
 Run `ttyl commit -m "your text"` to send a commit without opening ttyl. To
@@ -73,6 +97,14 @@ git log -1 --format=%B | ttyl commit
 
 ttyl prints the commit's short hash, its first line and its link. Your first
 commit still has to come from the web, so you can read the commit rules.
+
+Add `--at` to schedule it instead. It takes the same times as `send at:`:
+
+```sh
+ttyl commit --at 'tomorrow 9:00' -m "standup notes are up"
+```
+
+ttyl prints when it will go out, such as `scheduled for Thu 22 Oct 09:00`.
 
 ## If ttyl stops before sending
 
