@@ -300,7 +300,8 @@ pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
 pub const AT_SCOPES: &[Scope] = &[Scope::At];
 pub const CONVERSATION_SCOPES: &[Scope] = &[Scope::Conversation];
-pub const MESSAGE_SCOPES: &[Scope] = &[Scope::Message, Scope::Global, Scope::Always];
+/// No `Global`: nothing opens over a conversation, which polls only while it is on top.
+pub const MESSAGE_SCOPES: &[Scope] = &[Scope::Message, Scope::Always];
 pub const REACT_SCOPES: &[Scope] = &[Scope::React];
 pub const MUTE_SCOPES: &[Scope] = &[Scope::Mute, Scope::Always];
 pub const LOG_SCOPES: &[Scope] = &[
@@ -1560,6 +1561,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Back,
         hint: Some("esc back"),
         help: "back, keeping what you typed",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ch('?')]],
+        action: Action::Help,
+        hint: Some("? help"),
+        help: "these keys",
     },
     Binding {
         scope: Scope::React,

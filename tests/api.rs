@@ -92,7 +92,7 @@ fn signature_holds(key: &DeviceKey, seen: &Seen, method: &str, path: &str, dir: 
 fn redeeming_posts_the_code_signed_and_reads_the_user() {
     let (base, server) = serve(
         "200 OK",
-        r#"{"data":{"id":7,"handle":"ada","name":"Ada","bio":null},"unread_notifications_count":2}"#,
+        r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","handle":"ada","name":"Ada","bio":null},"unread_notifications_count":2}"#,
     );
     let client = Client::new(base, DeviceKey::generate().unwrap());
     let account = client.redeem("the-code", "the-verifier").unwrap();
@@ -119,11 +119,15 @@ fn redeeming_posts_the_code_signed_and_reads_the_user() {
 
 #[test]
 fn me_is_a_signed_get_without_a_body() {
-    let (base, server) = serve("200 OK", r#"{"data":{"handle":"grace","name":null}}"#);
+    let (base, server) = serve(
+        "200 OK",
+        r#"{"data":{"id":"0b000000-0000-4000-8000-00000000000b","handle":"grace","name":null}}"#,
+    );
     let client = Client::new(base, DeviceKey::generate().unwrap());
     let account = client.me().unwrap();
     let seen = server.join().unwrap();
 
+    assert_eq!(account.me.id.0, "0b000000-0000-4000-8000-00000000000b");
     assert_eq!(account.me.handle, "grace");
     assert_eq!(account.unread, 0);
     assert!(seen.head.starts_with("GET /api/v1/me HTTP/1.1\r\n"));
@@ -303,7 +307,10 @@ fn a_page_that_is_not_the_api_is_unexpected() {
 
 #[test]
 fn json_of_the_wrong_shape_names_the_field() {
-    let (base, _server) = serve("200 OK", r#"{"data":{"name":"Ada"}}"#);
+    let (base, _server) = serve(
+        "200 OK",
+        r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","name":"Ada"}}"#,
+    );
     let error = Client::new(base, DeviceKey::generate().unwrap())
         .me()
         .unwrap_err();
@@ -927,7 +934,7 @@ fn a_reply_names_its_parent_and_a_quote_names_its_commit() {
     }
 }
 
-const ME: &str = r#"{"data":{"handle":"ada","name":"Ada"},"unread_notifications_count":2}"#;
+const ME: &str = r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","handle":"ada","name":"Ada"},"unread_notifications_count":2}"#;
 
 fn answered(dir: &Path, status: &str, body: &str, call: &Call) -> Result<Reply, Error> {
     let (base, server) = serve(status, body);
@@ -1107,7 +1114,7 @@ fn settings_are_read_from_their_route() {
 
 fn me_answer() -> serde_json::Value {
     serde_json::json!({
-        "data": { "handle": "ada", "name": "Ada", "pasteis_mode": true, "preferred_lane": "#ff8800",
+        "data": { "id": "0a000000-0000-4000-8000-00000000000a", "handle": "ada", "name": "Ada", "pasteis_mode": true, "preferred_lane": "#ff8800",
             "automatic_lane": 2, "remotes": { "from": "everyone", "pull_receipts": false, "everyone": true } },
         "unread_notifications_count": 1,
     })

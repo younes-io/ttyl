@@ -1,5 +1,5 @@
 use ttyl::api::{Account, Call, Failure, Me, Reply};
-use ttyl::model::{CommitId, CommitPage, Log, LogPage, RepliesPage, Shown};
+use ttyl::model::{CommitId, CommitPage, Log, LogPage, RepliesPage, Shown, UserId};
 use ttyl::store::{Branch, Slot, Store};
 
 fn page(name: &str) -> LogPage {
@@ -14,6 +14,7 @@ fn page(name: &str) -> LogPage {
 fn store() -> Store {
     Store::new(Account {
         me: Me {
+            id: UserId("0a000000-0000-4000-8000-00000000000a".to_owned()),
             handle: "ada".to_owned(),
             name: None,
             pasteis_mode: false,
@@ -82,6 +83,7 @@ fn an_account_reply_moves_the_unread_count() {
         &Call::Me,
         Reply::Account(Account {
             me: Me {
+                id: UserId("0a000000-0000-4000-8000-00000000000a".to_owned()),
                 handle: "ada".to_owned(),
                 name: Some("Ada".to_owned()),
                 pasteis_mode: false,

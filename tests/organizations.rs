@@ -37,6 +37,7 @@ fn by_acme(_: Log) -> LogPage {
 fn member() -> Account {
     serde_json::from_value(json!({
         "data": {
+            "id": "0a000000-0000-4000-8000-00000000000a",
             "handle": "ada",
             "name": "Ada",
             "organizations": [
@@ -313,7 +314,7 @@ fn an_organizations_commit_is_its_members_own_to_delete_but_not_to_star_report_o
 fn no_pastel_goes_to_an_organizations_commit() {
     let at = Instant::now();
     let giver: Account = serde_json::from_value(json!({
-        "data": { "handle": "ada", "name": "Ada", "pasteis_mode": true },
+        "data": { "id": "0a000000-0000-4000-8000-00000000000a", "handle": "ada", "name": "Ada", "pasteis_mode": true },
         "unread_notifications_count": 0,
     }))
     .unwrap();

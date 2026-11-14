@@ -172,7 +172,7 @@ fn posted() -> String {
 fn status_prints_the_unread_count_alone() {
     let (base, _server) = serve(
         "200 OK",
-        r#"{"data":{"handle":"ada","name":"Ada"},"unread_notifications_count":3}"#,
+        r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","handle":"ada","name":"Ada"},"unread_notifications_count":3}"#,
     );
     let output = against("cli-status", &base, &["status"], None);
     assert_eq!(output.status.code(), Some(0));
@@ -293,7 +293,7 @@ fn commit_at_schedules_it_and_prints_when_it_goes_out() {
     }
 }
 
-const MEMBER: &str = r#"{"data":{"handle":"ada","name":"Ada","organizations":[{"type":"organization","id":"o1","role":"member","handle":"Acme"}]},"unread_notifications_count":0}"#;
+const MEMBER: &str = r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","handle":"ada","name":"Ada","organizations":[{"type":"organization","id":"o1","role":"member","handle":"Acme"}]},"unread_notifications_count":0}"#;
 
 #[test]
 fn commit_as_posts_as_an_organization_spelled_as_the_server_spells_it() {
@@ -749,7 +749,7 @@ fn revoking_this_device_forgets_the_timeline_the_next_launch_would_draw() {
     assert!(cache().load().is_none(), "nothing left to draw");
 }
 
-const ME: &str = r#"{"data":{"handle":"ada","name":"Ada","pasteis_mode":true,"preferred_lane":null,"automatic_lane":3,"remotes":null},"unread_notifications_count":0}"#;
+const ME: &str = r#"{"data":{"id":"0a000000-0000-4000-8000-00000000000a","handle":"ada","name":"Ada","pasteis_mode":true,"preferred_lane":null,"automatic_lane":3,"remotes":null},"unread_notifications_count":0}"#;
 const SETTINGS: &str = r#"{"data":{"timezone":"Europe/Lisbon","show_local_time":false,"translation_language":null,"automatic_translation":true,"translation_languages":[{"code":"fr","name":"French","native_name":"français"}],"is_admin":false,"push":{}}}"#;
 
 #[test]

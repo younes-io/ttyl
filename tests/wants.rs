@@ -2,7 +2,7 @@ mod common;
 
 use common::profile;
 use ttyl::api::{Account, Call, Me, Reply};
-use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row, Who};
+use ttyl::model::{CommitId, Deletion, Focus, Log, LogPage, Row, UserId, Who};
 use ttyl::sched::CallKey;
 use ttyl::store::{Node, Store};
 
@@ -19,6 +19,7 @@ fn fixture(name: &str) -> String {
 fn store() -> Store {
     let mut store = Store::new(Account {
         me: Me {
+            id: UserId("0a000000-0000-4000-8000-00000000000a".to_owned()),
             handle: "ada".to_owned(),
             name: None,
             pasteis_mode: false,

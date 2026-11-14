@@ -11,7 +11,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::api::{Call, Failure, Paging};
+use crate::api::{Call, Failure, Me, Paging};
 use crate::compose;
 use crate::device::Nonce;
 use crate::emoji::{self, Emoji};
@@ -379,7 +379,7 @@ impl Conversations {
         &mut self,
         frame: &mut Frame,
         area: Rect,
-        me: &str,
+        me: &UserId,
         now: Instant,
         wall: &DateTime<Tz>,
     ) {
@@ -504,7 +504,7 @@ fn row<Tz: TimeZone>(
     selected: bool,
     folder: Folder,
     width: usize,
-    me: &str,
+    me: &UserId,
     wall: &DateTime<Tz>,
 ) -> Line<'static> {
     let unread = conversation.unread > 0;
@@ -586,20 +586,22 @@ fn row<Tz: TimeZone>(
     }
 }
 
-/// Who wrote `message` when it wasn't the user. An org's thread names each author; a message the
-/// user just sent there doesn't, so the members name it.
-fn other<'a>(party: &'a Party, me: &str, message: &'a Message) -> Option<&'a User> {
+/// Who wrote `message` when it wasn't the user. An org's thread names each author, or failing that
+/// its members do.
+fn other<'a>(party: &'a Party, me: &UserId, message: &'a Message) -> Option<&'a User> {
+    if message.user_id == *me {
+        return None;
+    }
     match party {
-        Party::Person(partner) => (message.user_id == partner.id).then_some(partner),
+        Party::Person(partner) => Some(partner),
         Party::Org(org) => (message.author.as_ref())
-            .or_else(|| (org.members.iter()).find(|member| member.id == message.user_id))
-            .filter(|author| author.handle != me),
+            .or_else(|| (org.members.iter()).find(|member| member.id == message.user_id)),
     }
 }
 
 /// Whether `message` is one the others said, which dev-null.sh counts as unread until marked. An
 /// org's notices don't count.
-fn heard(party: &Party, me: &str, message: &Message) -> bool {
+fn heard(party: &Party, me: &UserId, message: &Message) -> bool {
     message.notice.is_none() && other(party, me, message).is_some()
 }
 
@@ -609,6 +611,8 @@ pub struct ConversationScreen {
     party: Party,
     /// The user's handle, the nick their own messages show under.
     me: String,
+    /// The user's id, which tells their messages and reactions from everyone else's.
+    my_id: UserId,
     title: String,
     thread: Option<Thread>,
     failure: Option<Failure>,
@@ -704,11 +708,12 @@ enum Mode {
 const REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "🎉", "👀", "✅"];
 
 /// The message the next send answers, with its start as the input shows it, which stays even once
-/// the message is no longer loaded.
+/// the message is no longer loaded. A reply put back while its conversation was closed has no
+/// start until the message loads.
 #[derive(Debug, Clone)]
 struct Replying {
     id: MessageId,
-    quote: String,
+    quote: Option<String>,
 }
 
 #[derive(Debug)]
@@ -745,9 +750,17 @@ impl Unsent {
         self.text.is_empty() && self.reply.is_none()
     }
 
-    /// Puts a failed send's text back in front of what was typed since. Sent again unchanged, it
-    /// goes with the same id, so dev-null.sh keeps one copy if the first one did land.
-    pub fn restore(&mut self, client_id: ClientId, body: String) {
+    /// Puts a send that failed while its conversation was closed back for when it opens, as a
+    /// reply to `reply_to` again unless another reply is pending.
+    pub fn restore(&mut self, client_id: ClientId, body: String, reply_to: Option<MessageId>) {
+        let reply = reply_to.map(|id| Replying { id, quote: None });
+        self.put_back(client_id, body, reply);
+    }
+
+    /// Puts a failed send's text back in front of what was typed since, and the reply it was
+    /// unless another is pending. Sent again unchanged, it goes with the same id, so dev-null.sh
+    /// keeps one copy if the first one did land.
+    fn put_back(&mut self, client_id: ClientId, body: String, reply: Option<Replying>) {
         self.text = match self.text.as_str() {
             "" => body.clone(),
             typed => format!("{body}\n{typed}"),
@@ -757,6 +770,7 @@ impl Unsent {
             body,
             reply: None,
         });
+        self.reply = self.reply.take().or(reply);
     }
 }
 
@@ -774,11 +788,12 @@ enum View {
 
 impl ConversationScreen {
     /// `unsent` is what was typed here before the conversation was last left.
-    pub fn new(party: Party, me: String, unsent: Unsent, now: Instant) -> Self {
+    pub fn new(party: Party, me: &Me, unsent: Unsent, now: Instant) -> Self {
         ConversationScreen {
             title: party.title(),
             party,
-            me,
+            me: me.handle.clone(),
+            my_id: me.id.clone(),
             thread: None,
             failure: None,
             asked_at: now,
@@ -926,7 +941,10 @@ impl ConversationScreen {
             (Mode::Selecting(_), Action::Type) => self.mode = Mode::Typing,
             (Mode::Selecting(id), Action::Reply) => {
                 let id = *id;
-                self.reply = self.replying(id);
+                self.reply = Some(Replying {
+                    id,
+                    quote: self.quote_of(id),
+                });
                 self.mode = Mode::Typing;
             }
             (Mode::Selecting(id), Action::React) => {
@@ -989,26 +1007,48 @@ impl ConversationScreen {
     }
 
     /// `@grace: are you around tomorrow?`, the message `id` as a reply to it quotes it.
-    fn replying(&self, id: MessageId) -> Option<Replying> {
+    fn quote_of(&self, id: MessageId) -> Option<String> {
         let thread = self.thread.as_ref()?;
         let message = thread.message(id)?;
-        let who = handle(&self.party, &self.me, &thread.messages, &message.user_id);
-        Some(Replying {
-            id,
-            quote: format!("@{who}: {}", message.preview()),
-        })
+        let who = self.handle(&thread.messages, &message.user_id);
+        Some(format!("@{who}: {}", message.preview()))
+    }
+
+    /// What a reply of the user's quotes before dev-null.sh has it.
+    fn quoting(&self, reply: &Replying) -> String {
+        (reply.quote.clone())
+            .or_else(|| self.quote_of(reply.id))
+            .unwrap_or_else(|| "an earlier message".to_owned())
     }
 
     /// What a reply in the history quotes: what dev-null.sh sent along, or the message itself
     /// when it is loaded.
     fn quote(&self, thread: &Thread, reply: &ReplyTo) -> String {
-        let handle = |user_id| handle(&self.party, &self.me, &thread.messages, user_id);
+        let handle = |user_id| self.handle(&thread.messages, user_id);
         match (&reply.quote, thread.message(reply.id)) {
             (Some(quote), _) => format!("@{}: {}", handle(&quote.user_id), quote.text),
             (None, Some(message)) => {
                 format!("@{}: {}", handle(&message.user_id), message.preview())
             }
             (None, None) => "an earlier message".to_owned(),
+        }
+    }
+
+    /// The handle of whoever `user_id` is in this conversation.
+    fn handle<'a>(&'a self, messages: &'a [Message], user_id: &UserId) -> &'a str {
+        if *user_id == self.my_id {
+            return &self.me;
+        }
+        match &self.party {
+            Party::Person(partner) => &partner.handle,
+            Party::Org(org) => (org.members.iter())
+                .chain(
+                    messages
+                        .iter()
+                        .filter_map(|message| message.author.as_ref()),
+                )
+                .find(|user| user.id == *user_id)
+                .map_or("someone", |user| user.handle.as_str()),
         }
     }
 
@@ -1020,7 +1060,7 @@ impl ConversationScreen {
             .map_or(&[][..], |message| message.reactions.as_slice());
         let mut tally: Vec<Tally> = Vec::new();
         for reaction in reactions {
-            let mine = mine(&self.party, &self.me, &reaction.user_id);
+            let mine = reaction.user_id == self.my_id;
             match tally.iter_mut().find(|each| each.emoji == reaction.emoji) {
                 Some(each) => {
                     each.count += 1;
@@ -1098,13 +1138,32 @@ impl ConversationScreen {
         }
     }
 
-    /// Takes in a message's reactions as dev-null.sh answered a change to `emoji` on it.
-    pub fn reacted(&mut self, message: MessageId, emoji: &str, reactions: Vec<Reaction>) {
-        self.unreacted(message, emoji);
+    /// Takes in a message's reactions as dev-null.sh answered a change to `emoji` on it. A press
+    /// made while that change flew can want it the other way, so this says what to send for it.
+    pub fn reacted(
+        &mut self,
+        message: MessageId,
+        emoji: &str,
+        reactions: Vec<Reaction>,
+    ) -> Option<Call> {
+        let left = (reactions.iter()).any(|each| each.emoji == emoji && each.user_id == self.my_id);
         if let Some(reacted) = (self.thread.as_mut()).and_then(|thread| thread.message_mut(message))
         {
             reacted.reactions = reactions;
         }
+        let at =
+            (self.wants.iter()).position(|want| want.message == message && want.emoji == emoji)?;
+        let on = self.wants[at].on;
+        if on == left {
+            self.wants.remove(at);
+            return None;
+        }
+        Some(Call::React {
+            chat: self.chat(),
+            message,
+            emoji: emoji.to_owned(),
+            on,
+        })
     }
 
     /// A change to `emoji` on `message` dev-null.sh refused shows as it was.
@@ -1133,7 +1192,7 @@ impl ConversationScreen {
             .retain(|outgoing| !landed.contains(&&outgoing.client_id));
         self.party = page.party;
         self.title = self.party.title();
-        let (party, me) = (&self.party, self.me.as_str());
+        let (party, me) = (&self.party, &self.my_id);
         let newest = page.messages.last().map(|message| message.id);
         let thread = match (&mut self.thread, paging) {
             (Some(thread), Paging::Before(_)) => {
@@ -1291,19 +1350,25 @@ impl ConversationScreen {
     /// A send that failed puts its text back in front of what was typed since, to send again,
     /// even when the send began on an earlier visit and so is not in this screen's outbox. The
     /// reply it was goes back too, unless another is pending.
-    pub fn unsent(&mut self, client_id: ClientId, body: String) {
+    pub fn unsent(&mut self, client_id: ClientId, body: String, reply_to: Option<MessageId>) {
         let failed = (self.outbox.iter())
             .position(|outgoing| outgoing.client_id == client_id)
-            .map(|at| self.outbox.remove(at));
+            .and_then(|at| self.outbox.remove(at).reply);
+        let reply = failed.or_else(|| {
+            reply_to.map(|id| Replying {
+                id,
+                quote: self.quote_of(id),
+            })
+        });
         let mut unsent = Unsent {
             text: self.input.text().to_owned(),
             retry: None,
-            reply: None,
+            reply: self.reply.take(),
         };
-        unsent.restore(client_id, body);
+        unsent.put_back(client_id, body, reply);
         self.input = Buffer::new(&unsent.text);
         self.retry = unsent.retry;
-        self.reply = self.reply.take().or(failed.and_then(|failed| failed.reply));
+        self.reply = unsent.reply;
     }
 
     pub fn draw<Tz: TimeZone>(
@@ -1356,7 +1421,8 @@ impl ConversationScreen {
                 let below = then
                     .and_then(|then| spans.iter().find(|(id, _)| *id == then))
                     .map_or(0, |(_, span)| total - span.end);
-                (up + below, *unseen)
+                // A wider frame wraps into fewer lines than the last one scrolled back through.
+                ((up + below).min(total.saturating_sub(page)), *unseen)
             }
         };
         if let Some(selected) = self.selected()
@@ -1445,7 +1511,7 @@ impl ConversationScreen {
         });
         let nick = (thread.messages.iter())
             .filter(|message| message.notice.is_none())
-            .filter_map(|message| other(&self.party, me, message))
+            .filter_map(|message| other(&self.party, &self.my_id, message))
             .map(|author| author.handle.width())
             .fold(me.width(), usize::max);
         let indent = "00:00 ".len() + nick + "<> ".len();
@@ -1499,7 +1565,7 @@ impl ConversationScreen {
                 spans.push((message.id, start..out.len()));
                 continue;
             }
-            let author = other(&self.party, me, message);
+            let author = other(&self.party, &self.my_id, message);
             let (who, style) = match author {
                 Some(author) => (
                     author.handle.as_str(),
@@ -1562,7 +1628,7 @@ impl ConversationScreen {
         }
         for outgoing in &self.outbox {
             if let Some(reply) = &outgoing.reply {
-                out.push(quoted(&reply.quote));
+                out.push(quoted(&self.quoting(reply)));
             }
             let prefix = vec![
                 Span::styled("--:-- ", faint),
@@ -1589,7 +1655,7 @@ impl ConversationScreen {
         let mut lines = Vec::new();
         if let Some(reply) = &self.reply {
             lines.push(Line::styled(
-                fatal::cut(&format!("↳ replying to {}", reply.quote), width),
+                fatal::cut(&format!("↳ replying to {}", self.quoting(reply)), width),
                 theme::muted(),
             ));
         }
@@ -1710,32 +1776,6 @@ impl ConversationScreen {
 /// What an emoji's name takes of a typed character: the name without the colons around it.
 fn named(ch: char) -> Option<char> {
     (!ch.is_whitespace() && !ch.is_control() && ch != ':').then_some(ch)
-}
-
-/// Whether `user_id` is the user's. An org lists the user among its members by handle.
-fn mine(party: &Party, me: &str, user_id: &UserId) -> bool {
-    match party {
-        Party::Person(partner) => *user_id != partner.id,
-        Party::Org(org) => {
-            (org.members.iter()).any(|member| member.handle == me && member.id == *user_id)
-        }
-    }
-}
-
-/// The handle of whoever `user_id` is in this conversation.
-fn handle<'a>(party: &'a Party, me: &'a str, messages: &'a [Message], user_id: &UserId) -> &'a str {
-    match party {
-        Party::Person(partner) if partner.id == *user_id => &partner.handle,
-        Party::Person(_) => me,
-        Party::Org(org) => (org.members.iter())
-            .chain(
-                messages
-                    .iter()
-                    .filter_map(|message| message.author.as_ref()),
-            )
-            .find(|user| user.id == *user_id)
-            .map_or("someone", |user| user.handle.as_str()),
-    }
 }
 
 /// A message's lines: the prefix, then the text wrapped to `room` and indented under itself, then

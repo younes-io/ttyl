@@ -1,11 +1,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::num::NonZeroU16;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, TimeDelta, TimeZone, Utc};
 use ratatui::Frame;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -1232,8 +1234,7 @@ fn open_conversation(
     now: Instant,
 ) {
     let unsent = session.unsent.remove(&party.chat()).unwrap_or_default();
-    let me = session.store.me.handle.clone();
-    let conversation = ConversationScreen::new(party, me, unsent, now);
+    let conversation = ConversationScreen::new(party, &session.store.me, unsent, now);
     sched.send(conversation.poll(), Priority::Now);
     timers.set(Timer::Converse, now + CONVERSE);
     session
@@ -1578,8 +1579,9 @@ impl Engine {
             Event::Key(key) => self.key(key, now),
             Event::Paste(text) => {
                 // A prompt such as `send at:` can sit over the composer, and takes the paste first.
+                // With no composer open, the paste goes to the conversation's input or emoji name.
                 if let Phase::Ready(session) = &mut self.phase
-                    && session.overlay.is_some()
+                    && (session.overlay.is_some() || session.composer.is_none())
                 {
                     session.pasted(&text);
                     return Vec::new();
@@ -2983,8 +2985,9 @@ impl Engine {
             } => {
                 if let Reply::Reactions(reactions) = reply
                     && let Some(conversation) = session.conversation_with(chat)
+                    && let Some(again) = conversation.reacted(*message, emoji, reactions)
                 {
-                    conversation.reacted(*message, emoji, reactions);
+                    self.sched.send(again, Priority::Now);
                 }
                 return Vec::new();
             }
@@ -3225,11 +3228,14 @@ impl Engine {
             }
             return;
         }
+        // dev-null.sh limits pings to three a minute apart from every other call, so a fourth is
+        // refused rather than late. Holding the scheduler for it would stall the conversation too.
         if let Error::Api {
             status: 429,
             retry_after,
             ..
         } = &error
+            && !matches!(call, Call::Ping(_))
         {
             let wait = retry_after.unwrap_or(RETRY);
             self.sched.hold(now + wait);
@@ -3380,13 +3386,13 @@ impl Engine {
                         chat,
                         body,
                         client_id,
-                        ..
+                        reply_to,
                     } => {
                         match session.conversation_with(&chat) {
-                            Some(conversation) => conversation.unsent(client_id, body),
+                            Some(conversation) => conversation.unsent(client_id, body, reply_to),
                             None => {
                                 let unsent = session.unsent.entry(chat).or_default();
-                                unsent.restore(client_id, body);
+                                unsent.restore(client_id, body, reply_to);
                             }
                         }
                         self.toast = Some(match error.may_have_landed() {
@@ -3602,6 +3608,18 @@ impl Engine {
     }
 
     pub fn draw<Tz: TimeZone + 'static>(
+        &mut self,
+        frame: &mut Frame,
+        now: Instant,
+        wall: &DateTime<Tz>,
+    ) where
+        Tz::Offset: std::fmt::Display,
+    {
+        self.paint(frame, now, wall);
+        pin_emoji_widths(frame.buffer_mut());
+    }
+
+    fn paint<Tz: TimeZone + 'static>(
         &mut self,
         frame: &mut Frame,
         now: Instant,
@@ -3892,7 +3910,7 @@ impl Engine {
                         } else {
                             inset(body)
                         };
-                        messages.draw(frame, area, &session.store.me.handle, now, wall)
+                        messages.draw(frame, area, &session.store.me.id, now, wall)
                     }
                     Some(Screen::Conversation(conversation)) => {
                         let area = framed_as(frame, body, framed, "");
@@ -4331,5 +4349,20 @@ fn centered(area: Rect, width: u16) -> Rect {
         x: area.x + (area.width - width) / 2,
         width,
         ..area
+    }
+}
+
+/// Gives each emoji drawn with VS16 (U+FE0F) the width it takes outright. Otherwise ratatui writes
+/// the emoji's second column right after it without moving the cursor there, and a terminal that
+/// already moved past both columns, as tmux does, puts that write and every change after it on the
+/// row one column too far right, which garbles the text there.
+fn pin_emoji_widths(buffer: &mut Buffer) {
+    for cell in &mut buffer.content {
+        if cell.symbol().contains('\u{FE0F}')
+            && let Some(width) = NonZeroU16::new(cell.symbol().width() as u16)
+            && width.get() > 1
+        {
+            cell.set_diff_option(CellDiffOption::ForcedWidth(width));
+        }
     }
 }
