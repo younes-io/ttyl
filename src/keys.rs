@@ -54,6 +54,8 @@ pub enum Action {
     Undo,
     /// Asks when the commit being written goes out.
     Schedule,
+    /// Changes whom the commit being written goes out as: you, or an organization you're in.
+    PostAs,
     /// Lists the commits scheduled to go out later.
     Later,
     /// Cancels the selected scheduled commit.
@@ -173,6 +175,7 @@ impl Action {
             | Action::Poll
             | Action::Attach
             | Action::Schedule
+            | Action::PostAs
             | Action::Commit(Act::Reply | Act::Quote | Act::Message) => Group::Write,
             Action::Show(_)
             | Action::NextLog
@@ -1168,6 +1171,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Schedule,
         hint: Some("ctrl-t later"),
         help: "send it later, at a time you type",
+    },
+    Binding {
+        scope: Scope::Composer,
+        chords: &[&[Key::ctrl('x')]],
+        action: Action::PostAs,
+        hint: Some("ctrl-x as"),
+        help: "post as you or, in turn, each organization you're a member of",
     },
     Binding {
         scope: Scope::Composer,

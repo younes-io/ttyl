@@ -37,6 +37,16 @@ pub enum CallKey {
     Translate(CommitId),
     Block(String),
     User(String),
+    Organization(String),
+    OrganizationCommits {
+        handle: String,
+        mentions: bool,
+        older: bool,
+    },
+    FollowedOrganizations {
+        handle: String,
+        older: bool,
+    },
     Commits {
         handle: String,
         replies: bool,
@@ -99,12 +109,26 @@ impl Call {
             Call::Commit(id) => CallKey::Commit(id.clone()),
             Call::Replies { id, .. } => CallKey::Replies(id.clone()),
             Call::Star { id, .. } => CallKey::Star(id.clone()),
-            Call::Follow { handle, .. } => CallKey::Follow(handle.clone()),
+            Call::Follow { who, .. } => CallKey::Follow(who.handle().to_owned()),
             Call::Mute { handle, .. } => CallKey::Mute(handle.clone()),
             Call::Settings => CallKey::Settings,
             Call::Translate { id, .. } => CallKey::Translate(id.clone()),
             Call::Block { handle, .. } => CallKey::Block(handle.clone()),
             Call::User(handle) => CallKey::User(handle.clone()),
+            Call::Organization(handle) => CallKey::Organization(handle.clone()),
+            Call::OrganizationCommits {
+                handle,
+                mentions,
+                cursor,
+            } => CallKey::OrganizationCommits {
+                handle: handle.clone(),
+                mentions: *mentions,
+                older: cursor.is_some(),
+            },
+            Call::FollowedOrganizations { handle, cursor } => CallKey::FollowedOrganizations {
+                handle: handle.clone(),
+                older: cursor.is_some(),
+            },
             Call::Commits {
                 handle,
                 replies,

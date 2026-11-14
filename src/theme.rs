@@ -38,6 +38,7 @@ pub fn lane(lane: Lane) -> Color {
     match lane {
         Lane::Palette(index) => LANES[usize::from(index)],
         Lane::Custom { r, g, b } => readable(r, g, b),
+        Lane::Site => PRIMARY,
     }
 }
 

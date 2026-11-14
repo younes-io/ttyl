@@ -39,7 +39,24 @@ counts, above their commits.
   <kbd>gd</kbd> their page on dev-null.sh.
 
 In the followers and following tabs, press <kbd>enter</kbd> to open a
-person's profile, and <kbd>f</kbd> to follow them.
+person's profile, and <kbd>f</kbd> to follow them. The following tab lists
+the organizations they follow first, each marked `org`.
+
+## Open an organization
+
+A commit an organization posted reads `@handle · org` on its card. Press
+<kbd>p</kbd> on it to open the organization's page. It has the same layout as
+a person's profile. The header shows the bio, where the organization is, its
+links, its followers and who runs it. Below the header, <kbd>tab</kbd> moves
+between the commits it posted and the commits that mention it.
+
+- Press <kbd>f</kbd> to follow or unfollow the organization, even when it has
+  posted nothing yet.
+- Press <kbd>gw</kbd>, <kbd>gh</kbd> or <kbd>gd</kbd> to open its website,
+  its GitHub or its page on dev-null.sh.
+
+You can't mute, block or message an organization. Those keys do nothing on
+its commits.
 
 ## Follow from a log
 

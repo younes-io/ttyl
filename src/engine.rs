@@ -21,7 +21,7 @@ use crate::clock::{
     CONVERSE, FADE, FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark,
     TOAST, Timer, Timers, UNDO,
 };
-use crate::compose::{Composer, Prompt};
+use crate::compose::{Composer, Prompt, Voices};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
@@ -37,8 +37,9 @@ use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::messages::{self, ConversationScreen, Conversations, Picked, Unsent};
 use crate::model::{
-    self, Chat, Commit, CommitId, Filed, Filter, Fold, Kind, Log, NotificationId, Party, Reason,
-    Refile, Row, ScheduledId, Shown, Status, Translation, Untranslated, User,
+    self, Chat, Commit, CommitId, Filed, Filter, Fold, Kind, Log, NotificationId, Organization,
+    Party, ProfileType, Reason, Refile, Row, ScheduledId, Shown, Status, Translation, Untranslated,
+    User, Who,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -138,6 +139,9 @@ pub struct Session {
     undoable: Option<CommitId>,
     /// What was typed in a conversation and not sent, kept for when it opens again.
     unsent: HashMap<Chat, Unsent>,
+    /// The organization the last commit was written as, which the next one starts as. It lasts
+    /// as long as ttyl runs, never on disk, so nobody posts as an organization by surprise.
+    voice: Option<String>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -305,14 +309,30 @@ impl Session {
             })
     }
 
-    /// Whose profile p opens: the selected commit's author or the selected person, unless already shown.
-    fn profile_target(&self) -> Option<String> {
-        let handle = match self.selected()? {
-            Selected::Row(row) => row.commit.author.handle.clone(),
-            Selected::Note { commit, .. } => commit.author.handle.clone(),
-            Selected::Person(user) => user.handle.clone(),
+    /// Whose profile p opens: the selected commit's author or the selected person or
+    /// organization, unless already shown.
+    fn profile_target(&self) -> Option<Who> {
+        let who = match self.selected()? {
+            Selected::Row(row) => row.commit.author.who(),
+            Selected::Note { commit, .. } => commit.author.who(),
+            Selected::Person(user) => user.who(),
+            Selected::Organization(organization) => Who::Organization(organization.handle.clone()),
         };
-        (self.profile().map(ProfileScreen::handle) != Some(&handle)).then_some(handle)
+        (self.profile().map(ProfileScreen::handle) != Some(who.handle())).then_some(who)
+    }
+
+    /// Whom f follows: the selected commit's author or the selected person or organization, or,
+    /// with nothing listed on a profile, whose profile it is.
+    fn follow_target(&self) -> Option<Who> {
+        match self.selected() {
+            Some(Selected::Row(row)) => Some(row.commit.author.who()),
+            Some(Selected::Note { commit, .. }) => Some(commit.author.who()),
+            Some(Selected::Person(user)) => Some(user.who()),
+            Some(Selected::Organization(organization)) => {
+                Some(Who::Organization(organization.handle.clone()))
+            }
+            None => self.profile().map(ProfileScreen::who),
+        }
     }
 
     fn on_inbox(&self) -> bool {
@@ -455,11 +475,17 @@ impl Session {
             Some(Screen::Profile(profile)) => match profile.selected()? {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
+                Item::Organization(organization) => {
+                    return Some(Selected::Organization(organization));
+                }
                 Item::Headline(_) => return None,
             },
             Some(Screen::List(list)) => match list.selected()? {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
+                Item::Organization(organization) => {
+                    return Some(Selected::Organization(organization));
+                }
                 Item::Headline(_) => return None,
             },
             Some(Screen::Queue(_)) => return None,
@@ -478,9 +504,11 @@ impl Session {
             Some(Selected::Row(row)) if row.fold == Some(Fold::Blocked) => act == Act::Block,
             Some(Selected::Row(row)) => {
                 let own = row.commit.author.handle == *me;
+                let person = row.commit.author.profile_type == ProfileType::User;
                 row.deletion.is_none()
                     && match act {
-                        Act::Star | Act::Follow | Act::Mute | Act::Block | Act::Message => !own,
+                        Act::Star | Act::Follow => !own,
+                        Act::Mute | Act::Block | Act::Message => !own && person,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
@@ -499,11 +527,13 @@ impl Session {
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note { commit, alone }) => {
                 let blocked = self.store.blocking(&commit.author.handle);
+                let person = commit.author.profile_type == ProfileType::User;
                 match act {
                     // A row about one person folds and takes only B. A group of several doesn't
                     // fold, so B there would undo a block it never showed, and f is refused.
                     _ if blocked && alone => act == Act::Block,
                     Act::Follow | Act::Block | Act::Message if blocked => false,
+                    Act::Mute | Act::Block | Act::Message if !person => false,
                     Act::Follow | Act::Mute | Act::Block | Act::Message => {
                         commit.author.handle != *me
                     }
@@ -532,7 +562,10 @@ impl Session {
                         _ => false,
                     }
             }
-            None => false,
+            Some(Selected::Organization(_)) => act == Act::Follow,
+            None => {
+                act == Act::Follow && (self.follow_target()).is_some_and(|who| who.handle() != *me)
+            }
         }
     }
 
@@ -588,6 +621,18 @@ impl Session {
         None
     }
 
+    /// Whom a new commit may go out as, starting as the last one did.
+    fn voices(&self) -> Voices {
+        let organizations = (self.store.me.organizations.iter())
+            .map(|membership| membership.handle.clone())
+            .collect();
+        Voices::new(
+            self.store.me.handle.clone(),
+            organizations,
+            self.voice.as_deref(),
+        )
+    }
+
     fn can(&self, action: Action) -> bool {
         if action == Action::Poll {
             return self.overlay.is_none()
@@ -597,6 +642,10 @@ impl Session {
             return self.overlay.is_none()
                 && (self.composer.as_ref())
                     .is_some_and(|composer| *composer.target() == Target::New);
+        }
+        if action == Action::PostAs {
+            return self.overlay.is_none()
+                && (self.composer.as_ref()).is_some_and(|composer| composer.voices().many());
         }
         if let Some(Overlay::Help { last, .. }) = self.overlay {
             return match action {
@@ -980,16 +1029,19 @@ fn send(sched: &mut Scheduler, composer: &mut Composer, when: Option<DateTime<Fi
 
 fn post(sched: &mut Scheduler, composer: &Composer) {
     let (body, attachment) = (composer.text().to_owned(), composer.attachment());
+    let author = composer.voices().author().map(str::to_owned);
     let call = match composer.when() {
         Some(at) => Call::Schedule {
             body,
             attachment,
             at,
+            author,
         },
         None => Call::Post {
             target: composer.target().clone(),
             body,
             attachment,
+            author,
         },
     };
     sched.send(call, Priority::Now);
@@ -1044,10 +1096,11 @@ fn fetch_inbox(sched: &mut Scheduler, timers: &mut Timers, inbox: &mut Inbox, no
     );
 }
 
-fn open_profile(sched: &mut Scheduler, session: &mut Session, handle: String, now: Instant) {
-    let profile = ProfileScreen::new(handle, now);
-    sched.send(Call::User(profile.handle().to_owned()), Priority::Now);
-    sched.send(profile.tab_call(), Priority::Now);
+fn open_profile(sched: &mut Scheduler, session: &mut Session, who: Who, now: Instant) {
+    let profile = ProfileScreen::new(who, now);
+    for call in profile.calls() {
+        sched.send(call, Priority::Now);
+    }
     session.stack.push(Screen::Profile(Box::new(profile)));
 }
 
@@ -1121,7 +1174,8 @@ fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
     sched.send(call, Priority::Now);
 }
 
-/// What the commit keys act on: a log or thread row, a notification's commit, or a person who followed.
+/// What the commit keys act on: a log or thread row, a notification's commit, a person who
+/// followed, or an organization someone follows.
 enum Selected<'a> {
     Row(Box<Cow<'a, Row>>),
     /// A notification's commit, `alone` when one person's doing is behind the row.
@@ -1130,6 +1184,7 @@ enum Selected<'a> {
         alone: bool,
     },
     Person(&'a User),
+    Organization(&'a Organization),
 }
 
 impl<'a> Selected<'a> {
@@ -1208,7 +1263,8 @@ fn can(phase: &Phase, health: Option<&Failure>, sending: bool, action: Action) -
             | Action::Poll
             | Action::Attach
             | Action::Preview
-            | Action::Schedule,
+            | Action::Schedule
+            | Action::PostAs,
         ) if sending => false,
         (Phase::Splash, Action::Refresh) => health.is_some(),
         (Phase::Splash, _) => false,
@@ -1955,6 +2011,12 @@ impl Engine {
                 }
             }
             (Phase::Ready(_), Action::Poll) => return self.edit(Composer::toggle_poll),
+            (Phase::Ready(session), Action::PostAs) => {
+                if let Some(composer) = &mut session.composer {
+                    composer.cycle_voice();
+                    session.voice = composer.voices().author().map(str::to_owned);
+                }
+            }
             (Phase::Ready(session), Action::Preview) => {
                 if let Some(composer) = &mut session.composer
                     && let Some(text) = composer.toggle_preview()
@@ -1998,7 +2060,8 @@ impl Engine {
             (Phase::Ready(_), Action::Saver) => self.saver = Some(saver::Saver::new(now)),
             (Phase::Ready(session), Action::Compose) => {
                 let draft = self.drafts.get(&Target::New);
-                return opened(session, Composer::open(Target::New, None, draft));
+                let composer = Composer::open(Target::New, None, draft, session.voices());
+                return opened(session, composer);
             }
             (Phase::Splash, Action::Refresh) => {
                 self.timers.clear(&Timer::Retry);
@@ -2084,7 +2147,7 @@ impl Engine {
                     Some(Selected::Row(row)) => row.commit.author.clone(),
                     Some(Selected::Note { commit, .. }) => commit.author.clone(),
                     Some(Selected::Person(user)) => user.clone(),
-                    None => return Vec::new(),
+                    Some(Selected::Organization(_)) | None => return Vec::new(),
                 };
                 let party = Party::Person(partner);
                 open_conversation(&mut self.sched, &mut self.timers, session, party, now);
@@ -2161,7 +2224,9 @@ impl Engine {
                     unreachable!("a profile is open");
                 };
                 if profile.act(action, now) {
-                    self.sched.send(profile.tab_call(), Priority::Now);
+                    for call in profile.tab_calls() {
+                        self.sched.send(call, Priority::Now);
+                    }
                 }
             }
             (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
@@ -2228,9 +2293,9 @@ impl Engine {
                 Screen::Group(group) => fetch_group(&mut self.sched, group),
                 Screen::Profile(profile) => {
                     profile.reload(now);
-                    self.sched
-                        .send(Call::User(profile.handle().to_owned()), Priority::Now);
-                    self.sched.send(profile.tab_call(), Priority::Now);
+                    for call in profile.calls() {
+                        self.sched.send(call, Priority::Now);
+                    }
                 }
                 Screen::List(list) => {
                     list.reload(now);
@@ -2261,8 +2326,8 @@ impl Engine {
                     .push(Screen::Thread(Box::new(ThreadScreen::new(id.clone(), now))));
                 fetch_thread(&mut self.sched, &mut self.timers, id);
             }
-            Some(profile::Opens::Profile(handle)) => {
-                open_profile(&mut self.sched, session, handle, now);
+            Some(profile::Opens::Profile(who)) => {
+                open_profile(&mut self.sched, session, who, now);
             }
             Some(profile::Opens::Headline(headline)) => {
                 let list = ListScreen::headline(*headline, now);
@@ -2315,21 +2380,25 @@ impl Engine {
         let Phase::Ready(session) = &mut self.phase else {
             return Vec::new();
         };
+        if act == Act::Follow {
+            if let Some(who) = session.follow_target() {
+                let toast = (session.store.follow(&who)).map(|on| followed(who.handle(), on));
+                if let Some(text) = toast {
+                    self.toast(text, now);
+                }
+            }
+            return Vec::new();
+        }
         let commit = match session.selected() {
             Some(Selected::Row(row)) => row.commit.clone(),
             Some(Selected::Note { commit, .. }) => commit.clone(),
             Some(Selected::Person(user)) => {
-                let handle = user.handle.clone();
-                let toast = match act {
-                    Act::Block => session.block(handle),
-                    _ => (session.store.follow(&handle)).map(|on| followed(&handle, on)),
-                };
-                if let Some(text) = toast {
+                if let Some(text) = session.block(user.handle.clone()) {
                     self.toast(text, now);
                 }
                 return Vec::new();
             }
-            None => return Vec::new(),
+            Some(Selected::Organization(_)) | None => return Vec::new(),
         };
         let (id, author, url) = (commit.id, commit.author.handle, commit.html_url);
         let (toast, effects) = match act {
@@ -2350,13 +2419,7 @@ impl Engine {
                 );
                 (None, Vec::new())
             }
-            Act::Follow => (
-                session
-                    .store
-                    .follow(&author)
-                    .map(|on| followed(&author, on)),
-                Vec::new(),
-            ),
+            Act::Follow => unreachable!("f follows before the commit is looked at"),
             Act::Mute => {
                 let on = session.store.mute(&author);
                 (Some(muted(&author, on)), Vec::new())
@@ -2443,10 +2506,8 @@ impl Engine {
                     _ => Target::Quote(id),
                 };
                 let draft = self.drafts.get(&target);
-                (
-                    None,
-                    opened(session, Composer::open(target, Some(&author), draft)),
-                )
+                let composer = Composer::open(target, Some(&author), draft, session.voices());
+                (None, opened(session, composer))
             }
         };
         if let Some(text) = toast {
@@ -2651,6 +2712,7 @@ impl Engine {
                 return Vec::new();
             }
             Call::Commits { .. }
+            | Call::OrganizationCommits { .. }
             | Call::People { .. }
             | Call::Starred { .. }
             | Call::SearchCommits(_)
@@ -2712,11 +2774,39 @@ impl Engine {
                     }
                 }
             }
+            Call::Organization(handle) => {
+                if let Reply::Organization(page) = &reply {
+                    for screen in session.profiles_mut(handle) {
+                        screen.set_organization(page.clone());
+                    }
+                }
+            }
+            Call::FollowedOrganizations { handle, cursor } => {
+                if let Reply::Organizations(list) = &reply {
+                    for screen in session.profiles_mut(handle) {
+                        screen.land_organizations(cursor.is_none(), list.organizations.clone());
+                    }
+                    // Organizations are few and lead the list, so all their pages come at once
+                    // rather than as the selection nears them.
+                    if let Some(next) = &list.next_cursor {
+                        let call = Call::FollowedOrganizations {
+                            handle: handle.clone(),
+                            cursor: Some(next.clone()),
+                        };
+                        self.sched.send(call, Priority::Now);
+                    }
+                }
+            }
             _ => {}
         }
         let (Call::Page(log) | Call::Older { log, .. }) = call else {
             let answered = match (call, &reply) {
-                (Call::User(handle), Reply::User(profile)) => Some((handle, profile.is_following)),
+                (Call::User(handle), Reply::User(profile)) => {
+                    Some((Who::Person(handle.clone()), profile.is_following))
+                }
+                (Call::Organization(handle), Reply::Organization(page)) => {
+                    Some((Who::Organization(handle.clone()), page.is_following))
+                }
                 _ => None,
             };
             let said = match (call, &reply) {
@@ -2772,9 +2862,9 @@ impl Engine {
                 }
             }
             let toast = said.or_else(|| {
-                let (handle, server) = answered?;
-                let want = session.store.following(handle)?;
-                (want != server).then(|| followed(handle, want))
+                let (who, server) = answered?;
+                let want = session.store.following(&who)?;
+                (want != server).then(|| followed(who.handle(), want))
             });
             if let Some(text) = toast.or(news) {
                 self.toast(text, now);
@@ -2808,6 +2898,7 @@ impl Engine {
             searched: String::new(),
             undoable: None,
             unsent: HashMap::new(),
+            voice: None,
         }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
@@ -2869,7 +2960,7 @@ impl Engine {
             Phase::SignIn(step) => *step = Step::Ready(Some(error.to_string())),
             Phase::Ready(session) => {
                 let offline = matches!(failure, Failure::Offline(_));
-                if let Call::User(handle) = &call {
+                if let Call::User(handle) | Call::Organization(handle) = &call {
                     for profile in session.profiles_mut(handle) {
                         profile.fail_header(failure.clone());
                     }
@@ -2928,11 +3019,19 @@ impl Engine {
                         }
                         offline
                     }
-                    Call::Commits { .. } | Call::People { .. } => {
+                    Call::Commits { .. }
+                    | Call::OrganizationCommits { .. }
+                    | Call::People { .. } => {
                         if let Some((handle, tab, _)) = Tab::of(&call) {
                             for profile in session.profiles_mut(handle) {
                                 profile.fail_tab(tab, failure.clone());
                             }
+                        }
+                        offline
+                    }
+                    Call::FollowedOrganizations { handle, .. } => {
+                        for profile in session.profiles_mut(&handle) {
+                            profile.fail_tab(Tab::Following, failure.clone());
                         }
                         offline
                     }
@@ -3011,6 +3110,7 @@ impl Engine {
                     | Call::Block { .. }
                     | Call::Pin { .. }
                     | Call::User(_)
+                    | Call::Organization(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
                         true
@@ -3021,6 +3121,7 @@ impl Engine {
                     | Call::Mute { .. }
                     | Call::Block { .. }
                     | Call::User(_)
+                    | Call::Organization(_)
                     | Call::Delete(_)
                     | Call::Restore(_)
                     | Call::Pastel(_)
@@ -3041,9 +3142,12 @@ impl Engine {
                             (Error::WrongShape(_), Call::Star { id, .. }) => {
                                 format!("fatal: could not star {}", id.short_hash())
                             }
+                            (Error::WrongShape(_), Call::Follow { who, .. }) => {
+                                format!("fatal: could not follow @{}", who.handle())
+                            }
                             (
                                 Error::WrongShape(_),
-                                Call::Follow { handle, .. } | Call::User(handle),
+                                Call::User(handle) | Call::Organization(handle),
                             ) => format!("fatal: could not follow @{handle}"),
                             _ => error.to_string(),
                         };
@@ -3176,6 +3280,7 @@ impl Engine {
                     Selected::Row(row) => row.commit.id.0.clone(),
                     Selected::Note { commit, .. } => commit.id.0.clone(),
                     Selected::Person(user) => user.handle.clone(),
+                    Selected::Organization(organization) => organization.handle.clone(),
                 })
             }
             _ => None,

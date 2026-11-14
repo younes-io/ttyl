@@ -64,6 +64,7 @@ fn only_y_sends() {
             target: Target::New,
             body: BODY.to_owned(),
             attachment: Attachment::None,
+            author: None,
         }
     );
 }

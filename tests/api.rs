@@ -15,7 +15,7 @@ use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
     Chat, Circle, ClientId, CommitId, Filter, Folder, HeadlineId, Hush, Log, MessageId, Notice,
-    NotificationId, OrgId, Party, Reason, Refile, ScheduledId, Translation, Untranslated,
+    NotificationId, OrgId, Party, Reason, Refile, ScheduledId, Translation, Untranslated, Who,
 };
 
 struct Seen {
@@ -323,6 +323,7 @@ fn a_422_names_the_first_field_message_without_the_count() {
         target: Target::New,
         body: "x".to_owned(),
         attachment: Attachment::None,
+        author: None,
     };
     let error = Client::new(base, DeviceKey::generate().unwrap())
         .call(&post)
@@ -348,6 +349,7 @@ fn a_poll_goes_with_the_body_and_lasts_in_minutes() {
             options: vec!["vim".to_owned(), "emacs".to_owned()],
             duration: attach::Duration::ThreeDays,
         }),
+        author: None,
     };
     Client::new(base, DeviceKey::generate().unwrap())
         .call(&post)
@@ -440,6 +442,7 @@ fn images_go_as_multipart_signed_over_their_hashes() {
                 description: String::new(),
             },
         ]),
+        author: None,
     };
     let client = Client::new(base, DeviceKey::generate().unwrap());
     client.call(&post).unwrap_err();
@@ -499,6 +502,7 @@ fn an_image_gone_from_disk_is_named_and_nothing_is_sent() {
             path: "/nonexistent/ttyl/shot.png".into(),
             description: String::new(),
         }]),
+        author: None,
     };
     let error = Client::new("http://127.0.0.1:9", DeviceKey::generate().unwrap())
         .call(&post)
@@ -523,6 +527,7 @@ fn a_dropped_connection_may_have_landed_and_a_refused_one_did_not() {
         target: Target::New,
         body: "x".to_owned(),
         attachment: Attachment::None,
+        author: None,
     };
     let dropped = Client::new(base, DeviceKey::generate().unwrap())
         .call(&post)
@@ -670,7 +675,7 @@ fn starring_and_following_post_to_turn_on_and_delete_to_turn_off() {
         );
 
         let follow = Call::Follow {
-            handle: "ada".to_owned(),
+            who: Who::Person("ada".to_owned()),
             on,
         };
         let (reply, seen) = exchange(&follow, &serde_json::json!({}));
@@ -678,6 +683,17 @@ fn starring_and_following_post_to_turn_on_and_delete_to_turn_off() {
         assert_eq!(
             request_line(&seen),
             format!("{method} /api/v1/users/ada/follow HTTP/1.1")
+        );
+
+        let follow = Call::Follow {
+            who: Who::Organization("acme".to_owned()),
+            on,
+        };
+        let (reply, seen) = exchange(&follow, &serde_json::json!({}));
+        assert!(matches!(reply, Reply::Done));
+        assert_eq!(
+            request_line(&seen),
+            format!("{method} /api/v1/organizations/acme/follow HTTP/1.1")
         );
     }
 }
@@ -898,6 +914,7 @@ fn a_reply_names_its_parent_and_a_quote_names_its_commit() {
             target,
             body: "same".to_owned(),
             attachment: Attachment::None,
+            author: None,
         };
         let (reply, seen) = exchange(&post, &focus());
         assert!(matches!(reply, Reply::Commit(_)));
@@ -1512,6 +1529,7 @@ fn scheduling_posts_the_body_and_its_time_with_the_offset_it_was_read_in() {
         body: "shipped it".to_owned(),
         attachment: Attachment::None,
         at: chrono::DateTime::parse_from_rfc3339("2026-10-23T14:00:00+02:00").unwrap(),
+        author: None,
     };
     let answer = serde_json::json!({ "data": scheduled("s1", Some("shipped it"), "scheduled") });
     let (reply, seen) = exchange(&call, &answer);
@@ -1594,4 +1612,111 @@ fn one_already_gone_is_a_refusal_with_the_server_reason() {
     server.join().unwrap();
     assert_eq!(error.to_string(), gone);
     assert!(!error.may_have_landed());
+}
+
+fn organization() -> serde_json::Value {
+    serde_json::json!({
+        "handle": "acme",
+        "name": "Acme",
+        "avatar_url": null,
+        "bio": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/acme",
+        "html_url": "https://dev-null.sh/acme",
+        "lane": null,
+    })
+}
+
+#[test]
+fn an_organizations_page_commits_and_mentions_have_their_own_routes() {
+    let mut data = organization();
+    data["followers_count"] = serde_json::json!(7);
+    data["admins"] = serde_json::json!([]);
+    let page = serde_json::json!({
+        "data": data,
+        "is_following": true,
+        "can_claim": false,
+        "settings_url": null,
+    });
+    let (reply, seen) = exchange(&Call::Organization("acme".to_owned()), &page);
+    assert!(matches!(
+        reply,
+        Reply::Organization(page) if page.is_following && page.organization.followers_count == Some(7)
+    ));
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/organizations/acme HTTP/1.1"
+    );
+
+    let rows = serde_json::json!({
+        "data": [fixture("log-latest")["data"][0]],
+        "meta": { "next_cursor": "next" },
+    });
+    for (mentions, cursor, path) in [
+        (false, None, "/api/v1/organizations/acme/commits"),
+        (
+            true,
+            Some("a+b"),
+            "/api/v1/organizations/acme/mentions?cursor=a%2Bb",
+        ),
+    ] {
+        let call = Call::OrganizationCommits {
+            handle: "acme".to_owned(),
+            mentions,
+            cursor: cursor.map(str::to_owned),
+        };
+        let (reply, seen) = exchange(&call, &rows);
+        assert!(
+            matches!(&reply, Reply::Rows(page) if page.rows.len() == 1),
+            "{call:?}"
+        );
+        assert_eq!(request_line(&seen), format!("GET {path} HTTP/1.1"));
+    }
+
+    let mut followed = organization();
+    followed["is_followed"] = serde_json::json!(true);
+    let list = serde_json::json!({ "data": [followed], "meta": { "next_cursor": "o2" } });
+    let call = Call::FollowedOrganizations {
+        handle: "ada".to_owned(),
+        cursor: Some("o2".to_owned()),
+    };
+    let (reply, seen) = exchange(&call, &list);
+    assert!(matches!(
+        &reply,
+        Reply::Organizations(list) if list.organizations[0].is_followed == Some(true)
+            && list.next_cursor.as_deref() == Some("o2")
+    ));
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/users/ada/following/organizations?cursor=o2 HTTP/1.1"
+    );
+}
+
+#[test]
+fn a_commit_as_an_organization_names_it_and_one_as_you_names_nobody() {
+    for (author, field) in [
+        (Some("acme".to_owned()), Some(serde_json::json!("acme"))),
+        (None, None),
+    ] {
+        let post = Call::Post {
+            target: Target::New,
+            body: "shipped".to_owned(),
+            attachment: Attachment::None,
+            author,
+        };
+        let (_, seen) = exchange(&post, &focus());
+        let body: serde_json::Value = serde_json::from_str(&seen.body).unwrap();
+        assert_eq!(body.get("author").cloned(), field, "{body}");
+    }
+    let schedule = Call::Schedule {
+        body: "shipped".to_owned(),
+        attachment: Attachment::None,
+        at: chrono::DateTime::parse_from_rfc3339("2026-10-23T14:00:00+02:00").unwrap(),
+        author: Some("acme".to_owned()),
+    };
+    let answer = serde_json::json!({ "data": scheduled("s1", Some("shipped"), "scheduled") });
+    let (_, seen) = exchange(&schedule, &answer);
+    let body: serde_json::Value = serde_json::from_str(&seen.body).unwrap();
+    assert_eq!(body["author"], "acme", "{body}");
 }
