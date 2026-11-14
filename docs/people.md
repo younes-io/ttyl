@@ -65,10 +65,11 @@ block @grace? this ends follows both ways [y/N]
 
 Press <kbd>y</kbd> to block, or any other key to keep things as they are.
 Every commit of theirs on screen then folds into a
-`blocked @grace · B to unblock` line, and so do their replies, quotes,
-mentions and follows in your notifications. Press <kbd>B</kbd> on a folded
-line to unblock them, with no question asked. Unblocking doesn't bring the
-follows back, and they no longer show as following you.
+`blocked @grace · B to unblock` line, and so does a notification about them
+alone: a reply, quote, mention or follow. A group of several people stays as
+it is. Press <kbd>B</kbd> on a folded line to unblock them, with no question
+asked. Unblocking doesn't bring the follows back, and they no longer show as
+following you.
 
 <kbd>B</kbd> also works on a person in the followers and following tabs of a
 profile, in people search results, and in a group of people who followed you.

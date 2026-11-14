@@ -281,7 +281,7 @@ impl Session {
     fn profile_target(&self) -> Option<String> {
         let handle = match self.selected()? {
             Selected::Row(row) => row.commit.author.handle.clone(),
-            Selected::Note(commit) => commit.author.handle.clone(),
+            Selected::Note { commit, .. } => commit.author.handle.clone(),
             Selected::Person(user) => user.handle.clone(),
         };
         (self.profile().map(ProfileScreen::handle) != Some(&handle)).then_some(handle)
@@ -423,23 +423,30 @@ impl Session {
                     }
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
-            Some(Selected::Note(commit)) if self.store.blocking(&commit.author.handle) => {
-                act == Act::Block
-            }
-            Some(Selected::Note(commit)) => match act {
-                Act::Follow | Act::Mute | Act::Block => commit.author.handle != *me,
-                Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe | Act::Related => {
-                    true
+            Some(Selected::Note { commit, alone }) => {
+                let blocked = self.store.blocking(&commit.author.handle);
+                match act {
+                    // A row about one person folds and takes only B. A group of several doesn't
+                    // fold, so B there would undo a block it never showed, and f is refused.
+                    _ if blocked && alone => act == Act::Block,
+                    Act::Follow | Act::Block if blocked => false,
+                    Act::Follow | Act::Mute | Act::Block => commit.author.handle != *me,
+                    Act::Copy
+                    | Act::Browse
+                    | Act::Reply
+                    | Act::Quote
+                    | Act::Pipe
+                    | Act::Related => true,
+                    Act::Star
+                    | Act::Pastel
+                    | Act::Delete
+                    | Act::Report
+                    | Act::Vote
+                    | Act::Images
+                    | Act::OpenQuote
+                    | Act::Translate => false,
                 }
-                Act::Star
-                | Act::Pastel
-                | Act::Delete
-                | Act::Report
-                | Act::Vote
-                | Act::Images
-                | Act::OpenQuote
-                | Act::Translate => false,
-            },
+            }
             Some(Selected::Person(user)) => {
                 user.handle != *me
                     && match act {
@@ -917,7 +924,11 @@ fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
 /// What the commit keys act on: a log or thread row, a notification's commit, or a person who followed.
 enum Selected<'a> {
     Row(Box<Cow<'a, Row>>),
-    Note(&'a Commit),
+    /// A notification's commit, `alone` when one person's doing is behind the row.
+    Note {
+        commit: &'a Commit,
+        alone: bool,
+    },
     Person(&'a User),
 }
 
@@ -925,7 +936,7 @@ impl<'a> Selected<'a> {
     fn of(event: &'a model::Event, alone: bool) -> Option<Self> {
         match (&event.kind, &event.commit) {
             (Kind::Followed, _) => alone.then_some(Selected::Person(&event.actor)),
-            (_, Some(Shown::Live(commit))) => Some(Selected::Note(commit)),
+            (_, Some(Shown::Live(commit))) => Some(Selected::Note { commit, alone }),
             _ => None,
         }
     }
@@ -1933,7 +1944,7 @@ impl Engine {
         };
         let commit = match session.selected() {
             Some(Selected::Row(row)) => row.commit.clone(),
-            Some(Selected::Note(commit)) => commit.clone(),
+            Some(Selected::Note { commit, .. }) => commit.clone(),
             Some(Selected::Person(user)) => {
                 let handle = user.handle.clone();
                 let toast = match act {
@@ -2658,7 +2669,7 @@ impl Engine {
                 theme::set_pasteis(session.store.me.pasteis_mode);
                 session.selected().map(|selected| match selected {
                     Selected::Row(row) => row.commit.id.0.clone(),
-                    Selected::Note(commit) => commit.id.0.clone(),
+                    Selected::Note { commit, .. } => commit.id.0.clone(),
                     Selected::Person(user) => user.handle.clone(),
                 })
             }

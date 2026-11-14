@@ -227,17 +227,7 @@ fn a_blocked_reply_folds_in_the_inbox_and_takes_only_b() {
     let blocked = one_run(&press(&mut engine, "y", at));
     reply(&mut engine, blocked, Ok(Reply::Done), at);
 
-    let effects = press(&mut engine, "gn", at);
-    let Some(&Effect::Run(listed, _)) = effects
-        .iter()
-        .find(|effect| matches!(effect, Effect::Run(_, Call::Notifications { .. })))
-    else {
-        panic!("{:?}", runs(&effects));
-    };
-    engine.update(
-        Event::Reply(listed, Ok(Reply::Notifications(notifications()))),
-        at,
-    );
+    open_inbox(&mut engine, notifications(), at);
     let rows = screen(&mut engine, 100, 40, at);
     assert_eq!(folded(&rows), 1, "grace's reply folds: {rows:#?}");
     assert!(!contains(&rows, "replied to your commit"), "{rows:#?}");
@@ -254,4 +244,41 @@ fn a_blocked_reply_folds_in_the_inbox_and_takes_only_b() {
     let rows = screen(&mut engine, 100, 40, at);
     assert_eq!(folded(&rows), 0, "{rows:#?}");
     assert!(contains(&rows, "replied to your commit"), "{rows:#?}");
+}
+
+/// Opens notifications and answers with `page`.
+fn open_inbox(engine: &mut Engine, page: NotificationPage, at: Instant) {
+    let effects = press(engine, "gn", at);
+    let Some(&Effect::Run(listed, _)) = effects
+        .iter()
+        .find(|effect| matches!(effect, Effect::Run(_, Call::Notifications { .. })))
+    else {
+        panic!("{:?}", runs(&effects));
+    };
+    engine.update(Event::Reply(listed, Ok(Reply::Notifications(page))), at);
+}
+
+#[test]
+fn a_group_of_several_stays_open_and_keeps_b_and_f_off_when_its_newest_is_blocked() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    press(&mut engine, "2jjjB", at);
+    let blocked = one_run(&press(&mut engine, "y", at));
+    reply(&mut engine, blocked, Ok(Reply::Done), at);
+
+    let mut page = notifications();
+    let mentions = &mut page.groups[4];
+    assert_eq!(mentions.event.actor.handle, "linus");
+    (mentions.actors_count, mentions.event_count) = (2, 2);
+    open_inbox(&mut engine, page, at);
+    let rows = screen(&mut engine, 100, 40, at);
+    assert!(
+        !contains(&rows, "blocked @linus · B to unblock"),
+        "{rows:#?}"
+    );
+    assert!(contains(&rows, "Linus mentioned you"), "{rows:#?}");
+
+    press(&mut engine, "jjjj", at);
+    assert!(press(&mut engine, "B", at).is_empty(), "no unseen unblock");
+    assert!(press(&mut engine, "f", at).is_empty(), "no refused follow");
 }
