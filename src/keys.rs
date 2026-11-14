@@ -75,6 +75,16 @@ pub enum Action {
     Edit,
     /// Asks before revoking the selected device.
     Revoke,
+    /// Leaves a conversation's input for its newest message, to act on it.
+    Select,
+    /// Goes back to typing in a conversation.
+    Type,
+    /// Answers the selected message in a conversation.
+    Reply,
+    /// Asks which emoji to leave on the selected message in a conversation.
+    React,
+    /// Pings the partner, or everyone in a group, the way a terminal rings its bell.
+    Ping,
 }
 
 /// What a key does to the selected conversation, as mutt's keys flag and save a message.
@@ -165,6 +175,7 @@ impl Action {
             | Action::PreviousFilter
             | Action::PageUp
             | Action::PageDown
+            | Action::Select
             | Action::Choose(_) => Group::Move,
             Action::Open
             | Action::Expand
@@ -182,6 +193,8 @@ impl Action {
             | Action::Attach
             | Action::Schedule
             | Action::PostAs
+            | Action::Type
+            | Action::Reply
             | Action::Commit(Act::Reply | Act::Quote | Act::Message) => Group::Write,
             Action::Show(_)
             | Action::NextLog
@@ -211,6 +224,8 @@ impl Action {
             | Action::Hush(_)
             | Action::Edit
             | Action::Revoke
+            | Action::React
+            | Action::Ping
             | Action::Undo => Group::Act,
         }
     }
@@ -256,7 +271,12 @@ pub enum Scope {
     At,
     Queue,
     Messages,
+    /// Typing in a conversation.
     Conversation,
+    /// On a message selected in a conversation.
+    Message,
+    /// Picking an emoji to react with.
+    React,
     /// Asking how long to mute a conversation for.
     Mute,
     Settings,
@@ -280,6 +300,8 @@ pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const SEARCH_SCOPES: &[Scope] = &[Scope::Search];
 pub const AT_SCOPES: &[Scope] = &[Scope::At];
 pub const CONVERSATION_SCOPES: &[Scope] = &[Scope::Conversation];
+pub const MESSAGE_SCOPES: &[Scope] = &[Scope::Message, Scope::Global, Scope::Always];
+pub const REACT_SCOPES: &[Scope] = &[Scope::React];
 pub const MUTE_SCOPES: &[Scope] = &[Scope::Mute, Scope::Always];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
@@ -376,6 +398,8 @@ pub const UNIONS: &[&[Scope]] = &[
     QUEUE_SCOPES,
     MESSAGES_SCOPES,
     CONVERSATION_SCOPES,
+    MESSAGE_SCOPES,
+    REACT_SCOPES,
     MUTE_SCOPES,
     SETTINGS_SCOPES,
     EDIT_SCOPES,
@@ -391,24 +415,33 @@ pub enum InputMode {
 pub struct Key {
     code: KeyCode,
     ctrl: bool,
+    alt: bool,
 }
 
 impl Key {
     const fn ch(ch: char) -> Self {
-        Key {
-            code: KeyCode::Char(ch),
-            ctrl: false,
-        }
+        Key::code(KeyCode::Char(ch))
     }
 
     const fn code(code: KeyCode) -> Self {
-        Key { code, ctrl: false }
+        Key {
+            code,
+            ctrl: false,
+            alt: false,
+        }
     }
 
     const fn ctrl(ch: char) -> Self {
         Key {
-            code: KeyCode::Char(ch),
             ctrl: true,
+            ..Key::ch(ch)
+        }
+    }
+
+    const fn alt(ch: char) -> Self {
+        Key {
+            alt: true,
+            ..Key::ch(ch)
         }
     }
 
@@ -428,10 +461,10 @@ impl Key {
             KeyCode::End => "end".to_owned(),
             other => format!("{other:?}").to_lowercase(),
         };
-        if self.ctrl {
-            format!("ctrl-{code}")
-        } else {
-            code
+        match (self.ctrl, self.alt) {
+            (true, _) => format!("ctrl-{code}"),
+            (false, true) => format!("alt-{code}"),
+            (false, false) => code,
         }
     }
 }
@@ -441,6 +474,7 @@ impl From<KeyEvent> for Key {
         Key {
             code: event.code,
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
+            alt: event.modifiers.contains(KeyModifiers::ALT),
         }
     }
 }
@@ -1236,8 +1270,8 @@ pub const TABLE: &[Binding] = &[
         chords: &[
             &[Key::ctrl('s')],
             &[Key {
-                code: KeyCode::Enter,
                 ctrl: true,
+                ..Key::code(KeyCode::Enter)
             }],
         ],
         action: Action::Send,
@@ -1305,8 +1339,8 @@ pub const TABLE: &[Binding] = &[
         chords: &[
             &[Key::ctrl('s')],
             &[Key {
-                code: KeyCode::Enter,
                 ctrl: true,
+                ..Key::code(KeyCode::Enter)
             }],
         ],
         action: Action::Send,
@@ -1406,6 +1440,41 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel reply"),
+        help: "cancel the reply",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Select,
+        hint: Some("esc select"),
+        help: "select the newest message, to reply or react",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::alt('k')]],
+        action: Action::Up,
+        hint: None,
+        help: "select the newest message, to reply or react",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::alt('j')]],
+        action: Action::Down,
+        hint: None,
+        help: "select the newest message, to reply or react",
+    },
+    Binding {
+        scope: Scope::Conversation,
+        chords: &[&[Key::ctrl('g')]],
+        action: Action::Ping,
+        hint: Some("ctrl-g ping"),
+        help: "ping them, or everyone in a group",
+    },
+    Binding {
+        scope: Scope::Conversation,
         chords: &[&[Key::code(KeyCode::PageUp)]],
         action: Action::PageUp,
         hint: Some("pgup/pgdn scroll"),
@@ -1434,6 +1503,94 @@ pub const TABLE: &[Binding] = &[
     },
     Binding {
         scope: Scope::Conversation,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[
+            &[Key::ch('j')],
+            &[Key::code(KeyCode::Down)],
+            &[Key::alt('j')],
+        ],
+        action: Action::Down,
+        hint: Some("j/k move"),
+        help: "next message",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ch('k')], &[Key::code(KeyCode::Up)], &[Key::alt('k')]],
+        action: Action::Up,
+        hint: None,
+        help: "previous message",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ch('r')]],
+        action: Action::Reply,
+        hint: Some("r reply"),
+        help: "reply to it",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ch('+')]],
+        action: Action::React,
+        hint: Some("+ react"),
+        help: "react with an emoji, or take one back",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ctrl('g')]],
+        action: Action::Ping,
+        hint: Some("ctrl-g ping"),
+        help: "ping them, or everyone in a group",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::ch('i')], &[Key::code(KeyCode::Enter)]],
+        action: Action::Type,
+        hint: Some("i type"),
+        help: "back to typing",
+    },
+    Binding {
+        scope: Scope::Message,
+        chords: &[&[Key::code(KeyCode::Esc)], &[Key::code(KeyCode::Backspace)]],
+        action: Action::Back,
+        hint: Some("esc back"),
+        help: "back, keeping what you typed",
+    },
+    Binding {
+        scope: Scope::React,
+        chords: &[&[Key::code(KeyCode::Tab)], &[Key::code(KeyCode::Right)]],
+        action: Action::Next,
+        hint: Some("tab next"),
+        help: "next emoji",
+    },
+    Binding {
+        scope: Scope::React,
+        chords: &[&[Key::code(KeyCode::BackTab)], &[Key::code(KeyCode::Left)]],
+        action: Action::Previous,
+        hint: None,
+        help: "previous emoji",
+    },
+    Binding {
+        scope: Scope::React,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter react"),
+        help: "react with it, or take it back if you had",
+    },
+    Binding {
+        scope: Scope::React,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "back to the message",
+    },
+    Binding {
+        scope: Scope::React,
         chords: &[&[Key::ctrl('c')]],
         action: Action::Quit,
         hint: None,

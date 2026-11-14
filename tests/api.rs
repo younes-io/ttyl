@@ -14,8 +14,9 @@ use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Chat, Circle, ClientId, CommitId, Filter, Folder, HeadlineId, Hush, Log, MessageId, Notice,
-    NotificationId, OrgId, Party, Reason, Refile, ScheduledId, Translation, Untranslated, Who,
+    Chat, Circle, ClientId, CommitId, Extra, Filter, Folder, HeadlineId, Hush, Log, MessageId,
+    MessagePage, Notice, NotificationId, OrgId, Party, ReactionsVersion, Reason, Refile,
+    ScheduledId, Translation, Untranslated, Who,
 };
 
 struct Seen {
@@ -1493,8 +1494,11 @@ fn a_conversation_is_read_newest_page_first_then_before_or_after_a_message() {
             "/api/v1/remotes/@grace/messages?before=101",
         ),
         (
-            Paging::After(MessageId(105)),
-            "/api/v1/remotes/@grace/messages?after=105",
+            Paging::Since {
+                after: MessageId(105),
+                reactions: ReactionsVersion(7),
+            },
+            "/api/v1/remotes/@grace/messages?after=105&reactions_after=7",
         ),
     ] {
         let call = Call::Messages {
@@ -1508,6 +1512,129 @@ fn a_conversation_is_read_newest_page_first_then_before_or_after_a_message() {
         };
         assert_eq!(page.messages.len(), 4);
         assert_eq!(page.read_through, MessageId(102));
+        assert_eq!(page.partner_read_through, Some(MessageId(102)));
+    }
+}
+
+#[test]
+fn a_poll_reads_the_reactions_changed_since_and_how_far_the_partner_read() {
+    let mut thread = fixture("remote-thread");
+    thread["data"]["reactions_version"] = serde_json::json!(9);
+    thread["data"]["reaction_changes"] = serde_json::json!([{ "id": 101, "reactions": [
+        { "user_id": "0a000000-0000-4000-8000-00000000000a", "emoji": "👍" },
+    ] }]);
+    let page = MessagePage::parse(&thread.to_string()).unwrap();
+    assert_eq!(page.reactions_version, ReactionsVersion(9));
+    let [(id, reactions)] = page.reaction_changes.as_slice() else {
+        panic!("{:?}", page.reaction_changes)
+    };
+    assert_eq!(*id, MessageId(101));
+    assert_eq!(reactions[0].emoji, "👍");
+
+    thread["data"]["partner_read_through_id"] = serde_json::json!(0);
+    let page = MessagePage::parse(&thread.to_string()).unwrap();
+    assert_eq!(
+        page.partner_read_through, None,
+        "0 means dev-null.sh doesn't share how far they read"
+    );
+}
+
+#[test]
+fn a_reply_names_the_message_it_answers_and_reads_back_its_start() {
+    let client_id = "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e12";
+    let call = Call::SendMessage {
+        chat: Chat::Direct("grace".to_owned()),
+        body: "after the standup".to_owned(),
+        client_id: ClientId(client_id.to_owned()),
+        reply_to: Some(MessageId(101)),
+    };
+    let message = serde_json::json!({ "data": {
+        "id": 106, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": client_id,
+        "body": "after the standup", "images": [], "voice": null, "event": null,
+        "reply_to_id": 101,
+        "reply_to": { "id": 101, "user_id": "0b000000-0000-4000-8000-00000000000b",
+            "body": "\nare you around tomorrow?\nthe wrap code", "images_count": 0, "has_voice": false },
+        "reactions": [],
+        "created_at": "2026-10-21T09:58:00Z",
+    }});
+    let (reply, seen) = exchange(&call, &message);
+    assert_eq!(
+        request_line(&seen),
+        "POST /api/v1/remotes/@grace/messages HTTP/1.1"
+    );
+    assert_eq!(
+        sent(&seen),
+        serde_json::json!({ "body": "after the standup", "client_id": client_id, "reply_to_id": 101 })
+    );
+    let Reply::Message(message) = reply else {
+        panic!("{reply:?}")
+    };
+    let reply_to = message.reply_to.unwrap();
+    assert_eq!(reply_to.id, MessageId(101));
+    let quote = reply_to.quote.unwrap();
+    assert_eq!(quote.user_id.0, "0b000000-0000-4000-8000-00000000000b");
+    assert_eq!(quote.text, "are you around tomorrow?");
+}
+
+#[test]
+fn a_reaction_is_posted_or_deleted_with_its_emoji_and_answers_with_all_of_them() {
+    let answer = serde_json::json!({ "reactions": [
+        { "user_id": "0b000000-0000-4000-8000-00000000000b", "emoji": "✅" },
+        { "user_id": "0a000000-0000-4000-8000-00000000000a", "emoji": "✅" },
+    ] });
+    for (on, method) in [(true, "POST"), (false, "DELETE")] {
+        let (base, server) = serve("200 OK", &answer.to_string());
+        let client = Client::new(base, DeviceKey::generate().unwrap());
+        let call = Call::React {
+            chat: Chat::Direct("grace".to_owned()),
+            message: MessageId(105),
+            emoji: "✅".to_owned(),
+            on,
+        };
+        let reply = client.call(&call).unwrap();
+        let seen = server.join().unwrap();
+        let path = "/api/v1/remotes/messages/105/reactions";
+        assert_eq!(request_line(&seen), format!("{method} {path} HTTP/1.1"));
+        assert_eq!(sent(&seen), serde_json::json!({ "emoji": "✅" }));
+        assert!(
+            signature_holds(
+                client.key(),
+                &seen,
+                method,
+                path,
+                &format!("api-react-{method}")
+            ),
+            "the {method} is signed over its body"
+        );
+        let Reply::Reactions(reactions) = reply else {
+            panic!("{reply:?}")
+        };
+        let emoji: Vec<&str> = reactions.iter().map(|each| each.emoji.as_str()).collect();
+        assert_eq!(emoji, ["✅", "✅"]);
+    }
+}
+
+#[test]
+fn a_ping_posts_to_the_person_or_the_whole_org() {
+    let ping = serde_json::json!({ "data": {
+        "id": 107, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": null,
+        "body": null, "images": [], "voice": null, "event": "ping",
+        "created_at": "2026-10-21T10:00:00Z",
+    }});
+    for (chat, path) in [
+        (
+            Chat::Direct("grace".to_owned()),
+            "/api/v1/remotes/@grace/ping".to_owned(),
+        ),
+        (
+            Chat::Org(OrgId(UNIX_ROOM.to_owned())),
+            format!("/api/v1/remotes/orgs/{UNIX_ROOM}/ping"),
+        ),
+    ] {
+        let (reply, seen) = exchange(&Call::Ping(chat), &ping);
+        assert_eq!(request_line(&seen), format!("POST {path} HTTP/1.1"));
+        assert_eq!(seen.body, "", "a ping carries nothing");
+        assert!(matches!(reply, Reply::Message(message) if message.extra == Some(Extra::Ping)));
     }
 }
 
@@ -1534,6 +1661,7 @@ fn marking_read_puts_how_far_and_sending_posts_the_text_with_its_client_id() {
         chat: Chat::Direct("grace".to_owned()),
         body: "merging it now".to_owned(),
         client_id: ClientId(client_id.to_owned()),
+        reply_to: None,
     };
     let message = serde_json::json!({ "data": {
         "id": 106, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": client_id,
@@ -1562,7 +1690,13 @@ fn an_org_is_read_marked_and_sent_to_by_its_id() {
     for (paging, query) in [
         (Paging::Latest, ""),
         (Paging::Before(MessageId(200)), "?before=200"),
-        (Paging::After(MessageId(210)), "?after=210"),
+        (
+            Paging::Since {
+                after: MessageId(210),
+                reactions: ReactionsVersion(3),
+            },
+            "?after=210&reactions_after=3",
+        ),
     ] {
         let call = Call::Messages {
             chat: org.clone(),
@@ -1613,6 +1747,7 @@ fn an_org_is_read_marked_and_sent_to_by_its_id() {
         chat: org,
         body: "reviewing now".to_owned(),
         client_id: ClientId(client_id.to_owned()),
+        reply_to: Some(MessageId(208)),
     };
     let message = serde_json::json!({ "data": {
         "id": 211, "user_id": "0a000000-0000-4000-8000-00000000000a", "client_id": client_id,
@@ -1626,7 +1761,7 @@ fn an_org_is_read_marked_and_sent_to_by_its_id() {
     );
     assert_eq!(
         sent(&seen),
-        serde_json::json!({ "body": "reviewing now", "client_id": client_id })
+        serde_json::json!({ "body": "reviewing now", "client_id": client_id, "reply_to_id": 208 })
     );
     assert!(matches!(reply, Reply::Message(message) if message.id == MessageId(211)));
 }

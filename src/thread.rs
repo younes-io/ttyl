@@ -266,7 +266,12 @@ impl ThreadScreen {
             | Action::Revoke
             | Action::Messages
             | Action::PageUp
-            | Action::PageDown => false,
+            | Action::PageDown
+            | Action::Select
+            | Action::Type
+            | Action::Reply
+            | Action::React
+            | Action::Ping => false,
         }
     }
 

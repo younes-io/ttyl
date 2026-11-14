@@ -1277,8 +1277,50 @@ pub struct Message {
     pub body: String,
     pub extra: Option<Extra>,
     pub notice: Option<Notice>,
+    pub reply_to: Option<ReplyTo>,
+    /// In the order they were left.
+    pub reactions: Vec<Reaction>,
     pub created_at: DateTime<Utc>,
 }
+
+/// The message a reply answers, and its start when dev-null.sh sent it along.
+#[derive(Debug, Clone)]
+pub struct ReplyTo {
+    pub id: MessageId,
+    pub quote: Option<Quoted>,
+}
+
+/// As much of a message as a reply to it shows: who wrote it and its first line, or the mark of
+/// what it carries instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quoted {
+    pub user_id: UserId,
+    pub text: String,
+}
+
+/// One emoji someone left on a message.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Reaction {
+    pub user_id: UserId,
+    pub emoji: String,
+}
+
+impl Reaction {
+    pub fn parse_list(json: &str) -> serde_json::Result<Vec<Self>> {
+        #[derive(Deserialize)]
+        struct Wire {
+            reactions: Vec<Reaction>,
+        }
+
+        Ok(serde_json::from_str::<Wire>(json)?.reactions)
+    }
+}
+
+/// How far a conversation's reactions have changed, which a poll sends back to hear only of
+/// changes since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize)]
+#[serde(transparent)]
+pub struct ReactionsVersion(pub u64);
 
 /// A change to an org that its history records between messages, with the handle of whom it was
 /// about.
@@ -1331,7 +1373,23 @@ impl<'de> Deserialize<'de> for Message {
             event: Option<String>,
             #[serde(default)]
             subject: Option<User>,
+            #[serde(default)]
+            reply_to_id: Option<MessageId>,
+            #[serde(default)]
+            reply_to: Option<QuoteWire>,
+            #[serde(default)]
+            reactions: Option<Vec<Reaction>>,
             created_at: DateTime<Utc>,
+        }
+
+        #[derive(Deserialize)]
+        struct QuoteWire {
+            user_id: UserId,
+            body: Option<String>,
+            #[serde(default)]
+            images_count: u32,
+            #[serde(default)]
+            has_voice: bool,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -1347,6 +1405,22 @@ impl<'de> Deserialize<'de> for Message {
             _ if body.is_empty() => Some(Extra::Images),
             _ => None,
         };
+        let reply_to = wire.reply_to_id.map(|id| ReplyTo {
+            id,
+            quote: wire.reply_to.map(|quoted| {
+                let body = quoted.body.unwrap_or_default();
+                let text = match body.lines().find(|line| !line.trim().is_empty()) {
+                    Some(line) => line.trim().to_owned(),
+                    None if quoted.has_voice => Extra::Voice.mark().to_owned(),
+                    None if quoted.images_count > 0 => Extra::Images.mark().to_owned(),
+                    None => String::new(),
+                };
+                Quoted {
+                    user_id: quoted.user_id,
+                    text,
+                }
+            }),
+        });
         Ok(Message {
             id: wire.id,
             user_id: wire.user_id,
@@ -1355,12 +1429,20 @@ impl<'de> Deserialize<'de> for Message {
             body,
             extra,
             notice,
+            reply_to,
+            reactions: wire.reactions.unwrap_or_default(),
             created_at: wire.created_at,
         })
     }
 }
 
 impl Message {
+    /// Whether it records something that happened rather than saying something, which can't be
+    /// replied or reacted to.
+    pub fn is_event(&self) -> bool {
+        self.notice.is_some() || matches!(self.extra, Some(Extra::Ping | Extra::Call))
+    }
+
     /// The first line of the text, or what a notice says, or the mark of what it carries instead.
     pub fn preview(&self) -> Cow<'_, str> {
         if let Some(told) = self.told() {
@@ -1695,6 +1777,12 @@ pub struct MessagePage {
     pub messages: Vec<Message>,
     pub has_older: bool,
     pub read_through: MessageId,
+    /// How far the partner has read, which dev-null.sh says only when both of them share it and
+    /// the partner merged the conversation. An org's never says.
+    pub partner_read_through: Option<MessageId>,
+    pub reactions_version: ReactionsVersion,
+    /// Each message whose reactions changed since the version a poll sent, with all of them now.
+    pub reaction_changes: Vec<(MessageId, Vec<Reaction>)>,
     pub access: Access,
 }
 
@@ -1716,7 +1804,19 @@ impl MessagePage {
             has_older: bool,
             /// Null until the user has read anything here.
             read_through_id: Option<MessageId>,
+            #[serde(default)]
+            partner_read_through_id: Option<MessageId>,
+            #[serde(default)]
+            reactions_version: ReactionsVersion,
+            #[serde(default)]
+            reaction_changes: Vec<Change>,
             access: Access,
+        }
+
+        #[derive(Deserialize)]
+        struct Change {
+            id: MessageId,
+            reactions: Vec<Reaction>,
         }
 
         #[derive(Deserialize)]
@@ -1742,6 +1842,11 @@ impl MessagePage {
             messages: data.messages,
             has_older: data.has_older,
             read_through: data.read_through_id.unwrap_or(MessageId(0)),
+            partner_read_through: data.partner_read_through_id.filter(|id| id.0 > 0),
+            reactions_version: data.reactions_version,
+            reaction_changes: (data.reaction_changes.into_iter())
+                .map(|change| (change.id, change.reactions))
+                .collect(),
             access: data.access,
         })
     }

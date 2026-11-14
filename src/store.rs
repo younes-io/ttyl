@@ -712,7 +712,9 @@ impl Store {
             | Call::Candidates(_)
             | Call::Messages { .. }
             | Call::MarkRead { .. }
-            | Call::SendMessage { .. } => return,
+            | Call::SendMessage { .. }
+            | Call::React { .. }
+            | Call::Ping(_) => return,
         }
         self.generation += 1;
     }
@@ -937,7 +939,8 @@ impl Store {
                 | Reply::Conversations(_)
                 | Reply::Candidates(_)
                 | Reply::Messages(_)
-                | Reply::Message(_),
+                | Reply::Message(_)
+                | Reply::Reactions(_),
             ) => {}
         }
     }

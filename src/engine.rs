@@ -27,12 +27,12 @@ use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
-    self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, CONVERSATION_SCOPES,
-    DETAILS_SCOPES, EDIT_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode,
-    Keep, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, MUTE_SCOPES,
-    PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
-    QUEUE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES,
-    SETTINGS_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, EDIT_SCOPES,
+    GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keep, Keymap,
+    LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, MUTE_SCOPES, PEOPLE_SCOPES,
+    PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, QUEUE_SCOPES,
+    REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SETTINGS_SCOPES,
+    SPLASH_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
@@ -465,7 +465,7 @@ impl Session {
             Some(Screen::List(_)) => LIST_SCOPES,
             Some(Screen::Queue(_)) => QUEUE_SCOPES,
             Some(Screen::Messages(_)) => MESSAGES_SCOPES,
-            Some(Screen::Conversation(_)) => CONVERSATION_SCOPES,
+            Some(Screen::Conversation(conversation)) => conversation.scopes(),
             Some(Screen::Settings(_)) => SETTINGS_SCOPES,
         }
     }
@@ -650,7 +650,7 @@ impl Session {
             (Some(Screen::Queue(queue)), action) => queue.act(action),
             (Some(Screen::Settings(settings)), action) => settings.act(action, self.store.config()),
             (Some(Screen::Messages(messages)), action) => messages.act(action),
-            (Some(Screen::Conversation(conversation)), action) => conversation.act(action),
+            (Some(Screen::Conversation(_)), _) => {}
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
             (Some(Screen::Profile(profile)), action) => {
@@ -770,7 +770,13 @@ impl Session {
             {
                 InputMode::Text
             }
-            None if self.composer.is_none() && self.conversation().is_some() => InputMode::Text,
+            None if self.composer.is_none()
+                && self
+                    .conversation()
+                    .is_some_and(ConversationScreen::takes_text) =>
+            {
+                InputMode::Text
+            }
             Some(
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
@@ -2174,7 +2180,7 @@ impl Engine {
             (Phase::Ready(session), Action::Attach) if session.composer.is_some() => {
                 return vec![Effect::Clip];
             }
-            (Phase::Ready(session), Action::Confirm) => {
+            (Phase::Ready(session), Action::Confirm) if session.composer.is_some() => {
                 if let Some(composer) = &mut session.composer {
                     composer.answered();
                     post(&mut self.sched, composer);
@@ -2419,6 +2425,26 @@ impl Engine {
                 }
             }
             (Phase::Ready(_), Action::Commit(act)) => return self.on_commit(act, now),
+            (
+                Phase::Ready(session),
+                Action::PageUp
+                | Action::PageDown
+                | Action::Close
+                | Action::Select
+                | Action::Up
+                | Action::Down
+                | Action::Type
+                | Action::Reply
+                | Action::React
+                | Action::Next
+                | Action::Previous
+                | Action::Confirm
+                | Action::Ping,
+            ) if session.conversation().is_some() => {
+                if let Some(call) = (session.conversation_mut()).and_then(|it| it.act(action)) {
+                    self.sched.send(call, Priority::Now);
+                }
+            }
             (Phase::Ready(session), action) if !session.stack.is_empty() => {
                 if let Some(id) = session.on_screen(action, now) {
                     fetch_thread(&mut self.sched, &mut self.timers, id);
@@ -2949,6 +2975,27 @@ impl Engine {
                 }
                 return Vec::new();
             }
+            Call::React {
+                chat,
+                message,
+                emoji,
+                ..
+            } => {
+                if let Reply::Reactions(reactions) = reply
+                    && let Some(conversation) = session.conversation_with(chat)
+                {
+                    conversation.reacted(*message, emoji, reactions);
+                }
+                return Vec::new();
+            }
+            Call::Ping(chat) => {
+                if let Reply::Message(message) = reply
+                    && let Some(conversation) = session.conversation_with(chat)
+                {
+                    conversation.pinged(*message);
+                }
+                return Vec::new();
+            }
             Call::Group { id, cursor, .. } => {
                 if let Reply::Group(page) = reply
                     && let Some(group) = session.group_mut(id)
@@ -3333,6 +3380,7 @@ impl Engine {
                         chat,
                         body,
                         client_id,
+                        ..
                     } => {
                         match session.conversation_with(&chat) {
                             Some(conversation) => conversation.unsent(client_id, body),
@@ -3347,6 +3395,24 @@ impl Engine {
                         });
                         self.timers.set(Timer::Toast, now + TOAST);
                         false
+                    }
+                    Call::React {
+                        chat,
+                        message,
+                        emoji,
+                        ..
+                    } => {
+                        if let Some(conversation) = session.conversation_with(&chat) {
+                            conversation.unreacted(message, &emoji);
+                        }
+                        self.toast = Some(error.to_string());
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        offline
+                    }
+                    Call::Ping(_) => {
+                        self.toast = Some(error.to_string());
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        offline
                     }
                     Call::Star { .. }
                     | Call::Follow { .. }

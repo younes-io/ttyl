@@ -20,8 +20,8 @@ use crate::model::{
     Candidate, Chat, Circle, ClientId, CommitId, CommitPage, ConversationPage, Device, DeviceId,
     Filter, Focus, Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Lane, Log, LogPage,
     Message, MessageId, MessagePage, NotificationId, NotificationPage, OrganizationList,
-    OrganizationPage, PeoplePage, Profile, Reason, Refile, RepliesPage, RowPage, Scheduled,
-    ScheduledId, Segment, Settings, Translation, Who,
+    OrganizationPage, PeoplePage, Profile, Reaction, ReactionsVersion, Reason, Refile, RepliesPage,
+    RowPage, Scheduled, ScheduledId, Segment, Settings, Translation, Who,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -256,7 +256,17 @@ pub enum Call {
         chat: Chat,
         body: String,
         client_id: ClientId,
+        reply_to: Option<MessageId>,
     },
+    /// Leaves an emoji on a message in `chat`, or takes it back.
+    React {
+        chat: Chat,
+        message: MessageId,
+        emoji: String,
+        on: bool,
+    },
+    /// Pings the partner, or everyone in an org.
+    Ping(Chat),
 }
 
 /// Which messages of a conversation a page holds.
@@ -265,8 +275,11 @@ pub enum Paging {
     Latest,
     /// The page before a message, scrolling back.
     Before(MessageId),
-    /// Everything after a message, polling for new ones.
-    After(MessageId),
+    /// Everything after a message, and the reactions changed since a version, polling for both.
+    Since {
+        after: MessageId,
+        reactions: ReactionsVersion,
+    },
 }
 
 #[derive(Debug)]
@@ -303,6 +316,8 @@ pub enum Reply {
     Candidates(Vec<Candidate>),
     Messages(Box<MessagePage>),
     Message(Box<Message>),
+    /// A message's reactions now, in the order they were left.
+    Reactions(Vec<Reaction>),
     Done,
 }
 
@@ -695,7 +710,10 @@ impl Client {
                 match paging {
                     Paging::Latest => {}
                     Paging::Before(id) => path.push_str(&format!("?before={}", id.0)),
-                    Paging::After(id) => path.push_str(&format!("?after={}", id.0)),
+                    Paging::Since { after, reactions } => path.push_str(&format!(
+                        "?after={}&reactions_after={}",
+                        after.0, reactions.0
+                    )),
                 }
                 let (status, text) = self.send("GET", &path, String::new())?;
                 MessagePage::parse(&text)
@@ -711,9 +729,25 @@ impl Client {
                 chat,
                 body,
                 client_id,
+                reply_to,
             } => self
-                .send_message(chat, body, client_id)
+                .send_message(chat, body, client_id, *reply_to)
                 .map(|message| Reply::Message(Box::new(message))),
+            Call::React {
+                message, emoji, on, ..
+            } => {
+                let path = format!("/api/v1/remotes/messages/{}/reactions", message.0);
+                let body = serde_json::json!({ "emoji": emoji }).to_string();
+                let (status, text) = self.send(if *on { "POST" } else { "DELETE" }, &path, body)?;
+                Reaction::parse_list(&text)
+                    .map(Reply::Reactions)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Ping(chat) => {
+                let path = format!("{}/ping", remote(chat));
+                let (status, text) = self.send("POST", &path, String::new())?;
+                parse_message(status, &text).map(|message| Reply::Message(Box::new(message)))
+            }
         }
     }
 
@@ -747,16 +781,15 @@ impl Client {
         chat: &Chat,
         body: &str,
         client_id: &ClientId,
+        reply_to: Option<MessageId>,
     ) -> Result<Message, Error> {
-        #[derive(Deserialize)]
-        struct Wire {
-            data: Message,
-        }
-
         let path = format!("{}/messages", remote(chat));
-        let body = serde_json::json!({ "body": body, "client_id": client_id.0 }).to_string();
-        let (status, text) = self.send("POST", &path, body)?;
-        parse::<Wire>(status, &text).map(|wire| wire.data)
+        let mut json = serde_json::json!({ "body": body, "client_id": client_id.0 });
+        if let Some(reply_to) = reply_to {
+            json["reply_to_id"] = reply_to.0.into();
+        }
+        let (status, text) = self.send("POST", &path, json.to_string())?;
+        parse_message(status, &text)
     }
 
     fn post(
@@ -1219,6 +1252,16 @@ fn remote(chat: &Chat) -> String {
 
 fn parse<T: DeserializeOwned>(status: u16, text: &str) -> Result<T, Error> {
     serde_json::from_str(text).map_err(|error| unreadable(status, error))
+}
+
+/// The message a send or a ping created.
+fn parse_message(status: u16, text: &str) -> Result<Message, Error> {
+    #[derive(Deserialize)]
+    struct Wire {
+        data: Message,
+    }
+
+    parse::<Wire>(status, text).map(|wire| wire.data)
 }
 
 fn unreadable(status: u16, error: serde_json::Error) -> Error {

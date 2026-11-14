@@ -77,12 +77,46 @@ The line at the bottom is where you type, and it always has the keys:
 - Press <kbd>pgup</kbd> and <kbd>pgdn</kbd> to scroll. Scrolling up past the
   oldest message loads the ones before it. A line at the bottom says when new
   messages came in below.
-- Press <kbd>esc</kbd> to go back. What you typed stays until you leave
-  ttyl.
+- Press <kbd>esc</kbd> to pick a message, then <kbd>esc</kbd> again to go
+  back. What you typed stays until you leave ttyl.
+
+Your own messages to a person end in a dim `✓` once dev-null.sh has them,
+and `✓✓` once they have read them, if you both share read receipts.
 
 A terminal can't show a message's image or play its voice note, so they show
 as `[image]` and `[voice note]`. Open the conversation on dev-null.sh to see
 or hear them.
+
+## Reply, react and ping
+
+Keys you type always go to the input, so `r` or `+` there is just text. To
+act on a message, pick it first:
+
+- Press <kbd>esc</kbd>, or <kbd>alt-k</kbd>, to pick the newest message. It
+  lights up, and the input dims.
+- Press <kbd>j</kbd> and <kbd>k</kbd> to move between messages. Lines that say
+  who joined or left can't be picked.
+- Press <kbd>i</kbd> or <kbd>enter</kbd> to go back to typing, or
+  <kbd>esc</kbd> to go back to your conversations.
+
+Press <kbd>r</kbd> on a message to reply to it. A line over the input quotes
+its start, and <kbd>enter</kbd> sends your reply with it. Press
+<kbd>esc</kbd> to send a plain message instead. In the conversation, a reply
+shows the start of what it answers on the line above it, after `↳`.
+
+{{screen reply}}
+
+Press <kbd>+</kbd> on a message to react to it. A row offers the emoji
+already on it, then a few usual ones. Type part of a name, like `eyes` or
+`tada`, to find any other, and <kbd>tab</kbd> moves along the row. Press
+<kbd>enter</kbd> to leave the chosen one, or to take it back if you left it
+already. Reactions show under a message as `[👍 2  👀 1]`, with yours lit.
+
+{{screen react}}
+
+Press <kbd>ctrl-g</kbd> to ping, as MSN Messenger did, from the input or a
+picked message. The ping shows in the conversation as `[ping]`, and
+dev-null.sh pushes it to the others, everyone in a group.
 
 ## Talk in a group
 
@@ -91,9 +125,9 @@ many members it has. Its last message names who wrote it. A group without a
 name goes by its members' handles.
 
 A group opens the same way a conversation does, and the same keys send,
-scroll and go back. Each message shows its author's nick, yours included. A
-line starting `-!-` says who added or removed someone, who left and who
-renamed the group.
+reply, react, ping, scroll and go back. Each message shows its author's nick,
+yours included. A line starting `-!-` says who added or removed someone, who
+left and who renamed the group. A group has no read receipts.
 
 {{screen group}}
 
@@ -126,7 +160,7 @@ ttyl msg '#unix-room' -m "reviewing now"
 
 ## What ttyl leaves to the web
 
-ttyl reads and sends text. Calls, reactions, typing, mentions, replies and
-running a group (adding people, renaming it) stay on dev-null.sh.
+ttyl reads and sends text, replies, reactions and pings. Calls, typing,
+mentions and running a group (adding people, renaming it) stay on dev-null.sh.
 <kbd>M</kbd> and <kbd>/</kbd> start a conversation with one person; start a
 group on the web.

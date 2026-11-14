@@ -5,8 +5,8 @@ use crate::api::{Call, Paging};
 use crate::config::Field;
 use crate::draft::Target;
 use crate::model::{
-    Chat, Circle, ClientId, CommitId, DeviceId, Filter, Folder, HeadlineId, Log, NotificationId,
-    ScheduledId,
+    Chat, Circle, ClientId, CommitId, DeviceId, Filter, Folder, HeadlineId, Log, MessageId,
+    NotificationId, ScheduledId,
 };
 
 /// The server's signed throttle: this many requests in any sliding window.
@@ -109,6 +109,9 @@ pub enum CallKey {
     },
     MarkRead(Chat),
     SendMessage(ClientId),
+    /// One change to one emoji on a message at a time.
+    React(MessageId, String),
+    Ping(Chat),
 }
 
 impl Call {
@@ -213,6 +216,8 @@ impl Call {
             },
             Call::MarkRead { chat, .. } => CallKey::MarkRead(chat.clone()),
             Call::SendMessage { client_id, .. } => CallKey::SendMessage(client_id.clone()),
+            Call::React { message, emoji, .. } => CallKey::React(*message, emoji.clone()),
+            Call::Ping(chat) => CallKey::Ping(chat.clone()),
         }
     }
 }
