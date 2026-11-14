@@ -2734,7 +2734,7 @@ impl Engine {
                         client_id,
                     } => {
                         match session.conversation_with(&handle) {
-                            Some(conversation) => conversation.unsent(&client_id),
+                            Some(conversation) => conversation.unsent(client_id, body),
                             None => {
                                 let unsent = session.unsent.entry(handle).or_default();
                                 unsent.restore(client_id, body);
