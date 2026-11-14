@@ -14,7 +14,7 @@ use ttyl::cache::Cache;
 use ttyl::device::DeviceKey;
 use ttyl::draft::Target;
 use ttyl::model::{
-    Circle, CommitId, Filter, Log, NotificationId, Reason, Translation, Untranslated,
+    Circle, CommitId, Filter, HeadlineId, Log, NotificationId, Reason, Translation, Untranslated,
 };
 
 struct Seen {
@@ -1080,5 +1080,43 @@ fn related_reads_the_commits_like_one_from_its_route() {
     assert_eq!(
         request_line(&seen),
         "GET /api/v1/commits/9f3c2a10-4b7e-4d21-8a6f-1c2d3e4f5a61/related HTTP/1.1"
+    );
+}
+
+#[test]
+fn headlines_reads_the_hot_topics_from_their_route() {
+    let hot = serde_json::json!({ "data": [
+        { "id": "0199a000-0000-7000-8000-000000000001", "name": "Postgres 18 async IO", "summary": "Faster scans." },
+        { "id": "0199a000-0000-7000-8000-000000000002", "name": "Rust 2027 edition", "summary": null },
+    ] });
+    let (reply, seen) = exchange(&Call::Headlines, &hot);
+    let Reply::Headlines(headlines) = reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(headlines.len(), 2);
+    assert_eq!(headlines[0].name, "Postgres 18 async IO");
+    assert_eq!(headlines[0].summary.as_deref(), Some("Faster scans."));
+    assert_eq!(headlines[1].summary, None, "a stale recap comes as null");
+    assert_eq!(request_line(&seen), "GET /api/v1/headlines HTTP/1.1");
+}
+
+#[test]
+fn a_headline_reads_its_commits_name_and_recap_from_its_route() {
+    let mut rows = fixture("log-latest")["data"].clone();
+    for row in rows.as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("reply_preview");
+    }
+    let page = serde_json::json!({ "data": rows, "name": "Postgres 18 async IO", "summary": null });
+    let id = HeadlineId("0199a000-0000-7000-8000-000000000001".to_owned());
+    let (reply, seen) = exchange(&Call::Headline(id), &page);
+    let Reply::Headline(page) = reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(page.name, "Postgres 18 async IO");
+    assert_eq!(page.summary, None);
+    assert!(!page.rows.is_empty());
+    assert_eq!(
+        request_line(&seen),
+        "GET /api/v1/headlines/0199a000-0000-7000-8000-000000000001 HTTP/1.1"
     );
 }

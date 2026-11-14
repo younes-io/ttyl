@@ -15,6 +15,7 @@ pub mod engine;
 pub mod fatal;
 pub mod feed;
 pub mod gitlog;
+pub mod headlines;
 pub mod inbox;
 pub mod keys;
 pub mod list;

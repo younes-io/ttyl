@@ -52,6 +52,7 @@ fn unknown_arguments_are_a_usage_error() {
         &["--bogus", "x"],
         &["status", "--bogus"],
         &["commit", "--bogus"],
+        &["headlines", "--bogus"],
     ] {
         let output = ttyl(args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -285,4 +286,39 @@ fn log_refuses_a_log_it_does_not_know() {
             .unwrap()
             .contains("unknown argument 'popular'")
     );
+}
+
+#[test]
+fn headlines_prints_each_name_over_its_wrapped_recap_as_plain_text() {
+    let hot = serde_json::json!({ "data": [
+        {
+            "id": "0199a000-0000-7000-8000-000000000001",
+            "name": "Keyset pagination goes mainstream",
+            "summary": "Teams moving to cursor pagination report steady p99s once tables pass a few million rows, though some miss jumping to page 40.",
+        },
+        { "id": "0199a000-0000-7000-8000-000000000002", "name": "Rust 2027 edition", "summary": null },
+        { "id": "0199a000-0000-7000-8000-000000000003", "name": "Postgres 18 async IO", "summary": "Faster scans." },
+    ] });
+    let (base, _server) = serve("200 OK", &hot.to_string());
+    let output = against("cli-headlines", &base, &["headlines"], None);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Keyset pagination goes mainstream\n\
+         \x20   Teams moving to cursor pagination report steady p99s once tables pass a\n\
+         \x20   few million rows, though some miss jumping to page 40.\n\
+         \n\
+         Rust 2027 edition\n\
+         \n\
+         Postgres 18 async IO\n\
+         \x20   Faster scans.\n"
+    );
+}
+
+#[test]
+fn headlines_with_nothing_hot_prints_nothing() {
+    let (base, _server) = serve("200 OK", r#"{"data":[]}"#);
+    let output = against("cli-headlines-none", &base, &["headlines"], None);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
 }

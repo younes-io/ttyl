@@ -2,14 +2,18 @@ use std::time::Instant;
 
 use chrono::{DateTime, TimeZone};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use crate::api::{Call, Failure};
 use crate::clock::Timers;
+use crate::feed;
 use crate::keys::{self, Act, Action};
-use crate::model::CommitId;
+use crate::model::{CommitId, Headline, HeadlineId};
 use crate::profile::{Item, Opens, Paged};
 use crate::store::Store;
+use crate::theme;
 
 /// Where a list's items come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +26,10 @@ pub enum Source {
     People(String),
     /// The few commits nearest in meaning to this one.
     Related(CommitId),
+    /// The topics dev-null.sh is talking about right now, hottest first.
+    Headlines,
+    /// One headline's commits from the past week, newest first.
+    Headline(HeadlineId),
 }
 
 impl Source {
@@ -40,6 +48,8 @@ impl Source {
             Call::SearchCommits(query) => Some((Source::Commits(query.clone()), None)),
             Call::SearchPeople(name) => Some((Source::People(name.clone()), None)),
             Call::Related(id) => Some((Source::Related(id.clone()), None)),
+            Call::Headlines => Some((Source::Headlines, None)),
+            Call::Headline(id) => Some((Source::Headline(id.clone()), None)),
             _ => None,
         }
     }
@@ -50,16 +60,20 @@ impl Source {
             Source::Commits(query) => Call::SearchCommits(query.clone()),
             Source::People(name) => Call::SearchPeople(name.clone()),
             Source::Related(id) => Call::Related(id.clone()),
+            Source::Headlines => Call::Headlines,
+            Source::Headline(id) => Call::Headline(id.clone()),
         }
     }
 }
 
-/// Starred commits, search results or related commits: a list of cards or people, in the order
-/// dev-null.sh gives them. A row that stops matching, such as an unstarred commit, stays until the
-/// next reload.
+/// Starred commits, search results, related commits or headlines: a list of cards, people or
+/// headlines, in the order dev-null.sh gives them. A row that stops matching, such as an unstarred
+/// commit, stays until the next reload.
 pub struct ListScreen {
     source: Source,
     title: String,
+    /// What the list is about, drawn above it: a headline's recap.
+    about: Option<String>,
     list: Paged,
     /// Where the selected card was last drawn, for a box about it to open beside.
     card: Option<Rect>,
@@ -74,13 +88,29 @@ impl ListScreen {
             Source::Commits(query) => format!("/{query}"),
             Source::People(name) => format!("/@{name}"),
             Source::Related(id) => format!("related {}", id.short_hash()),
+            Source::Headlines => "headlines".to_owned(),
+            Source::Headline(_) => "headline".to_owned(),
         };
         ListScreen {
             source,
             title,
+            about: None,
             list,
             card: None,
         }
+    }
+
+    /// A headline's commits, titled with its name and its recap shown while they load.
+    pub fn headline(headline: Headline, now: Instant) -> Self {
+        let mut list = ListScreen::new(Source::Headline(headline.id), now);
+        list.recap(headline.name, headline.summary);
+        list
+    }
+
+    /// Names the headline the list is about, with its latest recap.
+    pub fn recap(&mut self, name: String, summary: Option<String>) {
+        self.title = name;
+        self.about = summary;
     }
 
     /// The first page.
@@ -109,10 +139,7 @@ impl ListScreen {
     }
 
     pub fn opens(&self) -> Option<Opens> {
-        match self.selected()? {
-            Item::Commit(id) => Some(Opens::Thread(id.clone())),
-            Item::Person(person) => Some(Opens::Profile(person.user.handle.clone())),
-        }
+        self.selected().map(Item::opens)
     }
 
     pub fn land(&mut self, cursor: Option<&str>, items: Vec<Item>, next: Option<String>) {
@@ -184,9 +211,32 @@ impl ListScreen {
                 "finding commits like it",
                 "Nothing like this commit yet.".to_owned(),
             ),
+            Source::Headlines => ("loading headlines", "Nothing is hot right now.".to_owned()),
+            Source::Headline(_) => (
+                "loading",
+                "No commits under this headline from the past week.".to_owned(),
+            ),
         };
-        self.card = self
-            .list
-            .draw(frame, area, store, timers, now, wall, loading, &empty, true);
+        let area = match &self.about {
+            Some(about) => {
+                let mut lines = Vec::new();
+                feed::wrap(
+                    &[(about.clone(), theme::muted())],
+                    usize::from(area.width),
+                    &mut lines,
+                );
+                let height = u16::try_from(lines.len() + 1).unwrap_or(u16::MAX);
+                let [top, rest] =
+                    Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
+                let lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+                frame.render_widget(Paragraph::new(lines), top);
+                rest
+            }
+            None => area,
+        };
+        let is_ranked = !matches!(self.source, Source::Headline(_));
+        self.card = self.list.draw(
+            frame, area, store, timers, now, wall, loading, &empty, is_ranked,
+        );
     }
 }

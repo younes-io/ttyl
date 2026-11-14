@@ -15,9 +15,9 @@ use crate::cache::Cache;
 use crate::device::{DeviceKey, Nonce, Signed};
 use crate::draft::Target;
 use crate::model::{
-    Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Log, LogPage, NotificationId,
-    NotificationPage, PeoplePage, Profile, Reason, RepliesPage, RowPage, Segment, Settings,
-    Translation,
+    Circle, CommitId, CommitPage, Filter, Focus, GroupPage, Headline, HeadlineId, HeadlinePage,
+    Log, LogPage, NotificationId, NotificationPage, PeoplePage, Profile, Reason, RepliesPage,
+    RowPage, Segment, Settings, Translation,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -113,6 +113,10 @@ pub enum Call {
     SearchPeople(String),
     /// The few commits nearest in meaning to this one, as the web lists them under a thread.
     Related(CommitId),
+    /// The topics dev-null.sh is talking about right now, hottest first.
+    Headlines,
+    /// One headline's commits, with its recap.
+    Headline(HeadlineId),
     Delete(CommitId),
     /// Undoes deleting the user's commit, within the server's 30-second window.
     Restore(CommitId),
@@ -155,6 +159,8 @@ pub enum Reply {
     User(Box<Profile>),
     Rows(RowPage),
     People(PeoplePage),
+    Headlines(Vec<Headline>),
+    Headline(Box<HeadlinePage>),
     Notifications(NotificationPage),
     Group(GroupPage),
     Preview(Vec<Segment>),
@@ -374,6 +380,19 @@ impl Client {
                 let (status, text) = self.send("GET", &path, String::new())?;
                 (RowPage::parse_search(&text))
                     .map(Reply::Rows)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Headlines => {
+                let (status, text) = self.send("GET", "/api/v1/headlines", String::new())?;
+                (Headline::parse_list(&text))
+                    .map(Reply::Headlines)
+                    .map_err(|error| unreadable(status, error))
+            }
+            Call::Headline(id) => {
+                let path = format!("/api/v1/headlines/{}", escape(&id.0));
+                let (status, text) = self.send("GET", &path, String::new())?;
+                (HeadlinePage::parse(&text))
+                    .map(|page| Reply::Headline(Box::new(page)))
                     .map_err(|error| unreadable(status, error))
             }
             Call::Delete(id) => {

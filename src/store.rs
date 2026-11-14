@@ -432,7 +432,9 @@ impl Store {
             | Call::Starred { .. }
             | Call::SearchCommits(_)
             | Call::SearchPeople(_)
-            | Call::Related(_) => return,
+            | Call::Related(_)
+            | Call::Headlines
+            | Call::Headline(_) => return,
         }
         self.generation += 1;
     }
@@ -492,6 +494,10 @@ impl Store {
             (_, Reply::Rows(page)) => {
                 self.absorb_rows(page.rows);
             }
+            (_, Reply::Headline(page)) => {
+                self.absorb_rows(page.rows);
+            }
+            (_, Reply::Headlines(_)) => {}
             (_, Reply::People(page)) => {
                 for person in page.people {
                     if let Some(server) = person.is_followed {

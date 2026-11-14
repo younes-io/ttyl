@@ -1000,3 +1000,54 @@ impl PeoplePage {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(transparent)]
+pub struct HeadlineId(pub String);
+
+/// A topic dev-null.sh is talking about right now, as the web's hot topics list it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Headline {
+    pub id: HeadlineId,
+    pub name: String,
+    /// A short recap, only while one is fresh and none of its sources is hidden from the viewer.
+    pub summary: Option<String>,
+}
+
+impl Headline {
+    /// The hot headlines `headlines` lists, hottest first.
+    pub fn parse_list(json: &str) -> serde_json::Result<Vec<Headline>> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Headline>,
+        }
+
+        Ok(serde_json::from_str::<Wire>(json)?.data)
+    }
+}
+
+/// One headline's commits from the past week, newest first, with its name and recap.
+#[derive(Debug, Clone)]
+pub struct HeadlinePage {
+    pub name: String,
+    pub summary: Option<String>,
+    pub rows: Vec<Row>,
+}
+
+impl HeadlinePage {
+    pub fn parse(json: &str) -> serde_json::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            data: Vec<Row>,
+            name: String,
+            summary: Option<String>,
+        }
+
+        let wire: Wire = serde_json::from_str(json)?;
+        Ok(HeadlinePage {
+            name: wire.name,
+            summary: wire.summary,
+            rows: wire.data,
+        })
+    }
+}
