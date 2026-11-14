@@ -1,0 +1,78 @@
+{
+  "data": {
+    "partner": {
+      "id": "0b000000-0000-4000-8000-00000000000b",
+      "handle": "grace",
+      "name": "Grace",
+      "avatar_url": null,
+      "bio": null,
+      "company": null,
+      "location": null,
+      "website": null,
+      "github_url": "https://github.com/grace",
+      "html_url": "https://dev-null.sh/@grace",
+      "feed_url": "https://dev-null.sh/@grace/feed.atom",
+      "created_at": "2026-09-02T10:00:00Z",
+      "lane": "#7048e8"
+    },
+    "messages": [
+      {
+        "id": 101,
+        "user_id": "0b000000-0000-4000-8000-00000000000b",
+        "client_id": "3c9e4f0a-8f5b-4d0e-9c1e-7b2a6d4e5f01",
+        "body": "are you around tomorrow? the wrap code has a bug I can't pin down",
+        "images": [],
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-20T16:02:00Z"
+      },
+      {
+        "id": 102,
+        "user_id": "0a000000-0000-4000-8000-00000000000a",
+        "client_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+        "body": "sure, after the standup",
+        "images": [],
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-20T16:10:00Z"
+      },
+      {
+        "id": 104,
+        "user_id": "0b000000-0000-4000-8000-00000000000b",
+        "client_id": "3c9e4f0a-8f5b-4d0e-9c1e-7b2a6d4e5f02",
+        "body": "",
+        "images": [
+          {
+            "url": "https://dev-null.sh/storage/remotes/104-1.png",
+            "width": 1280,
+            "height": 800
+          }
+        ],
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-21T09:38:00Z"
+      },
+      {
+        "id": 105,
+        "user_id": "0b000000-0000-4000-8000-00000000000b",
+        "client_id": "3c9e4f0a-8f5b-4d0e-9c1e-7b2a6d4e5f03",
+        "body": "did you see the cursor patch?\nit fixes the off-by-one in wrap",
+        "images": [],
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-21T09:40:00Z"
+      }
+    ],
+    "has_older": false,
+    "reactions_version": 0,
+    "reaction_changes": [],
+    "read_through_id": 102,
+    "partner_read_through_id": 102,
+    "partner_read_at": "2026-10-20T16:11:00Z",
+    "partner_typing": false,
+    "is_archived": false,
+    "pinned_at": null,
+    "muted_until_at": null,
+    "access": "open"
+  }
+}

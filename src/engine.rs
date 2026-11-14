@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -18,22 +18,24 @@ use crate::at;
 use crate::attach::{self, Look};
 use crate::cache::Start;
 use crate::clock::{
-    FADE, FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark, TOAST, Timer,
-    Timers, UNDO,
+    CONVERSE, FADE, FOCUS_RELOAD, FRAME, GLOW, MINUTE, POLL, RETRY, SECOND, SPARK_FRAME, Spark,
+    TOAST, Timer, Timers, UNDO,
 };
 use crate::compose::{Composer, Prompt};
 use crate::draft::{self, Drafts, Target};
 use crate::fatal;
 use crate::inbox::{self, GroupList, Inbox, Opens};
 use crate::keys::{
-    self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, DETAILS_SCOPES, GATE_SCOPES,
-    GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap, LIST_PEOPLE_SCOPES, LIST_SCOPES,
-    LOG_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES, PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES,
-    QUEUE_SCOPES, REPORT_SCOPES, RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES,
-    SPLASH_SCOPES, Scope, THREAD_SCOPES, VIEWER_SCOPES, VOTE_SCOPES,
+    self, AT_SCOPES, Act, Action, COMPOSER_SCOPES, CONFIRM_SCOPES, CONVERSATION_SCOPES,
+    DETAILS_SCOPES, GATE_SCOPES, GROUP_SCOPES, HELP_SCOPES, INBOX_SCOPES, InputMode, Keymap,
+    LIST_PEOPLE_SCOPES, LIST_SCOPES, LOG_SCOPES, MESSAGES_SCOPES, PEOPLE_SCOPES, PIPE_SCOPES,
+    PREVIEW_SCOPES, PROFILE_PEOPLE_SCOPES, PROFILE_SCOPES, QUEUE_SCOPES, REPORT_SCOPES,
+    RULES_SCOPES, Resolve, SEARCH_SCOPES, SECRET_SCOPES, SPLASH_SCOPES, Scope, THREAD_SCOPES,
+    VIEWER_SCOPES, VOTE_SCOPES,
 };
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
+use crate::messages::{self, ConversationScreen, Conversations};
 use crate::model::{
     self, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Reason, Row, ScheduledId,
     Shown, Status, Translation, Untranslated, User,
@@ -134,6 +136,8 @@ pub struct Session {
     searched: String,
     /// The commit deleted moments ago, which `u` can still bring back.
     undoable: Option<CommitId>,
+    /// What was typed in a conversation and not sent, by handle, kept for when it opens again.
+    unsent: HashMap<String, String>,
 }
 
 /// A list the user asked to reload, answered with a toast once it lands.
@@ -151,6 +155,8 @@ enum Screen {
     Profile(Box<ProfileScreen>),
     List(Box<ListScreen>),
     Queue(Box<QueueScreen>),
+    Messages(Box<Conversations>),
+    Conversation(Box<ConversationScreen>),
 }
 
 enum Overlay {
@@ -211,7 +217,13 @@ impl Session {
             Some(Screen::Thread(thread)) => thread.card(),
             Some(Screen::Profile(profile)) => profile.card(),
             Some(Screen::List(list)) => list.card(),
-            Some(Screen::Inbox | Screen::Group(_) | Screen::Queue(_)) => None,
+            Some(
+                Screen::Inbox
+                | Screen::Group(_)
+                | Screen::Queue(_)
+                | Screen::Messages(_)
+                | Screen::Conversation(_),
+            ) => None,
             None => self.log.card(),
         }
     }
@@ -224,7 +236,9 @@ impl Session {
                 | Screen::Group(_)
                 | Screen::Profile(_)
                 | Screen::List(_)
-                | Screen::Queue(_),
+                | Screen::Queue(_)
+                | Screen::Messages(_)
+                | Screen::Conversation(_),
             )
             | None => None,
         }
@@ -239,7 +253,9 @@ impl Session {
                 | Screen::Group(_)
                 | Screen::Profile(_)
                 | Screen::List(_)
-                | Screen::Queue(_),
+                | Screen::Queue(_)
+                | Screen::Messages(_)
+                | Screen::Conversation(_),
             ) => None,
             None => self.log.peek(&self.store, now),
         }
@@ -289,6 +305,46 @@ impl Session {
 
     fn on_inbox(&self) -> bool {
         matches!(self.stack.last(), Some(Screen::Inbox))
+    }
+
+    fn messages(&self) -> Option<&Conversations> {
+        match self.stack.last() {
+            Some(Screen::Messages(messages)) => Some(messages),
+            _ => None,
+        }
+    }
+
+    /// Every open list of conversations: gm from the inbox over one opens another.
+    fn messages_mut(&mut self) -> impl Iterator<Item = &mut Conversations> {
+        self.stack.iter_mut().filter_map(|screen| match screen {
+            Screen::Messages(messages) => Some(messages.as_mut()),
+            _ => None,
+        })
+    }
+
+    fn conversation(&self) -> Option<&ConversationScreen> {
+        match self.stack.last() {
+            Some(Screen::Conversation(conversation)) => Some(conversation),
+            _ => None,
+        }
+    }
+
+    fn conversation_mut(&mut self) -> Option<&mut ConversationScreen> {
+        match self.stack.last_mut() {
+            Some(Screen::Conversation(conversation)) => Some(conversation),
+            _ => None,
+        }
+    }
+
+    /// The conversation with this person, when it is still open. Nothing opens over a conversation,
+    /// so the stack never holds two.
+    fn conversation_with(&mut self, handle: &str) -> Option<&mut ConversationScreen> {
+        self.stack.iter_mut().find_map(|screen| match screen {
+            Screen::Conversation(conversation) if conversation.handle() == handle => {
+                Some(conversation.as_mut())
+            }
+            _ => None,
+        })
     }
 
     /// Every open list filled from `source`, wherever it sits in the stack.
@@ -343,6 +399,8 @@ impl Session {
             Some(Screen::List(list)) if list.people() => LIST_PEOPLE_SCOPES,
             Some(Screen::List(_)) => LIST_SCOPES,
             Some(Screen::Queue(_)) => QUEUE_SCOPES,
+            Some(Screen::Messages(_)) => MESSAGES_SCOPES,
+            Some(Screen::Conversation(_)) => CONVERSATION_SCOPES,
         }
     }
 
@@ -361,6 +419,7 @@ impl Session {
             || (action == Action::Starred && !self.on_list(&Source::Starred))
             || (action == Action::Headlines && !self.on_list(&Source::Headlines))
             || (action == Action::Later && !self.on_queue())
+            || (action == Action::Messages && self.messages().is_none())
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
@@ -368,6 +427,8 @@ impl Session {
                 Some(Screen::Profile(profile)) => profile.can(action),
                 Some(Screen::List(list)) => list.can(action),
                 Some(Screen::Queue(queue)) => queue.can(action),
+                Some(Screen::Messages(messages)) => messages.can(action),
+                Some(Screen::Conversation(conversation)) => conversation.can(action),
                 None => self.log.can(action, &self.store),
             }
     }
@@ -391,6 +452,7 @@ impl Session {
                 Item::Headline(_) => return None,
             },
             Some(Screen::Queue(_)) => return None,
+            Some(Screen::Messages(_) | Screen::Conversation(_)) => return None,
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
         match self.store.node(id)? {
@@ -407,7 +469,7 @@ impl Session {
                 let own = row.commit.author.handle == *me;
                 row.deletion.is_none()
                     && match act {
-                        Act::Star | Act::Follow | Act::Mute | Act::Block => !own,
+                        Act::Star | Act::Follow | Act::Mute | Act::Block | Act::Message => !own,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
@@ -429,8 +491,10 @@ impl Session {
                     // A row about one person folds and takes only B. A group of several doesn't
                     // fold, so B there would undo a block it never showed, and f is refused.
                     _ if blocked && alone => act == Act::Block,
-                    Act::Follow | Act::Block if blocked => false,
-                    Act::Follow | Act::Mute | Act::Block => commit.author.handle != *me,
+                    Act::Follow | Act::Block | Act::Message if blocked => false,
+                    Act::Follow | Act::Mute | Act::Block | Act::Message => {
+                        commit.author.handle != *me
+                    }
                     Act::Copy
                     | Act::Browse
                     | Act::Reply
@@ -450,7 +514,7 @@ impl Session {
             Some(Selected::Person(user)) => {
                 user.handle != *me
                     && match act {
-                        Act::Follow => !self.store.blocking(&user.handle),
+                        Act::Follow | Act::Message => !self.store.blocking(&user.handle),
                         Act::Block => true,
                         _ => false,
                     }
@@ -462,7 +526,13 @@ impl Session {
     fn on_screen(&mut self, action: Action, now: Instant) -> Option<CommitId> {
         match (self.stack.last_mut(), action) {
             (_, Action::Back) => {
-                self.stack.pop();
+                if let Some(Screen::Conversation(conversation)) = self.stack.pop() {
+                    let (handle, text) = conversation.leave();
+                    match text.is_empty() {
+                        true => self.unsent.remove(&handle),
+                        false => self.unsent.insert(handle, text),
+                    };
+                }
             }
             (_, Action::Show(_) | Action::NextLog) => {
                 self.stack.clear();
@@ -478,6 +548,8 @@ impl Session {
             (Some(Screen::Thread(thread)), action) => thread.act(action, &self.store),
             (Some(Screen::List(list)), action) => list.act(action),
             (Some(Screen::Queue(queue)), action) => queue.act(action),
+            (Some(Screen::Messages(messages)), action) => messages.act(action),
+            (Some(Screen::Conversation(conversation)), action) => conversation.act(action),
             (Some(Screen::Inbox), action) => self.inbox.act(action, &self.store),
             (Some(Screen::Group(group)), action) => group.act(action),
             (Some(Screen::Profile(profile)), action) => {
@@ -573,6 +645,7 @@ impl Session {
             {
                 InputMode::Text
             }
+            None if self.composer.is_none() && self.conversation().is_some() => InputMode::Text,
             Some(
                 Overlay::Help { .. }
                 | Overlay::Reason { .. }
@@ -591,6 +664,12 @@ impl Session {
                 | Overlay::Search { query: text }
                 | Overlay::At { text },
             ) => (text, usize::MAX),
+            None => {
+                if let Some(conversation) = self.conversation_mut() {
+                    conversation.paste(pasted);
+                }
+                return;
+            }
             _ => return,
         };
         let room = max.saturating_sub(text.chars().count());
@@ -641,8 +720,12 @@ impl Session {
                 | Overlay::Reason { .. }
                 | Overlay::Vote { .. }
                 | Overlay::Viewer { .. },
-            )
-            | None => {}
+            ) => {}
+            None => {
+                if let Some(conversation) = self.conversation_mut() {
+                    conversation.typed(event);
+                }
+            }
         }
     }
 
@@ -910,6 +993,23 @@ fn open_profile(sched: &mut Scheduler, session: &mut Session, handle: String, no
     sched.send(Call::User(profile.handle().to_owned()), Priority::Now);
     sched.send(profile.tab_call(), Priority::Now);
     session.stack.push(Screen::Profile(Box::new(profile)));
+}
+
+/// Opens the conversation with `partner`, and starts asking for new messages while it is open.
+fn open_conversation(
+    sched: &mut Scheduler,
+    timers: &mut Timers,
+    session: &mut Session,
+    partner: User,
+    now: Instant,
+) {
+    let unsent = session.unsent.remove(&partner.handle).unwrap_or_default();
+    let conversation = ConversationScreen::new(partner, &unsent, now);
+    sched.send(conversation.poll(), Priority::Now);
+    timers.set(Timer::Converse, now + CONVERSE);
+    session
+        .stack
+        .push(Screen::Conversation(Box::new(conversation)));
 }
 
 fn fetch_group(sched: &mut Scheduler, group: &GroupList) {
@@ -1228,7 +1328,16 @@ impl Engine {
                 self.toast(format!("fatal: could not save your draft: {error}"), now);
                 Vec::new()
             }
-            Event::Edited(text) => self.edit(|composer| composer.replace(&text)),
+            Event::Edited(text) => {
+                if let Phase::Ready(session) = &mut self.phase
+                    && session.composer.is_none()
+                    && let Some(conversation) = session.conversation_mut()
+                {
+                    conversation.replace(&text);
+                    return Vec::new();
+                }
+                self.edit(|composer| composer.replace(&text))
+            }
             Event::Read(looks, pasted) => {
                 self.edit(|composer| composer.read(looks, pasted.as_deref()))
             }
@@ -1253,6 +1362,9 @@ impl Engine {
                         EDITOR_FAILED_SHORT,
                         Style::new().fg(theme::DESTRUCTIVE),
                     );
+                } else if matches!(&self.phase, Phase::Ready(session) if session.conversation().is_some())
+                {
+                    self.toast(EDITOR_FAILED.to_owned(), now);
                 }
                 Vec::new()
             }
@@ -1279,6 +1391,14 @@ impl Engine {
                 Timer::RelativeTimes => self.timers.set(Timer::RelativeTimes, now + MINUTE),
                 Timer::Toast => self.toast = None,
                 Timer::Glow | Timer::Spark(..) | Timer::Lift => {}
+                Timer::Converse => {
+                    if let Phase::Ready(session) = &self.phase
+                        && let Some(conversation) = session.conversation()
+                    {
+                        self.sched.send(conversation.poll(), Priority::Later);
+                        self.timers.set(Timer::Converse, now + CONVERSE);
+                    }
+                }
                 Timer::Undo => {
                     if let Phase::Ready(session) = &mut self.phase {
                         session.undoable = None;
@@ -1422,6 +1542,8 @@ impl Engine {
         let call = match session.stack.last() {
             Some(Screen::Profile(profile)) => profile.wants_older(),
             Some(Screen::List(list)) => list.wants_older(),
+            Some(Screen::Messages(messages)) => messages.wants_older(),
+            Some(Screen::Conversation(conversation)) => conversation.wants_older(),
             _ => None,
         };
         if let Some(call) = call {
@@ -1457,6 +1579,8 @@ impl Engine {
             Some(Screen::Profile(profile)) => profile.placeholder_at(),
             Some(Screen::List(list)) => list.placeholder_at(),
             Some(Screen::Queue(_)) => None,
+            Some(Screen::Messages(messages)) => messages.placeholder_at(),
+            Some(Screen::Conversation(conversation)) => conversation.placeholder_at(),
             None => session.log.peek_due(),
         }
     }
@@ -1548,7 +1672,8 @@ impl Engine {
             Resolve::Text(event) => {
                 if let Phase::Ready(session) = &mut self.phase {
                     // A prompt such as `send at:` can sit over the composer, and takes the typing first.
-                    if session.overlay.is_some() {
+                    // With no composer open, the typing goes to the conversation's input.
+                    if session.overlay.is_some() || session.composer.is_none() {
                         session.typed(event);
                         return Vec::new();
                     }
@@ -1666,6 +1791,14 @@ impl Engine {
             (Phase::Ready(session), Action::Send) => {
                 if let Some(composer) = &mut session.composer {
                     send(&mut self.sched, composer, None);
+                } else if let Some(sent) = session
+                    .conversation_mut()
+                    .and_then(ConversationScreen::send)
+                {
+                    match sent {
+                        Ok(call) => self.sched.send(call, Priority::Now),
+                        Err(why) => self.toast(why, now),
+                    }
                 }
             }
             (Phase::Ready(session), Action::Schedule) => {
@@ -1682,6 +1815,8 @@ impl Engine {
             (Phase::Ready(session), Action::Editor) => {
                 if let Some(composer) = &session.composer {
                     return vec![Effect::Edit(composer.text().to_owned())];
+                } else if let Some(conversation) = session.conversation() {
+                    return vec![Effect::Edit(conversation.text().to_owned())];
                 }
             }
             (Phase::Ready(_), Action::Poll) => return self.edit(Composer::toggle_poll),
@@ -1760,6 +1895,28 @@ impl Engine {
                     self.sched.send(list.call(), Priority::Now);
                     session.stack.push(Screen::List(Box::new(list)));
                 }
+            }
+            (Phase::Ready(session), Action::Messages) => {
+                let messages = Conversations::new(now);
+                self.sched.send(messages.call(), Priority::Now);
+                session.stack.push(Screen::Messages(Box::new(messages)));
+            }
+            (Phase::Ready(session), Action::Open) if session.messages().is_some() => {
+                let partner = (session.messages())
+                    .and_then(Conversations::selected)
+                    .map(|conversation| conversation.partner.clone());
+                if let Some(partner) = partner {
+                    open_conversation(&mut self.sched, &mut self.timers, session, partner, now);
+                }
+            }
+            (Phase::Ready(session), Action::Commit(Act::Message)) => {
+                let partner = match session.selected() {
+                    Some(Selected::Row(row)) => row.commit.author.clone(),
+                    Some(Selected::Note { commit, .. }) => commit.author.clone(),
+                    Some(Selected::Person(user)) => user.clone(),
+                    None => return Vec::new(),
+                };
+                open_conversation(&mut self.sched, &mut self.timers, session, partner, now);
             }
             (Phase::Ready(session), Action::Search) => {
                 session.overlay = Some(Overlay::Search {
@@ -1908,6 +2065,13 @@ impl Engine {
                     list.reload(now);
                     self.sched.send(list.call(), Priority::Now);
                 }
+                Screen::Messages(messages) => {
+                    messages.reload(now);
+                    self.sched.send(messages.call(), Priority::Now);
+                }
+                Screen::Conversation(conversation) => {
+                    self.sched.send(conversation.poll(), Priority::Now);
+                }
                 Screen::Inbox => {}
                 Screen::Queue(_) => self.sched.send(Call::Queue, Priority::Now),
             }
@@ -2054,6 +2218,7 @@ impl Engine {
                 }
                 (None, Vec::new())
             }
+            Act::Message => unreachable!("act opens the conversation before on_commit"),
             Act::Reply | Act::Quote => {
                 let target = match act {
                     Act::Reply => Target::Reply(id),
@@ -2180,6 +2345,53 @@ impl Engine {
                             session.inbox.append(cursor, page);
                         }
                     }
+                }
+                return Vec::new();
+            }
+            Call::Conversations { before } => {
+                if let Reply::Conversations(page) = reply {
+                    for messages in session.messages_mut() {
+                        messages.land(before.as_deref(), page.clone());
+                    }
+                }
+                return Vec::new();
+            }
+            Call::Messages { handle, paging } => {
+                let through = match reply {
+                    Reply::Messages(page) => session
+                        .conversation_with(handle)
+                        .and_then(|conversation| conversation.land(*paging, *page)),
+                    _ => None,
+                };
+                if let Some(through) = through {
+                    for messages in session.messages_mut() {
+                        messages.read(handle);
+                    }
+                    let handle = handle.clone();
+                    self.sched
+                        .send(Call::MarkRead { handle, through }, Priority::Later);
+                }
+                return Vec::new();
+            }
+            Call::MarkRead { handle, through } => {
+                // A mark sent while this one flew was dropped, so the newer one goes now.
+                let newer = (session.conversation_with(handle))
+                    .and_then(|conversation| conversation.read_through())
+                    .filter(|read| read > through);
+                if let Some(through) = newer {
+                    let handle = handle.clone();
+                    self.sched
+                        .send(Call::MarkRead { handle, through }, Priority::Later);
+                }
+                return Vec::new();
+            }
+            Call::SendMessage {
+                handle, client_id, ..
+            } => {
+                if let Reply::Message(message) = reply
+                    && let Some(conversation) = session.conversation_with(handle)
+                {
+                    conversation.sent(client_id, *message);
                 }
                 return Vec::new();
             }
@@ -2348,6 +2560,7 @@ impl Engine {
             piped: String::new(),
             searched: String::new(),
             undoable: None,
+            unsent: HashMap::new(),
         }));
         for log in LOGS {
             self.sched.send(Call::Page(log), Priority::Now);
@@ -2501,6 +2714,32 @@ impl Engine {
                         // It may have gone out or been canceled elsewhere, so the queue shows what's true.
                         self.sched.send(Call::Queue, Priority::Now);
                         offline
+                    }
+                    Call::Conversations { .. } => {
+                        for messages in session.messages_mut() {
+                            messages.fail(failure.clone());
+                        }
+                        offline
+                    }
+                    Call::Messages { handle, paging } => {
+                        if let Some(conversation) = session.conversation_with(&handle) {
+                            conversation.fail(paging, failure.clone());
+                        }
+                        offline
+                    }
+                    Call::MarkRead { .. } => offline,
+                    Call::SendMessage {
+                        handle, client_id, ..
+                    } => {
+                        if let Some(conversation) = session.conversation_with(&handle) {
+                            conversation.unsent(&client_id);
+                        }
+                        self.toast = Some(match error.may_have_landed() {
+                            true => messages::NO_ANSWER.to_owned(),
+                            false => error.to_string(),
+                        });
+                        self.timers.set(Timer::Toast, now + TOAST);
+                        false
                     }
                     Call::Star { .. }
                     | Call::Follow { .. }
@@ -2757,6 +2996,8 @@ impl Engine {
                     Some(Screen::Inbox | Screen::Group(_)) => Some(inbox::TITLE),
                     Some(Screen::List(list)) => Some(list.title()),
                     Some(Screen::Queue(_)) => Some(queue::TITLE),
+                    Some(Screen::Messages(_)) => Some(messages::TITLE),
+                    Some(Screen::Conversation(conversation)) => Some(conversation.title()),
                     _ => handle.as_deref(),
                 };
                 let glow = self.timers.is_set(&Timer::Glow) && !session.on_inbox();
@@ -2817,6 +3058,8 @@ impl Engine {
                     group.failure().map(|failure| (failure, None)).or(health)
                 } else if let Some(profile) = session.profile() {
                     profile.failure().map(|failure| (failure, None)).or(health)
+                } else if let Some(messages) = session.messages() {
+                    messages.failure().map(|failure| (failure, None)).or(health)
                 } else if on_log {
                     loaded.and_then(|listing| match &listing.failure {
                         Some(failure) => Some((failure, retry.page)),
@@ -2923,6 +3166,14 @@ impl Engine {
                     Some(Screen::Queue(queue)) => {
                         let area = framed_as(frame, body, framed, "");
                         queue.draw(frame, area, wall)
+                    }
+                    Some(Screen::Messages(messages)) => {
+                        let area = framed_as(frame, body, framed, "");
+                        messages.draw(frame, area, now, wall)
+                    }
+                    Some(Screen::Conversation(conversation)) => {
+                        let area = framed_as(frame, body, framed, "");
+                        conversation.draw(frame, area, &session.store.me.handle, now, wall)
                     }
                     None => {
                         let pane = session.log.draw(

@@ -17,6 +17,9 @@ pub const FADE: Duration = Duration::from_millis(120);
 pub const FOCUS_RELOAD: Duration = Duration::from_secs(10);
 /// How long dev-null.sh lets a deleted commit come back.
 pub const UNDO: Duration = Duration::from_secs(30);
+/// How often an open conversation asks for new messages: 20 a minute, a sixth of the 120 signed
+/// requests dev-null.sh allows a minute, and far under the 300 its conversations limit allows.
+pub const CONVERSE: Duration = Duration::from_secs(3);
 
 /// A short animation on the selected card after the user stars it or gives it a pastel, or the first
 /// time it lands on a poll whose results show.
@@ -54,6 +57,8 @@ pub enum Timer {
     Spark(Spark, CommitId),
     /// When the last delete can no longer be undone.
     Undo,
+    /// When the open conversation next asks for new messages.
+    Converse,
 }
 
 #[derive(Default)]

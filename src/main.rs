@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::fmt::Write as _;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::ops::ControlFlow;
@@ -26,13 +27,14 @@ use ttyl::api::{self, Call, Client, Reply};
 use ttyl::attach::{self, Attachment};
 use ttyl::cache::{Cache, Start};
 use ttyl::desktop::{self, Clipped};
+use ttyl::device::Nonce;
 use ttyl::device::{self, DeviceKey};
 use ttyl::draft::{self, Draft, Drafts, Target};
 use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
-use ttyl::model::{Log, Status};
+use ttyl::model::{ClientId, Log, Status};
 use ttyl::sched::Ticket;
-use ttyl::{body, compose, editor, headlines, locale, signin, theme, viewer, welcome};
+use ttyl::{body, compose, editor, headlines, locale, messages, signin, theme, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 /// The file in ttyl's state that remembers the icons the viewer picked on the welcome screen.
@@ -53,6 +55,13 @@ enum Command<'a> {
     Headlines,
     /// The handles the user blocks, one per line.
     Blocked,
+    /// The conversations, one per line.
+    Messages,
+    /// A message to `to`, with its text from `-m` or else from stdin.
+    Message {
+        to: &'a str,
+        text: Option<&'a str>,
+    },
     Version,
     Help,
     Unknown(&'a str),
@@ -66,6 +75,16 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         ["commit", rest @ ..] => commit_command(rest),
         ["blocked"] => Command::Blocked,
         ["status" | "blocked", arg, ..] => Command::Unknown(arg),
+        ["msg"] => Command::Messages,
+        ["msg", to, rest @ ..] if !to.starts_with('-') => match rest {
+            [] => Command::Message { to, text: None },
+            ["-m", text] => Command::Message {
+                to,
+                text: Some(text),
+            },
+            [arg, ..] => Command::Unknown(arg),
+        },
+        ["msg", arg, ..] => Command::Unknown(arg),
         ["log", rest @ ..] => log_command(rest),
         ["headlines"] => Command::Headlines,
         ["headlines", arg, ..] => Command::Unknown(arg),
@@ -112,13 +131,15 @@ fn main() -> ExitCode {
         Command::Log(log, format) => report(print_log(log, format)),
         Command::Headlines => report(print_headlines()),
         Command::Blocked => report(print_blocked()),
+        Command::Messages => report(print_messages()),
+        Command::Message { to, text } => report(message(to, text)),
         Command::Version => {
             println!("ttyl {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n       ttyl msg [@handle [-m <text>]]\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n  msg        send a message to @handle, with its text from -m or from stdin;\n             alone, print your conversations with their unread counts\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -273,6 +294,21 @@ fn through_pager(text: &str) -> io::Result<()> {
     written
 }
 
+/// The text `-m` gave, or else what stdin holds, unless stdin is a terminal waiting for typing.
+fn text_or_stdin(text: Option<&str>, nothing: &str) -> Result<String, String> {
+    match text {
+        Some(text) => Ok(text.to_owned()),
+        None if io::stdin().is_terminal() => Err(nothing.to_owned()),
+        None => {
+            let mut text = String::new();
+            io::stdin()
+                .read_to_string(&mut text)
+                .map_err(|error| format!("can't read stdin: {error}"))?;
+            Ok(text)
+        }
+    }
+}
+
 fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
     // Read before stdin, so a time that won't do fails before the text is typed.
     let at = at
@@ -280,19 +316,10 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
             ttyl::at::resolve(at, &Local::now()).map_err(|refusal| format!("fatal: {refusal}"))
         })
         .transpose()?;
-    let text = match text {
-        Some(text) => text.to_owned(),
-        None if io::stdin().is_terminal() => {
-            return Err("nothing to commit; pass -m <text> or pipe the text in".to_owned());
-        }
-        None => {
-            let mut text = String::new();
-            io::stdin()
-                .read_to_string(&mut text)
-                .map_err(|error| format!("can't read stdin: {error}"))?;
-            text
-        }
-    };
+    let text = text_or_stdin(
+        text,
+        "nothing to commit; pass -m <text> or pipe the text in",
+    )?;
     if let Some(refusal) = body::refusal(&text) {
         return Err(refusal);
     }
@@ -335,6 +362,51 @@ fn commit(text: Option<&str>, at: Option<&str>) -> Result<(), String> {
         }
     }
     println!("{}", commit.html_url);
+    Ok(())
+}
+
+fn print_messages() -> Result<(), String> {
+    let mut page = client()?
+        .conversations(None)
+        .map_err(|error| refused(&error))?;
+    messages::order(&mut page.conversations);
+    let mut out = String::new();
+    for conversation in &page.conversations {
+        let preview = conversation.last.as_ref().map_or("", |last| last.preview());
+        let _ = writeln!(
+            out,
+            "@{}\t{}\t{preview}",
+            conversation.partner.handle, conversation.unread
+        );
+    }
+    match io::stdout().write_all(out.as_bytes()) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.to_string()),
+        _ => Ok(()),
+    }
+}
+
+fn message(to: &str, text: Option<&str>) -> Result<(), String> {
+    let handle = to.strip_prefix('@').unwrap_or(to);
+    let text = text_or_stdin(text, "nothing to send; pass -m <text> or pipe the text in")?;
+    let body = text.trim();
+    if let Some(refusal) = messages::refusal(body) {
+        return Err(refusal);
+    }
+    let client_id = ClientId(Nonce::random().uuid());
+    let sent = client()?
+        .send_message(handle, body, &client_id)
+        .map_err(|error| {
+            if error.may_have_landed() {
+                messages::NO_ANSWER.to_owned()
+            } else if error.is_not_found() {
+                format!(
+                    "can't message @{handle}; dev-null.sh has no one by that handle you can reach"
+                )
+            } else {
+                refused(&error)
+            }
+        })?;
+    println!("[msg @{handle}] {}", sent.preview());
     Ok(())
 }
 

@@ -1,0 +1,168 @@
+{
+  "data": [
+    {
+      "id": "c1000000-0000-4000-8000-00000000000d",
+      "kind": "direct",
+      "name": "Margaret",
+      "partner": {
+        "id": "0d000000-0000-4000-8000-00000000000d",
+        "handle": "margaret",
+        "name": "Margaret",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/margaret",
+        "html_url": "https://dev-null.sh/@margaret",
+        "feed_url": "https://dev-null.sh/@margaret/feed.atom",
+        "created_at": "2026-09-04T10:00:00Z",
+        "lane": 5
+      },
+      "members": [],
+      "last_message": {
+        "id": 88,
+        "user_id": "0a000000-0000-4000-8000-00000000000a",
+        "client_id": "6f1d1c52-6a0e-4c43-9a41-2d4f0c3b8e11",
+        "body": "the lock order is in the commit message now",
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-19T18:20:00Z"
+      },
+      "last_message_at": "2026-10-19T18:20:00Z",
+      "ahead": 0,
+      "last_incoming_message_id": 87,
+      "pinned_at": "2026-10-01T09:00:00Z",
+      "muted_until_at": null,
+      "is_archived": false
+    },
+    {
+      "id": "c1000000-0000-4000-8000-00000000000c",
+      "kind": "direct",
+      "name": "Linus",
+      "partner": {
+        "id": "0c000000-0000-4000-8000-00000000000c",
+        "handle": "linus",
+        "name": "Linus",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/linus",
+        "html_url": "https://dev-null.sh/@linus",
+        "feed_url": "https://dev-null.sh/@linus/feed.atom",
+        "created_at": "2026-09-03T10:00:00Z",
+        "lane": 3
+      },
+      "members": [],
+      "last_message": {
+        "id": 120,
+        "user_id": "0c000000-0000-4000-8000-00000000000c",
+        "client_id": null,
+        "body": "",
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-21T09:55:00Z"
+      },
+      "last_message_at": "2026-10-21T09:55:00Z",
+      "ahead": 0,
+      "last_incoming_message_id": 120,
+      "pinned_at": null,
+      "muted_until_at": null,
+      "is_archived": false
+    },
+    {
+      "id": "c1000000-0000-4000-8000-00000000000b",
+      "kind": "direct",
+      "name": "Grace",
+      "partner": {
+        "id": "0b000000-0000-4000-8000-00000000000b",
+        "handle": "grace",
+        "name": "Grace",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/grace",
+        "html_url": "https://dev-null.sh/@grace",
+        "feed_url": "https://dev-null.sh/@grace/feed.atom",
+        "created_at": "2026-09-02T10:00:00Z",
+        "lane": "#7048e8"
+      },
+      "members": [],
+      "last_message": {
+        "id": 105,
+        "user_id": "0b000000-0000-4000-8000-00000000000b",
+        "client_id": null,
+        "body": "did you see the cursor patch?\nit fixes the off-by-one in wrap",
+        "voice": null,
+        "event": null,
+        "created_at": "2026-10-21T09:40:00Z"
+      },
+      "last_message_at": "2026-10-21T09:40:00Z",
+      "ahead": 2,
+      "last_incoming_message_id": 105,
+      "pinned_at": null,
+      "muted_until_at": null,
+      "is_archived": false
+    },
+    {
+      "id": "c1000000-0000-4000-8000-00000000000e",
+      "kind": "direct",
+      "name": "Ken",
+      "partner": {
+        "id": "0e000000-0000-4000-8000-00000000000e",
+        "handle": "ken",
+        "name": "Ken",
+        "avatar_url": null,
+        "bio": null,
+        "company": null,
+        "location": null,
+        "website": null,
+        "github_url": "https://github.com/ken",
+        "html_url": "https://dev-null.sh/@ken",
+        "feed_url": "https://dev-null.sh/@ken/feed.atom",
+        "created_at": "2026-09-05T10:00:00Z",
+        "lane": 1
+      },
+      "members": [],
+      "last_message": {
+        "id": 61,
+        "user_id": "0e000000-0000-4000-8000-00000000000e",
+        "client_id": null,
+        "body": null,
+        "voice": {
+          "url": "https://dev-null.sh/storage/voice/61.webm",
+          "duration": 12
+        },
+        "event": null,
+        "created_at": "2026-10-14T21:03:00Z"
+      },
+      "last_message_at": "2026-10-14T21:03:00Z",
+      "ahead": 0,
+      "last_incoming_message_id": 61,
+      "pinned_at": null,
+      "muted_until_at": null,
+      "is_archived": false
+    },
+    {
+      "id": "c1000000-0000-4000-8000-0000000000f0",
+      "kind": "org",
+      "name": "unix-room",
+      "partner": null,
+      "members": [],
+      "last_message": null,
+      "last_message_at": "2026-10-20T12:00:00Z",
+      "ahead": 4,
+      "last_incoming_message_id": null,
+      "pinned_at": null,
+      "muted_until_at": null,
+      "is_archived": false
+    }
+  ],
+  "has_more": false,
+  "unread_count": 2,
+  "requests_count": 0
+}

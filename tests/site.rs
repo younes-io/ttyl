@@ -20,7 +20,8 @@ use ttyl::attach;
 use ttyl::engine::{Effect, Engine, Event};
 use ttyl::keys::{self, Scope};
 use ttyl::model::{
-    Filter, GroupPage, Log, LogPage, NotificationPage, Profile, Row, RowPage, Segment,
+    ConversationPage, Filter, GroupPage, Log, LogPage, MessagePage, NotificationPage, Profile, Row,
+    RowPage, Segment,
 };
 use ttyl::theme;
 use unicode_width::UnicodeWidthStr;
@@ -161,6 +162,24 @@ const SHOTS: &[Shot] = &[
         alt: "The keys overlay that ? opens, listing every key for the screen you are on.",
         shows: "keys",
     },
+    Shot {
+        name: "messages",
+        start: Start::SignedIn,
+        steps: &[Step::Keys("gm")],
+        alt: "Your conversations, one per line: pinned first, then unread, each with its last message.",
+        shows: "@grace",
+    },
+    Shot {
+        name: "conversation",
+        start: Start::SignedIn,
+        steps: &[
+            Step::Keys("gmj"),
+            Step::Tap(KeyCode::Enter),
+            Step::Keys("yes, merging it now"),
+        ],
+        alt: "A conversation with Grace, oldest message at the top, with a reply typed on the line under it.",
+        shows: "merging",
+    },
 ];
 
 fn ctrl(ch: char) -> Event {
@@ -252,6 +271,13 @@ fn serve(call: &Call) -> Result<Reply, Error> {
             Reply::Group(GroupPage::parse(&fixture("notifications-group")).unwrap())
         }
         Call::Preview(text) => Reply::Preview(segments(text)),
+        Call::Conversations { .. } => {
+            Reply::Conversations(ConversationPage::parse(&fixture("remotes")).unwrap())
+        }
+        Call::Messages { .. } => Reply::Messages(Box::new(
+            MessagePage::parse(&fixture("remote-thread")).unwrap(),
+        )),
+        Call::MarkRead { .. } => Reply::Done,
         other => panic!("the docs never ask dev-null.sh for {other:?}"),
     })
 }
@@ -829,13 +855,18 @@ const PAGES: &[Page] = &[
         label: "people",
     },
     Page {
-        name: "keys",
+        name: "messages",
         key: '7',
+        label: "messages",
+    },
+    Page {
+        name: "keys",
+        key: '8',
         label: "keys",
     },
     Page {
         name: "settings",
-        key: '8',
+        key: '9',
         label: "settings",
     },
 ];
@@ -862,6 +893,8 @@ const SCOPES: &[Scope] = &[
     Scope::Person,
     Scope::Listed,
     Scope::Queue,
+    Scope::Messages,
+    Scope::Conversation,
     Scope::Confirm,
     Scope::Report,
     Scope::Details,
@@ -894,6 +927,8 @@ fn heading(scope: Scope) -> &'static str {
         Scope::Person => "On a person in a profile or in search results",
         Scope::Queue => "In scheduled commits",
         Scope::Listed => "In starred commits and search results",
+        Scope::Messages => "In messages",
+        Scope::Conversation => "In a conversation",
         Scope::Confirm => "When ttyl asks you to confirm",
         Scope::Report => "While picking a report reason",
         Scope::Details => "While adding report details",

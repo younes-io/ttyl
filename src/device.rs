@@ -123,6 +123,22 @@ impl Nonce {
         OsRng.fill_bytes(&mut bytes);
         Nonce(bytes)
     }
+
+    /// The bytes as a version 4 UUID, the shape dev-null.sh wants a message's client id in.
+    pub fn uuid(self) -> String {
+        let mut bytes = self.0;
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let hex = Nonce(bytes).to_string();
+        format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        )
+    }
 }
 
 impl fmt::Display for Nonce {

@@ -1218,7 +1218,7 @@ fn layout_width(width: u16) -> usize {
 
 /// The line-editing keys every field shares. A Mac terminal sends alt-left, alt-b or alt-backspace
 /// for the option-key word moves, and ctrl-a for command-left.
-fn edit(text: &mut Buffer, code: KeyCode, ctrl: bool, alt: bool) {
+pub(crate) fn edit(text: &mut Buffer, code: KeyCode, ctrl: bool, alt: bool) {
     match code {
         KeyCode::Char('w') if ctrl => text.delete_word(),
         KeyCode::Backspace if alt => text.delete_word(),
