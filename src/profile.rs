@@ -413,7 +413,8 @@ impl ProfileScreen {
     }
 
     /// Puts their pinned commit first in their commits, as the store shows it now, so every
-    /// commit key works on it and a pin made anywhere moves it at once.
+    /// commit key works on it and a pin made anywhere moves it at once, even one this profile
+    /// hasn't listed.
     fn pin(&mut self, store: &Store) {
         let header = (self.profile.as_ref())
             .and_then(|profile| profile.pinned.as_ref())
@@ -428,6 +429,7 @@ impl ProfileScreen {
         });
         let pinned = (header.into_iter().chain(listed))
             .find(|id| store.pinned(id))
+            .or_else(|| store.pinned_by(&self.handle))
             .cloned();
         if list.pinned == pinned {
             return;

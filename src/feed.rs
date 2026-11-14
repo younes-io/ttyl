@@ -613,8 +613,15 @@ fn counts(row: &Row) -> Vec<Span<'static>> {
             Style::new().fg(theme::ACCENT),
         ));
     }
+    spans.extend(pinned(row));
     spans.extend(showing(row));
     spans
+}
+
+/// The header's note that the user pinned this commit to their profile. Only a row the store
+/// keeps carries it: a quoted copy's `is_pinned` is as old as the commit quoting it.
+pub(crate) fn pinned(row: &Row) -> Option<Span<'static>> {
+    (row.commit.is_pinned).then(|| Span::styled("  pinned", theme::muted()))
 }
 
 /// The header's note that the body reads as a translation, or soon will.
@@ -1095,9 +1102,6 @@ pub(crate) fn header<Tz: TimeZone>(
             Style::new().fg(theme::DESTRUCTIVE),
         )),
         Status::Approved => {}
-    }
-    if commit.is_pinned {
-        spans.push(Span::styled("  pinned", theme::muted()));
     }
 
     let used: usize = spans.iter().map(Span::width).sum();

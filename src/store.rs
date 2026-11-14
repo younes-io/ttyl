@@ -79,6 +79,15 @@ struct Pin {
     on: bool,
 }
 
+/// dev-null.sh keeps one pin per user, so `id` pinned unpins the rest of `handle`'s commits.
+fn unpin_others(rows: &mut HashMap<CommitId, Row>, handle: &str, id: &CommitId) {
+    for row in rows.values_mut() {
+        if row.commit.author.handle == handle && row.commit.id != *id {
+            row.commit.is_pinned = false;
+        }
+    }
+}
+
 pub enum Node<'a> {
     Live(Box<Cow<'a, Row>>),
     Gone(&'a Tombstone),
@@ -465,8 +474,11 @@ impl Store {
             Call::Star { id, .. } => {
                 self.star_wants.remove(id);
             }
-            Call::Pin { .. } => {
-                self.pin_want = None;
+            // A later `^` on another commit still stands.
+            Call::Pin { id, .. } => {
+                if self.pin_want.as_ref().is_some_and(|pin| pin.id == *id) {
+                    self.pin_want = None;
+                }
             }
             Call::Follow { handle, .. } => {
                 if let Some(Follow::Known { server, want }) = self.follows.get_mut(handle) {
@@ -558,14 +570,8 @@ impl Store {
             }
             (Call::Pin { id, on }, Reply::Commit(focus)) => {
                 self.keep_counted(focus.card, Some(focus.replies_count));
-                // dev-null.sh keeps one pin per user, so a new one unpins the rest.
                 if *on {
-                    let me = &self.me.handle;
-                    for row in self.rows.values_mut() {
-                        if row.commit.author.handle == *me && row.commit.id != *id {
-                            row.commit.is_pinned = false;
-                        }
-                    }
+                    unpin_others(&mut self.rows, &self.me.handle, id);
                 }
                 self.generation += 1;
             }
@@ -583,6 +589,8 @@ impl Store {
                 let is_following = profile.is_following;
                 if let Some(mut pinned) = profile.pinned {
                     pinned.commit.is_pinned = true;
+                    let commit = &pinned.commit;
+                    unpin_others(&mut self.rows, &commit.author.handle, &commit.id);
                     self.land_row(pinned);
                     self.generation += 1;
                 }
