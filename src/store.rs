@@ -7,8 +7,8 @@ use crate::api::{Account, Call, Failure, Me, Reply};
 use crate::draft::Target;
 use crate::locale;
 use crate::model::{
-    Card, CommitId, CommitPage, Deletion, Log, LogPage, RepliesPage, Row, Settings, Showing, Shown,
-    Suggestion, Tombstone, Translated, Translation, Untranslated,
+    Card, CommitId, CommitPage, Deletion, Fold, Log, LogPage, RepliesPage, Row, Settings, Showing,
+    Shown, Suggestion, Tombstone, Translated, Translation, Untranslated,
 };
 use crate::sched::CallKey;
 
@@ -24,7 +24,8 @@ pub struct Store {
     reply_refills: HashMap<CommitId, Refill<Replies>>,
     star_wants: HashMap<CommitId, bool>,
     follows: HashMap<String, Follow>,
-    mutes: HashMap<String, Mute>,
+    mutes: HashMap<String, Switch>,
+    blocks: HashMap<String, Switch>,
     language: Language,
     translations: HashMap<CommitId, Translating>,
     deleting: HashSet<CommitId>,
@@ -40,9 +41,9 @@ pub enum Follow {
     Known { server: bool, want: bool },
 }
 
-/// Whether the user mutes someone, as dev-null.sh last said and as they want it now.
+/// Whether the user mutes or blocks someone, as dev-null.sh last said and as they want it now.
 #[derive(Debug, Clone, Copy, Default)]
-struct Mute {
+struct Switch {
     server: bool,
     want: bool,
 }
@@ -190,6 +191,7 @@ impl Store {
             mutes: HashMap::new(),
             language: Language::Unsettled { device: None },
             translations: HashMap::new(),
+            blocks: HashMap::new(),
             deleting: HashSet::new(),
             unsent_pastels: HashMap::new(),
             picking: None,
@@ -293,6 +295,19 @@ impl Store {
         }
     }
 
+    /// Flips whether the user blocks `handle` and returns whether they now do. Anyone the logs
+    /// show starts unblocked, since nothing crosses a block on dev-null.sh.
+    pub fn block(&mut self, handle: &str) -> bool {
+        let block = self.blocks.entry(handle.to_owned()).or_default();
+        block.want = !block.want;
+        self.generation += 1;
+        block.want
+    }
+
+    pub fn blocking(&self, handle: &str) -> bool {
+        self.blocks.get(handle).is_some_and(|block| block.want)
+    }
+
     pub fn give_pastel(&mut self, id: &CommitId) {
         *self.unsent_pastels.entry(id.clone()).or_default() += 1;
     }
@@ -372,6 +387,14 @@ impl Store {
                 }
             }
         }
+        for (handle, block) in &self.blocks {
+            if block.server != block.want && !pending(&CallKey::Block(handle.clone())) {
+                calls.push(Call::Block {
+                    handle: handle.clone(),
+                    on: block.want,
+                });
+            }
+        }
         self.unsent_pastels.retain(|id, left| {
             if !pending(&CallKey::Pastel(id.clone())) {
                 calls.push(Call::Pastel(id.clone()));
@@ -395,6 +418,11 @@ impl Store {
             Call::Mute { handle, .. } => {
                 if let Some(mute) = self.mutes.get_mut(handle) {
                     mute.want = mute.server;
+                }
+            }
+            Call::Block { handle, .. } => {
+                if let Some(block) = self.blocks.get_mut(handle) {
+                    block.want = block.server;
                 }
             }
             Call::User(handle) => {
@@ -541,6 +569,22 @@ impl Store {
                     self.generation += 1;
                 }
             }
+            (Call::Block { handle, on }, Reply::Done) => {
+                if let Some(block) = self.blocks.get_mut(handle) {
+                    block.server = *on;
+                }
+                // Blocking ends the follows both ways, and unblocking leaves them ended.
+                if *on {
+                    self.follows.insert(
+                        handle.clone(),
+                        Follow::Known {
+                            server: false,
+                            want: false,
+                        },
+                    );
+                    self.generation += 1;
+                }
+            }
             (Call::Delete(id), Reply::Done) => {
                 self.deleting.remove(id);
                 let row = self.rows.get(id);
@@ -618,7 +662,14 @@ impl Store {
         let picking = (self.picking.as_ref())
             .filter(|(on, _)| on == id)
             .map(|(_, at)| *at);
-        let muted = (self.mutes.get(&row.commit.author.handle)).is_some_and(|mute| mute.want);
+        let author = &row.commit.author.handle;
+        let fold = if self.blocking(author) {
+            Some(Fold::Blocked)
+        } else {
+            (self.mutes.get(author))
+                .is_some_and(|mute| mute.want)
+                .then_some(Fold::Muted)
+        };
         let translating = self.translations.get(id);
         let asking = matches!(translating, Some(Translating::Asking { show: true }));
         let translated = match translating {
@@ -631,7 +682,7 @@ impl Store {
         if want.is_none()
             && !deleting
             && picking.is_none()
-            && !muted
+            && fold.is_none()
             && !asking
             && translated.is_none()
         {
@@ -649,7 +700,7 @@ impl Store {
         if deleting {
             row.deletion = Some(Deletion::Running);
         }
-        row.muted = muted;
+        row.fold = fold;
         if asking {
             row.showing = Showing::Translating;
         }
@@ -709,7 +760,7 @@ impl Store {
                             quoted_commit,
                             reply_preview,
                             deletion: None,
-                            muted: false,
+                            fold: None,
                             showing: Showing::Original,
                         },
                     );
@@ -806,7 +857,7 @@ impl Store {
                 quoted_commit: card.quoted_commit,
                 reply_preview,
                 deletion: None,
-                muted: false,
+                fold: None,
                 showing: Showing::Original,
             },
         );

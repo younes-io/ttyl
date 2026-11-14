@@ -51,6 +51,8 @@ enum Command<'a> {
     Log(Log, Format),
     /// What dev-null.sh is talking about right now, for a motd or a status bar.
     Headlines,
+    /// The handles the user blocks, one per line.
+    Blocked,
     Version,
     Help,
     Unknown(&'a str),
@@ -62,7 +64,8 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         ["--redirect", url] => Command::Redirect(url),
         ["status"] => Command::Status,
         ["commit", rest @ ..] => commit_command(rest),
-        ["status", arg, ..] => Command::Unknown(arg),
+        ["blocked"] => Command::Blocked,
+        ["status" | "blocked", arg, ..] => Command::Unknown(arg),
         ["log", rest @ ..] => log_command(rest),
         ["headlines"] => Command::Headlines,
         ["headlines", arg, ..] => Command::Unknown(arg),
@@ -108,13 +111,14 @@ fn main() -> ExitCode {
         Command::Commit { text, at } => report(commit(text, at)),
         Command::Log(log, format) => report(print_log(log, format)),
         Command::Headlines => report(print_headlines()),
+        Command::Blocked => report(print_blocked()),
         Command::Version => {
             println!("ttyl {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>] [--at <when>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n       ttyl blocked\n\nCommands:\n  status     print how many notifications are unread, and in a terminal how many commits are scheduled\n  commit     send a commit, with its text from -m or from stdin, or schedule it with --at\n             14:30, tomorrow 9:00, fri 14:00, in 2h, or an RFC 3339 time\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n  blocked    print the handles you block, one per line\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -225,6 +229,25 @@ fn print_log(log: Log, format: Format) -> Result<(), String> {
     match shown {
         Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.to_string()),
         _ => Ok(()),
+    }
+}
+
+fn print_blocked() -> Result<(), String> {
+    let client = client()?;
+    let mut stdout = io::stdout().lock();
+    let mut cursor = None;
+    loop {
+        let page = (client.blocked(cursor.as_deref())).map_err(|error| refused(&error))?;
+        for person in &page.people {
+            match writeln!(stdout, "{}", person.user.handle) {
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+                written => written.map_err(|error| error.to_string())?,
+            }
+        }
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return Ok(()),
+        }
     }
 }
 

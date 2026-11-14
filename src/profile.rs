@@ -16,8 +16,8 @@ use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::{self, Action, Link};
 use crate::log;
 use crate::model::{
-    Activity, Circle, CommitId, Headline, Lane, Level, Log, LogPage, PALETTE_LEN, Person, Profile,
-    Row, Scale, Streaks, User,
+    Activity, Circle, CommitId, Fold, Headline, Lane, Level, Log, LogPage, PALETTE_LEN, Person,
+    Profile, Row, Scale, Streaks, User,
 };
 use crate::store::Store;
 use crate::theme;
@@ -1048,6 +1048,17 @@ fn nodes(items: &[Item], store: &Store, width: u16) -> Feed {
 
 fn person_node(out: &mut Writer, person: &Person, store: &Store) -> Lane {
     let user = &person.user;
+    if store.blocking(&user.handle) {
+        out.node(
+            Span::styled("○ ", Style::new().fg(theme::RAIL)),
+            feed::rail(),
+            vec![Span::styled(
+                feed::folded(Fold::Blocked, &user.handle),
+                theme::muted(),
+            )],
+        );
+        return user.lane;
+    }
     let lane = Style::new().fg(theme::lane(user.lane));
     let mut spans = vec![
         Span::styled(user.name.clone(), lane.add_modifier(Modifier::BOLD)),

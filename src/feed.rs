@@ -19,7 +19,7 @@ use crate::clock::Spark;
 use crate::code;
 use crate::keys::Action;
 use crate::model::{
-    Commit, CommitId, Deletion, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment,
+    Commit, CommitId, Deletion, Fold, Lane, Log, LogPage, Media, Poll, Quote, Reply, Row, Segment,
     Showing, Shown, Status,
 };
 use crate::theme;
@@ -501,6 +501,14 @@ pub(crate) fn rail() -> Span<'static> {
     Span::styled("│ ", Style::new().fg(theme::RAIL))
 }
 
+/// What a commit or person the user muted or blocked reads in their place.
+pub(crate) fn folded(fold: Fold, handle: &str) -> String {
+    match fold {
+        Fold::Muted => format!("muted @{handle} · m to unmute"),
+        Fold::Blocked => format!("blocked @{handle} · B to unblock"),
+    }
+}
+
 const BODY_LINES: usize = 4;
 
 /// One commit as the feed shows it: a header carrying the counts, the body cut to `BODY_LINES` unless
@@ -521,8 +529,8 @@ fn row_lines<Tz: TimeZone>(
         );
         return false;
     }
-    if row.muted {
-        let note = format!("muted @{} · m to unmute", commit.author.handle);
+    if let Some(fold) = row.fold {
+        let note = folded(fold, &commit.author.handle);
         out.node(
             Span::styled("○ ", Style::new().fg(theme::RAIL)),
             rail(),

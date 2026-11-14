@@ -92,6 +92,11 @@ pub enum Call {
         id: CommitId,
         language: String,
     },
+    /// Blocks someone, which ends the follows both ways, or unblocks them, which leaves the follows ended.
+    Block {
+        handle: String,
+        on: bool,
+    },
     User(String),
     /// Someone's commits, or with `replies` their replies, as their profile lists them.
     Commits {
@@ -365,6 +370,11 @@ impl Client {
                     .map(|translation| Reply::Translation(Box::new(translation)))
                     .map_err(|error| unreadable(status, error))
             }
+            Call::Block { handle, on } => {
+                let path = format!("/api/v1/users/{}/block", escape(handle));
+                self.send(if *on { "POST" } else { "DELETE" }, &path, String::new())
+                    .map(|_| Reply::Done)
+            }
             Call::User(handle) => self
                 .user(handle)
                 .map(|profile| Reply::User(Box::new(profile))),
@@ -614,6 +624,16 @@ impl Client {
         cursor: Option<&str>,
     ) -> Result<PeoplePage, Error> {
         let mut path = format!("/api/v1/users/{}/{}", escape(handle), circle.slug());
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("?cursor={}", escape(cursor)));
+        }
+        let (status, text) = self.send("GET", &path, String::new())?;
+        PeoplePage::parse(&text).map_err(|error| unreadable(status, error))
+    }
+
+    /// The people the user blocks, last blocked first.
+    pub fn blocked(&self, cursor: Option<&str>) -> Result<PeoplePage, Error> {
+        let mut path = String::from("/api/v1/me/blocked");
         if let Some(cursor) = cursor {
             path.push_str(&format!("?cursor={}", escape(cursor)));
         }

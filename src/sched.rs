@@ -33,6 +33,7 @@ pub enum CallKey {
     Mute(String),
     Settings,
     Translate(CommitId),
+    Block(String),
     User(String),
     Commits {
         handle: String,
@@ -82,6 +83,7 @@ impl Call {
             Call::Mute { handle, .. } => CallKey::Mute(handle.clone()),
             Call::Settings => CallKey::Settings,
             Call::Translate { id, .. } => CallKey::Translate(id.clone()),
+            Call::Block { handle, .. } => CallKey::Block(handle.clone()),
             Call::User(handle) => CallKey::User(handle.clone()),
             Call::Commits {
                 handle,

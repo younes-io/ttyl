@@ -35,8 +35,8 @@ use crate::keys::{
 use crate::list::{ListScreen, Source};
 use crate::log::{self, LOGS, LogScreen, Retry};
 use crate::model::{
-    self, Commit, CommitId, Filter, Kind, Log, NotificationId, Reason, Row, ScheduledId, Shown,
-    Status, Translation, Untranslated, User,
+    self, Commit, CommitId, Filter, Fold, Kind, Log, NotificationId, Reason, Row, ScheduledId,
+    Shown, Status, Translation, Untranslated, User,
 };
 use crate::popup;
 use crate::profile::{self, Item, ProfileScreen, Tab};
@@ -161,6 +161,8 @@ enum Overlay {
         last: usize,
     },
     Delete(CommitId),
+    /// Asking before blocking someone, which ends the follows both ways.
+    Block(String),
     Reason {
         id: CommitId,
         at: usize,
@@ -400,11 +402,12 @@ impl Session {
     fn allows(&self, act: Act) -> bool {
         let me = &self.store.me.handle;
         match self.selected() {
+            Some(Selected::Row(row)) if row.fold == Some(Fold::Blocked) => act == Act::Block,
             Some(Selected::Row(row)) => {
                 let own = row.commit.author.handle == *me;
                 row.deletion.is_none()
                     && match act {
-                        Act::Star | Act::Follow | Act::Mute => !own,
+                        Act::Star | Act::Follow | Act::Mute | Act::Block => !own,
                         Act::Pastel => !own && self.store.me.pasteis_mode,
                         Act::Copy | Act::Browse | Act::Pipe | Act::Related => true,
                         Act::Delete => own,
@@ -421,7 +424,7 @@ impl Session {
             }
             // A notification's commit carries no star state, so its star and pastel wait for the thread.
             Some(Selected::Note(commit)) => match act {
-                Act::Follow | Act::Mute => commit.author.handle != *me,
+                Act::Follow | Act::Mute | Act::Block => commit.author.handle != *me,
                 Act::Copy | Act::Browse | Act::Reply | Act::Quote | Act::Pipe | Act::Related => {
                     true
                 }
@@ -434,7 +437,14 @@ impl Session {
                 | Act::OpenQuote
                 | Act::Translate => false,
             },
-            Some(Selected::Person(user)) => act == Act::Follow && user.handle != *me,
+            Some(Selected::Person(user)) => {
+                user.handle != *me
+                    && match act {
+                        Act::Follow => !self.store.blocking(&user.handle),
+                        Act::Block => true,
+                        _ => false,
+                    }
+            }
             None => false,
         }
     }
@@ -472,6 +482,16 @@ impl Session {
         (self.store.row(id)).map_or(&[], |row| row.media.images.as_slice())
     }
 
+    /// Asks before blocking `handle`, or unblocks them at once and says what the toast reads.
+    fn block(&mut self, handle: String) -> Option<String> {
+        if self.store.blocking(&handle) {
+            self.store.block(&handle);
+            return Some(blocked(&handle, false));
+        }
+        self.overlay = Some(Overlay::Block(handle));
+        None
+    }
+
     fn can(&self, action: Action) -> bool {
         if action == Action::Poll {
             return self.overlay.is_none()
@@ -500,7 +520,7 @@ impl Session {
     fn scopes(&self) -> &'static [Scope] {
         match self.overlay {
             Some(Overlay::Help { .. }) => HELP_SCOPES,
-            Some(Overlay::Delete(_)) => CONFIRM_SCOPES,
+            Some(Overlay::Delete(_) | Overlay::Block(_)) => CONFIRM_SCOPES,
             Some(Overlay::Reason { .. }) => REPORT_SCOPES,
             Some(Overlay::Vote { .. }) => VOTE_SCOPES,
             Some(Overlay::Viewer { .. }) => VIEWER_SCOPES,
@@ -525,6 +545,7 @@ impl Session {
         match self.overlay {
             Some(
                 Overlay::Delete(_)
+                | Overlay::Block(_)
                 | Overlay::Details { .. }
                 | Overlay::Pipe { .. }
                 | Overlay::Search { .. }
@@ -570,7 +591,9 @@ impl Session {
 
     fn typed(&mut self, event: KeyEvent) {
         match &mut self.overlay {
-            Some(Overlay::Delete(_) | Overlay::Unschedule { .. }) => self.overlay = None,
+            Some(Overlay::Delete(_) | Overlay::Unschedule { .. } | Overlay::Block(_)) => {
+                self.overlay = None
+            }
             Some(Overlay::Details { text, .. }) => match event.code {
                 KeyCode::Backspace => {
                     text.pop();
@@ -750,6 +773,18 @@ impl Session {
                     Style::new().fg(theme::DESTRUCTIVE),
                 )])
             }
+            Some(Overlay::Block(handle)) => {
+                let warned = format!("block @{handle}? this ends follows both ways [y/N]");
+                let prompt = if warned.width() <= room {
+                    warned
+                } else {
+                    format!("block @{handle}? [y/N]")
+                };
+                Some(vec![Span::styled(
+                    prompt,
+                    Style::new().fg(theme::DESTRUCTIVE),
+                )])
+            }
             Some(Overlay::Pipe { command, .. }) => Some(vec![typed(format!("| {command}█"))]),
             Some(Overlay::Search { query }) if query.is_empty() => Some(vec![typed(
                 "/█  words to find commits, or @name for people".to_owned(),
@@ -919,6 +954,13 @@ fn untranslated(why: &Untranslated) -> String {
     match why {
         Untranslated::Already(language) => format!("already in {language}"),
         Untranslated::NoLanguage => "nothing to translate".to_owned(),
+    }
+}
+
+fn blocked(handle: &str, on: bool) -> String {
+    match on {
+        true => format!("blocked @{handle} · B to undo"),
+        false => format!("unblocked @{handle} · the follows it ended don't come back"),
     }
 }
 
@@ -1584,6 +1626,14 @@ impl Engine {
                     }
                 }
             }
+            (Phase::Ready(session), Action::Confirm)
+                if matches!(session.overlay, Some(Overlay::Block(_))) =>
+            {
+                if let Some(Overlay::Block(handle)) = session.overlay.take() {
+                    session.store.block(&handle);
+                    self.toast(blocked(&handle, true), now);
+                }
+            }
             (Phase::Ready(session), action) if session.overlay.is_some() => {
                 if let Some(call) = session.on_overlay(action) {
                     self.sched.send(call, Priority::Now);
@@ -1881,9 +1931,13 @@ impl Engine {
             Some(Selected::Row(row)) => row.commit.clone(),
             Some(Selected::Note(commit)) => commit.clone(),
             Some(Selected::Person(user)) => {
-                let author = user.handle.clone();
-                if let Some(on) = session.store.follow(&author) {
-                    self.toast(followed(&author, on), now);
+                let handle = user.handle.clone();
+                let toast = match act {
+                    Act::Block => session.block(handle),
+                    _ => (session.store.follow(&handle)).map(|on| followed(&handle, on)),
+                };
+                if let Some(text) = toast {
+                    self.toast(text, now);
                 }
                 return Vec::new();
             }
@@ -1923,6 +1977,7 @@ impl Engine {
                 session.store.translate(&id).map(|why| untranslated(&why)),
                 Vec::new(),
             ),
+            Act::Block => (session.block(author), Vec::new()),
             Act::Copy => (Some(format!("copied {url}")), vec![Effect::Copy(url)]),
             Act::Browse => (
                 Some("opened in the browser".to_owned()),
@@ -2432,7 +2487,11 @@ impl Engine {
                         self.sched.send(Call::Queue, Priority::Now);
                         offline
                     }
-                    Call::Star { .. } | Call::Follow { .. } | Call::Mute { .. } | Call::User(_)
+                    Call::Star { .. }
+                    | Call::Follow { .. }
+                    | Call::Mute { .. }
+                    | Call::Block { .. }
+                    | Call::User(_)
                         if !matches!(failure, Failure::Refused(_)) =>
                     {
                         true
@@ -2440,6 +2499,7 @@ impl Engine {
                     Call::Star { .. }
                     | Call::Follow { .. }
                     | Call::Mute { .. }
+                    | Call::Block { .. }
                     | Call::User(_)
                     | Call::Delete(_)
                     | Call::Restore(_)
@@ -2910,6 +2970,7 @@ impl Engine {
                     }
                     Some(
                         Overlay::Delete(_)
+                        | Overlay::Block(_)
                         | Overlay::Vote { .. }
                         | Overlay::Pipe { .. }
                         | Overlay::Search { .. }
