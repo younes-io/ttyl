@@ -149,14 +149,13 @@ impl Conversations {
                 });
             }
             (Some(before), Some(loaded)) if loaded.next.as_deref() == Some(before) => {
-                let count = loaded.rows.len();
                 for conversation in page.conversations {
                     let handle = &conversation.partner.handle;
                     if !loaded.rows.iter().any(|row| row.partner.handle == *handle) {
                         loaded.rows.push(conversation);
                     }
                 }
-                loaded.next = page.next.filter(|_| loaded.rows.len() > count);
+                loaded.next = page.next.filter(|next| next != before);
             }
             (Some(_), _) => return,
         }
@@ -301,6 +300,8 @@ pub struct ConversationScreen {
     failure: Option<Failure>,
     asked_at: Instant,
     input: Buffer,
+    /// The failed send whose id goes again while its text is unchanged.
+    retry: Option<Outgoing>,
     /// Sent and not yet answered, shown dimmed under the conversation.
     outbox: Vec<Outgoing>,
     view: View,
@@ -312,15 +313,58 @@ pub struct ConversationScreen {
 }
 
 struct Thread {
+    /// Oldest first, each id once.
     messages: Vec<Message>,
     has_older: bool,
     read_through: MessageId,
     access: Access,
+    /// The newest message a poll brought. A message this screen sent can be newer than one the
+    /// partner sent before it, so polling after the newest message shown would skip theirs.
+    polled: Option<MessageId>,
 }
 
+impl Thread {
+    /// Puts `message` in its place by id, unless it is already there. Says whether it was new.
+    fn place(&mut self, message: Message) -> bool {
+        let at = (self.messages).partition_point(|each| each.id < message.id);
+        let known = self
+            .messages
+            .get(at)
+            .is_some_and(|each| each.id == message.id);
+        if !known {
+            self.messages.insert(at, message);
+        }
+        !known
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Outgoing {
     client_id: ClientId,
     body: String,
+}
+
+/// What was typed in a conversation and not sent, kept while it is closed.
+#[derive(Debug, Default)]
+pub struct Unsent {
+    text: String,
+    retry: Option<Outgoing>,
+}
+
+impl Unsent {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Puts a failed send's text back in front of what was typed since. Sent again unchanged, it
+    /// goes with the same id, so dev-null.sh keeps one copy if the first one did land.
+    pub fn restore(&mut self, client_id: ClientId, body: String) {
+        self.text = match self.text.as_str() {
+            "" => body.clone(),
+            typed => format!("{body}\n{typed}"),
+        };
+        self.retry = Some(Outgoing { client_id, body });
+    }
 }
 
 /// Where the view sits: on the newest message, following new ones in, or scrolled back.
@@ -337,14 +381,15 @@ enum View {
 
 impl ConversationScreen {
     /// `unsent` is what was typed here before the conversation was last left.
-    pub fn new(partner: User, unsent: &str, now: Instant) -> Self {
+    pub fn new(partner: User, unsent: Unsent, now: Instant) -> Self {
         ConversationScreen {
             title: format!("@{}", partner.handle),
             partner,
             thread: None,
             failure: None,
             asked_at: now,
-            input: Buffer::new(unsent),
+            input: Buffer::new(&unsent.text),
+            retry: unsent.retry,
             outbox: Vec::new(),
             view: View::Stuck,
             page: 0,
@@ -354,8 +399,12 @@ impl ConversationScreen {
     }
 
     /// The handle, and what was typed and not sent, to keep for when the conversation opens again.
-    pub fn leave(self) -> (String, String) {
-        (self.partner.handle, self.input.text().to_owned())
+    pub fn leave(self) -> (String, Unsent) {
+        let unsent = Unsent {
+            text: self.input.text().to_owned(),
+            retry: self.retry,
+        };
+        (self.partner.handle, unsent)
     }
 
     pub fn handle(&self) -> &str {
@@ -368,14 +417,10 @@ impl ConversationScreen {
 
     /// The latest messages, or once they are in, the ones since.
     pub fn poll(&self) -> Call {
-        let newest = self
-            .thread
-            .as_ref()
-            .and_then(|thread| thread.messages.last());
-        let paging = newest.map_or(Paging::Latest, |message| Paging::After(message.id));
+        let polled = self.thread.as_ref().and_then(|thread| thread.polled);
         Call::Messages {
             handle: self.partner.handle.clone(),
-            paging,
+            paging: polled.map_or(Paging::Latest, Paging::After),
         }
     }
 
@@ -446,8 +491,18 @@ impl ConversationScreen {
     }
 
     /// Takes a page in, and says how far to mark the conversation read when the partner wrote
-    /// something the user hasn't read.
+    /// something the user hasn't read. A page asked for by a screen closed since, or before
+    /// an oldest message that is no longer the oldest, is dropped.
     pub fn land(&mut self, paging: Paging, page: MessagePage) -> Option<MessageId> {
+        let oldest = self
+            .thread
+            .as_ref()
+            .map(|thread| thread.messages.first().map(|each| each.id));
+        match (paging, oldest) {
+            (Paging::After(_), None) | (Paging::Before(_), None) => return None,
+            (Paging::Before(before), Some(oldest)) if oldest != Some(before) => return None,
+            _ => {}
+        }
         self.failure = None;
         let landed: Vec<&ClientId> = (page.messages.iter())
             .filter_map(|message| message.client_id.as_ref())
@@ -455,28 +510,31 @@ impl ConversationScreen {
         self.outbox
             .retain(|outgoing| !landed.contains(&&outgoing.client_id));
         self.partner = page.partner;
+        let partner = &self.partner.id;
+        let newest = page.messages.last().map(|message| message.id);
         let thread = match (&mut self.thread, paging) {
             (Some(thread), Paging::Before(_)) => {
-                let oldest = thread.messages.first().map(|message| message.id);
-                let older = (page.messages.into_iter())
-                    .filter(|message| oldest.is_none_or(|oldest| message.id < oldest));
-                thread.messages.splice(0..0, older);
+                for message in page.messages {
+                    thread.place(message);
+                }
                 thread.has_older = page.has_older;
                 self.at_top = false;
                 return None;
             }
-            (Some(thread), Paging::After(_)) => {
-                let newest = thread.messages.last().map(|message| message.id);
-                let partner = &self.partner.id;
-                let new: Vec<Message> = (page.messages.into_iter())
-                    .filter(|message| newest.is_none_or(|newest| message.id > newest))
-                    .collect();
-                if let View::Back { unseen, .. } = &mut self.view {
-                    *unseen += new.iter().filter(|each| each.user_id == *partner).count();
+            (Some(thread), Paging::Latest | Paging::After(_)) => {
+                let mut arrived = 0;
+                for message in page.messages {
+                    let theirs = message.user_id == *partner;
+                    if thread.place(message) && theirs {
+                        arrived += 1;
+                    }
                 }
-                thread.messages.extend(new);
+                if let View::Back { unseen, .. } = &mut self.view {
+                    *unseen += arrived;
+                }
                 thread.access = page.access;
                 thread.read_through = thread.read_through.max(page.read_through);
+                thread.polled = thread.polled.max(newest);
                 thread
             }
             (thread, _) => thread.insert(Thread {
@@ -484,9 +542,9 @@ impl ConversationScreen {
                 has_older: page.has_older,
                 read_through: page.read_through,
                 access: page.access,
+                polled: newest,
             }),
         };
-        let partner = &self.partner.id;
         let unread = (thread.messages.iter())
             .any(|message| message.user_id == *partner && message.id > thread.read_through);
         let newest = thread.messages.last()?.id;
@@ -536,7 +594,10 @@ impl ConversationScreen {
         if let Some(refusal) = refusal(&body) {
             return Some(Err(refusal));
         }
-        let client_id = ClientId(Nonce::random().uuid());
+        let client_id = match self.retry.take() {
+            Some(retry) if retry.body == body => retry.client_id,
+            _ => ClientId(Nonce::random().uuid()),
+        };
         self.input = Buffer::default();
         self.view = View::Stuck;
         self.outbox.push(Outgoing {
@@ -554,11 +615,8 @@ impl ConversationScreen {
     pub fn sent(&mut self, client_id: &ClientId, message: Message) {
         self.outbox
             .retain(|outgoing| outgoing.client_id != *client_id);
-        if let Some(thread) = &mut self.thread
-            && !thread.messages.iter().any(|each| each.id == message.id)
-        {
-            let at = thread.messages.partition_point(|each| each.id < message.id);
-            thread.messages.insert(at, message);
+        if let Some(thread) = &mut self.thread {
+            thread.place(message);
         }
     }
 
@@ -569,11 +627,13 @@ impl ConversationScreen {
             return;
         };
         let outgoing = self.outbox.remove(at);
-        let text = match self.input.text() {
-            "" => outgoing.body,
-            typed => format!("{}\n{typed}", outgoing.body),
+        let mut unsent = Unsent {
+            text: self.input.text().to_owned(),
+            retry: None,
         };
-        self.input = Buffer::new(&text);
+        unsent.restore(outgoing.client_id, outgoing.body);
+        self.input = Buffer::new(&unsent.text);
+        self.retry = unsent.retry;
     }
 
     pub fn draw<Tz: TimeZone>(
