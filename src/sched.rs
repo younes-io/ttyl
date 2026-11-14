@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::api::Call;
 use crate::draft::Target;
-use crate::model::{Circle, CommitId, Filter, Log, NotificationId};
+use crate::model::{Circle, CommitId, Filter, HeadlineId, Log, NotificationId};
 
 /// The server's signed throttle: this many requests in any sliding window.
 pub const LIMIT: usize = 120;
@@ -49,6 +49,8 @@ pub enum CallKey {
     },
     Search(String),
     Related(CommitId),
+    Headlines,
+    Headline(HeadlineId),
     Delete(CommitId),
     Restore(CommitId),
     Pastel(CommitId),
@@ -101,6 +103,8 @@ impl Call {
             Call::SearchCommits(query) => CallKey::Search(query.clone()),
             Call::SearchPeople(name) => CallKey::Search(format!("@{name}")),
             Call::Related(id) => CallKey::Related(id.clone()),
+            Call::Headlines => CallKey::Headlines,
+            Call::Headline(id) => CallKey::Headline(id.clone()),
             Call::Delete(id) => CallKey::Delete(id.clone()),
             Call::Restore(id) => CallKey::Restore(id.clone()),
             Call::Pastel(id) => CallKey::Pastel(id.clone()),

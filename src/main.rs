@@ -32,7 +32,7 @@ use ttyl::engine::{self, Effect, Engine, Event, WORKERS};
 use ttyl::gitlog::{self, Format};
 use ttyl::model::{Log, Status};
 use ttyl::sched::Ticket;
-use ttyl::{body, compose, editor, locale, signin, theme, viewer, welcome};
+use ttyl::{body, compose, editor, headlines, locale, signin, theme, viewer, welcome};
 
 const INPUT_POLL: Duration = Duration::from_millis(100);
 /// The file in ttyl's state that remembers the icons the viewer picked on the welcome screen.
@@ -46,6 +46,8 @@ enum Command<'a> {
     Commit(Option<&'a str>),
     /// A log printed the way `git log` prints commits.
     Log(Log, Format),
+    /// What dev-null.sh is talking about right now, for a motd or a status bar.
+    Headlines,
     Version,
     Help,
     Unknown(&'a str),
@@ -60,6 +62,8 @@ fn command<'a>(args: &[&'a str]) -> Command<'a> {
         ["commit", "-m", text] => Command::Commit(Some(text)),
         ["status" | "commit", arg, ..] => Command::Unknown(arg),
         ["log", rest @ ..] => log_command(rest),
+        ["headlines"] => Command::Headlines,
+        ["headlines", arg, ..] => Command::Unknown(arg),
         ["--version" | "-V"] => Command::Version,
         ["--help" | "-h"] => Command::Help,
         ["--version" | "-V" | "--help" | "-h", arg, ..] | [arg, ..] => Command::Unknown(arg),
@@ -89,13 +93,14 @@ fn main() -> ExitCode {
         Command::Status => report(status()),
         Command::Commit(text) => report(commit(text)),
         Command::Log(log, format) => report(print_log(log, format)),
+        Command::Headlines => report(print_headlines()),
         Command::Version => {
             println!("ttyl {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Command::Help => {
             println!(
-                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n       ttyl log [following | latest | trending] [--oneline]\n\nCommands:\n  status  print how many notifications are unread\n  commit  send a commit, with its text from -m or from stdin\n  log     print a log the way git log prints commits, through $PAGER in a terminal\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
+                "{}\n\nUsage: ttyl [--version | --help]\n       ttyl status\n       ttyl commit [-m <text>]\n       ttyl log [following | latest | trending] [--oneline]\n       ttyl headlines\n\nCommands:\n  status     print how many notifications are unread\n  commit     send a commit, with its text from -m or from stdin\n  log        print a log the way git log prints commits, through $PAGER in a terminal\n  headlines  print what dev-null.sh is talking about, each headline over its recap\n\nEnvironment:\n  DEVNULL_URL  the server to use (default: {})",
                 env!("CARGO_PKG_DESCRIPTION"),
                 api::BASE
             );
@@ -171,6 +176,20 @@ fn status() -> Result<(), String> {
     let me = client()?.me().map_err(|error| refused(&error))?;
     println!("{}", me.unread);
     Ok(())
+}
+
+fn print_headlines() -> Result<(), String> {
+    let reply = client()?
+        .call(&Call::Headlines)
+        .map_err(|error| refused(&error))?;
+    let Reply::Headlines(list) = reply else {
+        unreachable!("headlines answer with headlines")
+    };
+    let text = headlines::print(&list, io::stdout().is_terminal());
+    match io::stdout().write_all(text.as_bytes()) {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.to_string()),
+        _ => Ok(()),
+    }
 }
 
 fn print_log(log: Log, format: Format) -> Result<(), String> {

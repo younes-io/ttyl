@@ -17,6 +17,8 @@ pub enum Action {
     NextLog,
     Inbox,
     Starred,
+    /// Lists what dev-null.sh is talking about right now.
+    Headlines,
     /// Asks what to search for.
     Search,
     Profile,
@@ -134,6 +136,7 @@ impl Action {
             | Action::NextLog
             | Action::Inbox
             | Action::Starred
+            | Action::Headlines
             | Action::Search
             | Action::Refresh
             | Action::Help
@@ -1104,6 +1107,13 @@ pub const TABLE: &[Binding] = &[
         action: Action::Starred,
         hint: None,
         help: "starred commits",
+    },
+    Binding {
+        scope: Scope::Global,
+        chords: &[&[Key::ch('g'), Key::ch('t')]],
+        action: Action::Headlines,
+        hint: None,
+        help: "hot topics",
     },
     Binding {
         scope: Scope::Global,

@@ -282,9 +282,8 @@ impl Session {
         }
     }
 
-    fn on_starred(&self) -> bool {
-        self.list()
-            .is_some_and(|list| *list.source() == Source::Starred)
+    fn on_list(&self, source: &Source) -> bool {
+        self.list().is_some_and(|list| list.source() == source)
     }
 
     fn screen_scopes(&self) -> &'static [Scope] {
@@ -313,7 +312,8 @@ impl Session {
             Action::Quit | Action::Help | Action::Saver | Action::Search
         ) || (action == Action::Undo && self.undoable.is_some())
             || (matches!(action, Action::Compose | Action::Inbox) && !self.on_inbox())
-            || (action == Action::Starred && !self.on_starred())
+            || (action == Action::Starred && !self.on_list(&Source::Starred))
+            || (action == Action::Headlines && !self.on_list(&Source::Headlines))
             || match self.stack.last() {
                 Some(Screen::Thread(thread)) => thread.can(action, &self.store),
                 Some(Screen::Inbox) => self.inbox.can(action, &self.store),
@@ -335,10 +335,12 @@ impl Session {
             Some(Screen::Profile(profile)) => match profile.selected()? {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
+                Item::Headline(_) => return None,
             },
             Some(Screen::List(list)) => match list.selected()? {
                 Item::Commit(id) => id,
                 Item::Person(person) => return Some(Selected::Person(&person.user)),
+                Item::Headline(_) => return None,
             },
             None => self.log.selected_id(self.log.active(), &self.store)?,
         };
@@ -1512,8 +1514,15 @@ impl Engine {
                 }
             }
             (Phase::Ready(session), Action::Starred) => {
-                if !session.on_starred() {
+                if !session.on_list(&Source::Starred) {
                     let list = ListScreen::new(Source::Starred, now);
+                    self.sched.send(list.call(), Priority::Now);
+                    session.stack.push(Screen::List(Box::new(list)));
+                }
+            }
+            (Phase::Ready(session), Action::Headlines) => {
+                if !session.on_list(&Source::Headlines) {
+                    let list = ListScreen::new(Source::Headlines, now);
                     self.sched.send(list.call(), Priority::Now);
                     session.stack.push(Screen::List(Box::new(list)));
                 }
@@ -1650,7 +1659,7 @@ impl Engine {
         }
     }
 
-    /// Pushes what a group or profile row opens: a thread, or someone's profile.
+    /// Pushes what a group, profile or list row opens: a thread, someone's profile, or a headline.
     fn open_row(&mut self, opens: Option<profile::Opens>, now: Instant) {
         let Phase::Ready(session) = &mut self.phase else {
             return;
@@ -1664,6 +1673,11 @@ impl Engine {
             }
             Some(profile::Opens::Profile(handle)) => {
                 open_profile(&mut self.sched, session, handle, now);
+            }
+            Some(profile::Opens::Headline(headline)) => {
+                let list = ListScreen::headline(*headline, now);
+                self.sched.send(list.call(), Priority::Now);
+                session.stack.push(Screen::List(Box::new(list)));
             }
             None => {}
         }
@@ -1883,7 +1897,10 @@ impl Engine {
             | Call::Starred { .. }
             | Call::SearchCommits(_)
             | Call::SearchPeople(_)
-            | Call::Related(_) => {
+            | Call::Related(_)
+            | Call::Headlines
+            | Call::Headline(_) => {
+                let mut recap = None;
                 let (items, next): (Vec<Item>, _) = match reply {
                     Reply::Rows(page) => {
                         let ids = session.store.absorb_rows(page.rows);
@@ -1902,6 +1919,18 @@ impl Engine {
                             .collect();
                         (items, next)
                     }
+                    Reply::Headlines(headlines) => {
+                        let items = headlines
+                            .into_iter()
+                            .map(|headline| Item::Headline(Box::new(headline)))
+                            .collect();
+                        (items, None)
+                    }
+                    Reply::Headline(page) => {
+                        let ids = session.store.absorb_rows(page.rows);
+                        recap = Some((page.name, page.summary));
+                        (ids.into_iter().map(Item::Commit).collect(), None)
+                    }
                     _ => return Vec::new(),
                 };
                 if let Some((handle, tab, cursor)) = Tab::of(call) {
@@ -1911,6 +1940,9 @@ impl Engine {
                 } else if let Some((source, cursor)) = Source::of(call) {
                     for list in session.lists_mut(&source) {
                         list.land(cursor, items.clone(), next.clone());
+                        if let Some((name, summary)) = &recap {
+                            list.recap(name.clone(), summary.clone());
+                        }
                     }
                 }
                 return Vec::new();
@@ -2143,7 +2175,9 @@ impl Engine {
                     Call::Starred { .. }
                     | Call::SearchCommits(_)
                     | Call::SearchPeople(_)
-                    | Call::Related(_) => {
+                    | Call::Related(_)
+                    | Call::Headlines
+                    | Call::Headline(_) => {
                         if let Some((source, _)) = Source::of(&call) {
                             for list in session.lists_mut(&source) {
                                 list.fail(failure.clone());

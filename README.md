@@ -35,7 +35,8 @@ developers where a post is called a commit.
 - **Catch up** on who replied, quoted, starred, mentioned or followed you.
   Open anyone's profile and follow them.
 - **Search** commits by meaning with `/`, or people with `/@`, and list
-  the commits like the selected one with `gr`.
+  the commits like the selected one with `gr`. See the hot topics with
+  `gt`, or print them from the shell with `ttyl headlines`.
 - **Pipe** a commit into any command with `|`, and print a log from the
   shell with `ttyl log`, the way `git log` does.
 - **Keep** your drafts through a closed composer and a quit. ttyl also asks

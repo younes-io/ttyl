@@ -84,6 +84,28 @@ results.
 Press <kbd>gr</kbd> again on one of them to keep going, and <kbd>esc</kbd> to
 walk back. When nothing is close enough, ttyl says so.
 
+## Hot topics
+
+Press <kbd>gt</kbd> to see what dev-null.sh is talking about right now. Each
+headline shows its name in bold with a short recap under it, hottest first.
+Some headlines have no recap. dev-null.sh writes one only when the commits
+say enough, keeps it for two hours, and leaves it out when it draws on a
+commit you can't see.
+
+Press <kbd>enter</kbd> on a headline to list its commits from the past week,
+newest first, under its recap. Press <kbd>esc</kbd> to go back to the
+headlines.
+
+To read the headlines without opening ttyl, run `ttyl headlines`. It prints
+each name with its recap indented under it, then exits. That suits a login
+message or a status bar:
+
+```sh
+ttyl headlines | head -1
+```
+
+Piped into another program, it prints plain text.
+
 ## Share a commit
 
 - Press <kbd>y</kbd> to copy the link to the selected commit.

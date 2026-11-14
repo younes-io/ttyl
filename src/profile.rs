@@ -16,7 +16,8 @@ use crate::feed::{self, Entry, Feed, Writer};
 use crate::keys::{self, Action, Link};
 use crate::log;
 use crate::model::{
-    Activity, Circle, CommitId, Level, Log, LogPage, Person, Profile, Row, Scale, Streaks, User,
+    Activity, Circle, CommitId, Headline, Lane, Level, Log, LogPage, PALETTE_LEN, Person, Profile,
+    Row, Scale, Streaks, User,
 };
 use crate::store::Store;
 use crate::theme;
@@ -107,6 +108,7 @@ impl Tab {
 pub enum Item {
     Commit(CommitId),
     Person(Box<Person>),
+    Headline(Box<Headline>),
 }
 
 impl Item {
@@ -114,7 +116,17 @@ impl Item {
         match (self, other) {
             (Item::Commit(a), Item::Commit(b)) => a == b,
             (Item::Person(a), Item::Person(b)) => a.user.id == b.user.id,
+            (Item::Headline(a), Item::Headline(b)) => a.id == b.id,
             _ => false,
+        }
+    }
+
+    /// What Enter on the row opens.
+    pub fn opens(&self) -> Opens {
+        match self {
+            Item::Commit(id) => Opens::Thread(id.clone()),
+            Item::Person(person) => Opens::Profile(person.user.handle.clone()),
+            Item::Headline(headline) => Opens::Headline(headline.clone()),
         }
     }
 }
@@ -123,6 +135,8 @@ impl Item {
 pub enum Opens {
     Thread(CommitId),
     Profile(String),
+    /// The headline's commits, under its recap.
+    Headline(Box<Headline>),
 }
 
 /// One tab's list for this visit, kept while other tabs are shown.
@@ -165,7 +179,7 @@ impl Paged {
     pub fn commit(&self) -> Option<&CommitId> {
         match self.selected()? {
             Item::Commit(id) => Some(id),
-            Item::Person(_) => None,
+            Item::Person(_) | Item::Headline(_) => None,
         }
     }
 
@@ -294,11 +308,11 @@ impl Paged {
             .iter()
             .filter_map(|item| match item {
                 Item::Commit(id) => Some(id.clone()),
-                Item::Person(_) => None,
+                Item::Person(_) | Item::Headline(_) => None,
             })
             .collect();
         let (feed, folded) = if ids.is_empty() {
-            (people(items, store, area.width), Vec::new())
+            (nodes(items, store, area.width), Vec::new())
         } else {
             let mut rows = store.rows_of(&ids);
             if self.pinned.is_some() {
@@ -465,10 +479,7 @@ impl ProfileScreen {
     }
 
     pub fn opens(&self) -> Option<Opens> {
-        match self.selected()? {
-            Item::Commit(id) => Some(Opens::Thread(id.clone())),
-            Item::Person(person) => Some(Opens::Profile(person.user.handle.clone())),
-        }
+        self.selected().map(Item::opens)
     }
 
     /// Where `link` goes for the person this profile is about, when they have one.
@@ -1003,48 +1014,71 @@ fn grouped(count: u32) -> String {
     out
 }
 
-/// One node per person, the way the inbox lays out a follow group.
-fn people(items: &[Item], store: &Store, width: u16) -> Feed {
+/// One node per person, the way the inbox lays out a follow group, or per headline: its name over
+/// its recap.
+fn nodes(items: &[Item], store: &Store, width: u16) -> Feed {
     let mut out = Writer::new(width);
     let mut entries = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        let Item::Person(person) = item else {
-            continue;
-        };
         if index > 0 {
             out.gap();
         }
         let header = out.lines.len();
-        let user = &person.user;
-        let lane = Style::new().fg(theme::lane(user.lane));
-        let mut spans = vec![
-            Span::styled(user.name.clone(), lane.add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" @{}", user.handle), theme::muted()),
-        ];
-        if person.follows_you == Some(true) {
-            spans.push(Span::styled(" · follows you", theme::muted()));
-        }
-        if store
-            .following(&user.handle)
-            .or(person.is_followed)
-            .unwrap_or(false)
-        {
-            spans.push(Span::styled(" · following", theme::muted()));
-        }
-        out.line(Span::styled("○ ", lane), feed::fit(spans, out.content()));
-        if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
-            let bio = vec![Span::styled(bio.replace('\n', " "), theme::muted())];
-            out.line(feed::rail(), feed::fit(bio, out.content()));
-        }
+        let lane = match item {
+            Item::Commit(_) => continue,
+            Item::Person(person) => person_node(&mut out, person, store),
+            Item::Headline(headline) => {
+                let lane = Lane::Palette(index as u8 % PALETTE_LEN);
+                headline_node(&mut out, headline, lane);
+                lane
+            }
+        };
         entries.push(Entry {
             lines: header..out.lines.len(),
             header,
-            lane: user.lane,
+            lane,
             indent: 0,
         });
     }
     Feed {
         lines: out.lines,
         entries,
+    }
+}
+
+fn person_node(out: &mut Writer, person: &Person, store: &Store) -> Lane {
+    let user = &person.user;
+    let lane = Style::new().fg(theme::lane(user.lane));
+    let mut spans = vec![
+        Span::styled(user.name.clone(), lane.add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" @{}", user.handle), theme::muted()),
+    ];
+    if person.follows_you == Some(true) {
+        spans.push(Span::styled(" · follows you", theme::muted()));
+    }
+    if store
+        .following(&user.handle)
+        .or(person.is_followed)
+        .unwrap_or(false)
+    {
+        spans.push(Span::styled(" · following", theme::muted()));
+    }
+    out.line(Span::styled("○ ", lane), feed::fit(spans, out.content()));
+    if let Some(bio) = person.bio.as_ref().filter(|bio| !bio.is_empty()) {
+        let bio = vec![Span::styled(bio.replace('\n', " "), theme::muted())];
+        out.line(feed::rail(), feed::fit(bio, out.content()));
+    }
+    user.lane
+}
+
+fn headline_node(out: &mut Writer, headline: &Headline, lane: Lane) {
+    let color = Style::new().fg(theme::lane(lane));
+    let name = Span::styled(headline.name.clone(), color.add_modifier(Modifier::BOLD));
+    out.node(Span::styled("● ", color), feed::rail(), vec![name]);
+    if let Some(summary) = &headline.summary {
+        out.push(
+            feed::rail(),
+            vec![Span::styled(summary.clone(), theme::muted())],
+        );
     }
 }
