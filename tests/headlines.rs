@@ -200,3 +200,55 @@ fn gt_on_the_headlines_sends_nothing_more() {
     let mut engine = on_headlines(at, hot());
     assert!(runs(&press(&mut engine, "gt", at)).is_empty());
 }
+
+#[test]
+fn a_search_from_the_headlines_leaves_them_to_come_back_to() {
+    let at = Instant::now();
+    let mut engine = on_headlines(at, hot());
+    press(&mut engine, "/rust", at);
+    let (_, call) = one_run(&tap(&mut engine, KeyCode::Enter, at));
+    assert_eq!(call, Call::SearchCommits("rust".to_owned()));
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[0].contains("headlines"),
+        "back on the headlines: {rows:#?}"
+    );
+
+    one_run(&tap(&mut engine, KeyCode::Enter, at));
+    press(&mut engine, "/rust", at);
+    tap(&mut engine, KeyCode::Enter, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        rows[0].contains("Keyset pagination goes mainstream"),
+        "back on the headline: {rows:#?}"
+    );
+}
+
+#[test]
+fn a_headline_leaves_the_reply_line_of_a_commit_the_log_lists() {
+    let at = Instant::now();
+    let reply = "did you keep an index on created_at?";
+    let mut engine = on_headlines(at, hot());
+    let (ticket, _) = one_run(&tap(&mut engine, KeyCode::Enter, at));
+    let bare = Row {
+        reply_preview: None,
+        ..page(Log::Following).rows[0].clone()
+    };
+    let page = HeadlinePage {
+        name: "Keyset pagination goes mainstream".to_owned(),
+        summary: None,
+        rows: vec![bare],
+    };
+    answer(&mut engine, ticket, Reply::Headline(Box::new(page)), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(
+        contains(&rows, reply),
+        "its stored preview stays: {rows:#?}"
+    );
+    tap(&mut engine, KeyCode::Esc, at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(contains(&rows, reply), "the log keeps it: {rows:#?}");
+}
