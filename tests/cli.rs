@@ -272,6 +272,11 @@ fn a_time_that_wont_do_is_fatal_before_anything_is_read_or_sent() {
         ),
         ("2020-01-01T00:00:00Z", "that time has passed"),
         ("in 40d", "dev-null.sh schedules up to 30 days ahead"),
+        ("in 99999999d", "dev-null.sh schedules up to 30 days ahead"),
+        (
+            "in 100000000000000m100000000000000m",
+            "dev-null.sh schedules up to 30 days ahead",
+        ),
     ] {
         let output = against(
             "cli-at-refused",
