@@ -863,16 +863,17 @@ impl Store {
     }
 
     /// A row whose reply count moved since its replies were listed drops that list, so an open
-    /// thread fetches the replies that came in, or left, since.
-    fn land_row(&mut self, row: Row) -> CommitId {
+    /// thread fetches the replies that came in, or left, since. A row that came without a reply
+    /// preview keeps the one stored, unless the count moved and it may name a reply since gone.
+    fn land_row(&mut self, mut row: Row) -> CommitId {
         let id = row.commit.id.clone();
-        if self
-            .rows
-            .get(&id)
-            .is_some_and(|old| old.replies_count != row.replies_count)
-        {
-            self.replies.remove(&id);
-            self.reply_refills.remove(&id);
+        if let Some(old) = self.rows.get_mut(&id) {
+            if old.replies_count != row.replies_count {
+                self.replies.remove(&id);
+                self.reply_refills.remove(&id);
+            } else if row.reply_preview.is_none() {
+                row.reply_preview = old.reply_preview.take();
+            }
         }
         self.gone.remove(&id);
         self.rows.insert(id.clone(), row);

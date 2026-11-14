@@ -560,7 +560,9 @@ fn row_lines<Tz: TimeZone>(
         lines.push(quote_line(row.quoted_commit.as_ref(), width));
     }
     lines.extend(link_line(&row.media, width));
-    if inline_replies && let Some(reply) = row.reply_preview.data.first() {
+    if inline_replies
+        && let Some(reply) = (row.reply_preview.as_ref()).and_then(|preview| preview.data.first())
+    {
         lines.push(reply_line(reply, width, now));
     }
     for line in lines {
