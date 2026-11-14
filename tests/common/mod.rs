@@ -233,7 +233,7 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
 
 pub fn account(unread: u32) -> Account {
     serde_json::from_value(serde_json::json!({
-        "data": { "handle": "ada", "name": "Ada" },
+        "data": { "id": "0a000000-0000-4000-8000-00000000000a", "handle": "ada", "name": "Ada" },
         "unread_notifications_count": unread,
     }))
     .unwrap()

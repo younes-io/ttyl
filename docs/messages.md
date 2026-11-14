@@ -74,6 +74,8 @@ The line at the bottom is where you type, and it always has the keys:
 - Press <kbd>enter</kbd> to send. The message shows dimmed until dev-null.sh
   has it.
 - Press <kbd>ctrl-e</kbd> to write a longer message in your `$EDITOR`.
+- Paste to type what you copied, line breaks included. While the emoji row is
+  open, a paste goes into the emoji's name.
 - Press <kbd>pgup</kbd> and <kbd>pgdn</kbd> to scroll. Scrolling up past the
   oldest message loads the ones before it. A line at the bottom says when new
   messages came in below.
@@ -116,7 +118,8 @@ already. Reactions show under a message as `[👍 2  👀 1]`, with yours lit.
 
 Press <kbd>ctrl-g</kbd> to ping, as MSN Messenger did, from the input or a
 picked message. The ping shows in the conversation as `[ping]`, and
-dev-null.sh pushes it to the others, everyone in a group.
+dev-null.sh pushes it to the others, everyone in a group. dev-null.sh takes
+three pings a minute. A fourth shows why it didn't go and isn't sent later.
 
 ## Talk in a group
 

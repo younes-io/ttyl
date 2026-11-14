@@ -196,7 +196,7 @@ fn a_refused_vote_shows_why() {
 fn v_does_nothing_on_a_closed_poll_a_voted_poll_or_your_own() {
     let at = Instant::now();
     let margaret: Account = serde_json::from_value(serde_json::json!({
-        "data": { "handle": "margaret", "name": "Margaret" },
+        "data": { "id": "0d000000-0000-4000-8000-00000000000d", "handle": "margaret", "name": "Margaret" },
         "unread_notifications_count": 0,
     }))
     .unwrap();

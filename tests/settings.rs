@@ -24,6 +24,7 @@ fn me(pasteis: bool, remotes: bool) -> Account {
     });
     serde_json::from_value(serde_json::json!({
         "data": {
+            "id": "0a000000-0000-4000-8000-00000000000a",
             "handle": "ada",
             "name": "Ada",
             "pasteis_mode": pasteis,

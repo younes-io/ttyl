@@ -21,7 +21,7 @@ use crate::model::{
     Filter, Focus, Folder, GroupPage, Headline, HeadlineId, HeadlinePage, Lane, Log, LogPage,
     Message, MessageId, MessagePage, NotificationId, NotificationPage, OrganizationList,
     OrganizationPage, PeoplePage, Profile, Reaction, ReactionsVersion, Reason, Refile, RepliesPage,
-    RowPage, Scheduled, ScheduledId, Segment, Settings, Translation, Who,
+    RowPage, Scheduled, ScheduledId, Segment, Settings, Translation, UserId, Who,
 };
 
 pub const BASE: &str = "https://dev-null.sh";
@@ -38,6 +38,7 @@ pub struct Client {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Me {
+    pub id: UserId,
     pub handle: String,
     pub name: Option<String>,
     #[serde(default)]
