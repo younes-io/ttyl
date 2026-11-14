@@ -30,6 +30,7 @@ pub enum CallKey {
     Replies(CommitId),
     Star(CommitId),
     Follow(String),
+    Mute(String),
     User(String),
     Commits {
         handle: String,
@@ -68,6 +69,7 @@ impl Call {
             Call::Replies { id, .. } => CallKey::Replies(id.clone()),
             Call::Star { id, .. } => CallKey::Star(id.clone()),
             Call::Follow { handle, .. } => CallKey::Follow(handle.clone()),
+            Call::Mute { handle, .. } => CallKey::Mute(handle.clone()),
             Call::User(handle) => CallKey::User(handle.clone()),
             Call::Commits {
                 handle,

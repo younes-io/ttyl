@@ -263,6 +263,9 @@ pub struct Row {
     pub reply_preview: ReplyPreview,
     #[serde(skip)]
     pub deletion: Option<Deletion>,
+    /// Whether the user just muted the author, so the log folds the commit away.
+    #[serde(skip)]
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
