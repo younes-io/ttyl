@@ -225,7 +225,8 @@ pub fn runs(effects: &[Effect]) -> Vec<&Call> {
             | Effect::Edit(_)
             | Effect::Read(_, _)
             | Effect::Clip
-            | Effect::Icons(_) => None,
+            | Effect::Icons(_)
+            | Effect::Pipe { .. } => None,
         })
         .collect()
 }

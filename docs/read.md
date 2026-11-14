@@ -46,6 +46,21 @@ If the commit quotes another one, press <kbd>gq</kbd> to open the quoted commit.
 
 Inside tmux, copying needs a tmux setting. See [Settings](settings.html#tmux).
 
+## Pipe a commit to a command
+
+Press <kbd>|</kbd>, type a shell command and press <kbd>enter</kbd>. ttyl
+runs it with the commit's text, as written in Markdown, on its standard
+input. Some things to try:
+
+- `wl-copy` or `pbcopy` copies the text.
+- `tee -a ~/notes.md` keeps it in a file.
+- `less` or `vim -` opens it to read or edit.
+- `llm "explain this"` asks a model about it.
+
+If the command prints something, ttyl waits for a key so you can read it. A
+command that prints nothing, such as `wl-copy`, brings you straight back.
+The next <kbd>|</kbd> starts from the command you ran last.
+
 ## Read the signs
 
 - `in review` next to a name means dev-null.sh has not approved the commit yet.

@@ -67,6 +67,8 @@ pub enum Act {
     Images,
     /// Opens the thread of the commit it quotes.
     OpenQuote,
+    /// Sends the commit's text to a shell command.
+    Pipe,
 }
 
 /// Where a key sits in help: what it does, not where it works.
@@ -171,6 +173,7 @@ pub enum Scope {
     Preview,
     Secret,
     Rules,
+    Pipe,
 }
 
 pub const SPLASH_SCOPES: &[Scope] = &[Scope::Splash, Scope::Always];
@@ -185,6 +188,7 @@ pub const COMPOSER_SCOPES: &[Scope] = &[Scope::Composer];
 pub const PREVIEW_SCOPES: &[Scope] = &[Scope::Preview];
 pub const SECRET_SCOPES: &[Scope] = &[Scope::Secret];
 pub const RULES_SCOPES: &[Scope] = &[Scope::Rules];
+pub const PIPE_SCOPES: &[Scope] = &[Scope::Pipe];
 pub const LOG_SCOPES: &[Scope] = &[
     Scope::List,
     Scope::Log,
@@ -254,6 +258,7 @@ pub const UNIONS: &[&[Scope]] = &[
     PREVIEW_SCOPES,
     SECRET_SCOPES,
     RULES_SCOPES,
+    PIPE_SCOPES,
     LOG_SCOPES,
     THREAD_SCOPES,
     INBOX_SCOPES,
@@ -642,6 +647,34 @@ pub const TABLE: &[Binding] = &[
         action: Action::Commit(Act::Browse),
         hint: None,
         help: "open in the browser",
+    },
+    Binding {
+        scope: Scope::Commit,
+        chords: &[&[Key::ch('|')]],
+        action: Action::Commit(Act::Pipe),
+        hint: None,
+        help: "pipe the text to a shell command",
+    },
+    Binding {
+        scope: Scope::Pipe,
+        chords: &[&[Key::code(KeyCode::Enter)]],
+        action: Action::Confirm,
+        hint: Some("enter run"),
+        help: "run",
+    },
+    Binding {
+        scope: Scope::Pipe,
+        chords: &[&[Key::code(KeyCode::Esc)]],
+        action: Action::Close,
+        hint: Some("esc cancel"),
+        help: "cancel",
+    },
+    Binding {
+        scope: Scope::Pipe,
+        chords: &[&[Key::ctrl('c')]],
+        action: Action::Quit,
+        hint: None,
+        help: "quit",
     },
     Binding {
         scope: Scope::Commit,
