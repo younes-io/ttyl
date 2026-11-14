@@ -620,18 +620,16 @@ impl ConversationScreen {
         }
     }
 
-    /// A send that failed puts its text back in front of what was typed since, to send again.
-    pub fn unsent(&mut self, client_id: &ClientId) {
-        let Some(at) = (self.outbox.iter()).position(|outgoing| outgoing.client_id == *client_id)
-        else {
-            return;
-        };
-        let outgoing = self.outbox.remove(at);
+    /// A send that failed puts its text back in front of what was typed since, to send again,
+    /// even when the send began on an earlier visit and so is not in this screen's outbox.
+    pub fn unsent(&mut self, client_id: ClientId, body: String) {
+        self.outbox
+            .retain(|outgoing| outgoing.client_id != client_id);
         let mut unsent = Unsent {
             text: self.input.text().to_owned(),
             retry: None,
         };
-        unsent.restore(outgoing.client_id, outgoing.body);
+        unsent.restore(client_id, body);
         self.input = Buffer::new(&unsent.text);
         self.retry = unsent.retry;
     }

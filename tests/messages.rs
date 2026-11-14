@@ -617,3 +617,28 @@ fn a_send_refused_after_leaving_comes_back_on_reopening() {
     let rows = screen(&mut engine, 100, 30, at);
     assert!(rows[28].contains("› on it"), "{rows:#?}");
 }
+
+#[test]
+fn a_send_that_fails_after_reopening_comes_back_with_its_id() {
+    let at = Instant::now();
+    let mut engine = boot(at);
+    open_grace(&mut engine, at);
+    let (effects, client_id) = send(&mut engine, "on it", at);
+    tap(&mut engine, KeyCode::Esc, at);
+    let mut reopened = tap(&mut engine, KeyCode::Enter, at);
+    while !runs(&reopened).is_empty() {
+        reopened = answer(&mut engine, &reopened, at, dev_null);
+    }
+    fail(&mut engine, &effects, || Error::Unexpected(502), at);
+    let rows = screen(&mut engine, 100, 30, at);
+    assert!(rows[28].contains("› on it"), "{rows:#?}");
+    let effects = tap(&mut engine, KeyCode::Enter, at);
+    match runs(&effects).as_slice() {
+        [
+            Call::SendMessage {
+                client_id: again, ..
+            },
+        ] => assert_eq!(again.0, client_id),
+        other => panic!("enter sends it again: {other:#?}"),
+    }
+}
